@@ -32,7 +32,7 @@ tools/test_legacy.py   (unittest)
 ### budget
 
 - **Rumus:** `kapasitas bobot di VRAM = VRAM − CUDA context − KV − compute buffer`; bobot sisanya di RAM; `RAM total = bobot di RAM + OS/runtime`; `waktu per token = bobot RAM / bandwidth RAM + bobot GPU / bandwidth GPU`.
-- **KV per token** = `2 × layer_KV × kv_heads × head_dim × 2 byte × faktor tipe`. Default 16 × 8 × 128 memberi 64 KiB, sesuai MASTER.md.
+- **KV per token** = `2 × layer_KV × kv_heads × head_dim × 2 byte × faktor tipe`. Default 16 × 4 × 256 (kartu resmi Qwen3.8-27B) memberi 64 KiB. State DeltaNet ditambahkan sebagai `rs_gib` (default 0.146 GiB; 0 untuk model non-hibrida). Tipe KV: `f16`, `q8_0`, `q4_0`, `iso3` (fork).
 - **Risiko:** merah bila headroom RAM < 0,5 GiB atau tidak ada ruang VRAM untuk bobot; kuning bila headroom RAM < 2 GiB; selain itu hijau. Batas 0,5 GiB dari `memory-manager.md`; batas 2 GiB adalah pilihan proyek ini.
 - **Pascal:** tidak ada asumsi Tensor Core atau FP16 cepat; angka bandwidth saja.
 
@@ -40,7 +40,8 @@ tools/test_legacy.py   (unittest)
 
 - Parser (`parse_nvidia_csv`, `parse_meminfo`, `parse_cpuinfo`, `parse_vmstat`) menerima teks, jadi bisa diuji tanpa GPU.
 - `headroom` memakai margin dari checklist `memory-manager.md`: 200 MB VRAM, 500 MB RAM.
-- `membw` mengukur salinan memori satu thread di Python. Itu batas bawah kasar dan tidak membedakan single dari dual channel (OQ-011 butuh alat khusus).
+- `membw` mengukur laju salin `ctypes.memmove` dengan 1, 2, 4, .. thread (memmove melepas GIL) dan melaporkan yang terbaik. Itu batas bawah laju baca dan tidak membedakan single dari dual channel (OQ-011).
+- `gpu`/`sample` membaca `clocks.sm`, `clocks.mem`, `clocks_throttle_reasons.active` (bitmask NVML). Hanya power cap, hw slowdown, thermal, dan power brake dihitung sebagai pembatas; `gpu_idle` bukan.
 
 ### gguf
 
@@ -48,11 +49,12 @@ tools/test_legacy.py   (unittest)
 - Batas pengaman: string 64 MiB, array 16 juta elemen, 1 juta pasangan kv, 4 juta tensor, kedalaman array 3.
 - Array lebih dari 512 elemen diringkas menjadi `{"array_len": n}` agar keluaran kecil.
 - Ukuran tensor = `elemen / blok × byte per blok`, dari tabel tipe ggml di kode. ⚠️ ASSUMPTION: tabel ditranskripsi dari pengetahuan atas format ggml, belum dicocokkan baris demi baris dengan sumber saat ini. Tipe yang tidak dikenal menghasilkan `nbytes = null` dan dihitung di `tensors_unknown_size`.
-- `kv_layers_estimate` adalah heuristik (entri `head_count_kv` > 0, atau `block_count`). Nama kunci model hibrida belum diverifikasi.
+- `kv_layers_estimate`: entri `head_count_kv` > 0 bila array; bila ada `<arch>.full_attention_interval` maka `block_count // interval` (terverifikasi: 9B 32//4 = 8, 0.8B 24//4 = 6 cocok dengan log llama.cpp); selain itu `block_count`.
 
 ### llama
 
-- `llama-cli`, `llama-bench`, `llama-server` adalah satu-satunya nama binary yang bisa dipilih; path dibentuk dari `--bin-dir`.
+- `llama-cli`, `llama-bench`, `llama-server`, `llama-perplexity` adalah satu-satunya nama binary yang bisa dipilih; path dibentuk dari `--bin-dir`.
+- `llama-cli` dipanggil dengan `-st` dan stdin `DEVNULL`. Terukur di fork `08e025c`: `-no-cnv` diabaikan dan tanpa `-st` proses menunggu input selamanya.
 - Prompt dikirim sebagai satu elemen argv. Tidak ada shell.
 - `InferenceLock` membuat file lock dengan `O_EXCL` dan menulis PID. Lock lama (PID mati atau isi tidak valid) diganti.
 - `--ngl` kosong berarti auto-fit llama.cpp (OQ-014). Menguji manual dan auto-fit tetap pekerjaan SPEC-005.
