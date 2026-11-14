@@ -115,3 +115,13 @@ Daftar open questions yang belum terjawab (update saat resolved):
 ---
 
 *Log dibuat pada sesi bootstrap. Append entri baru di bawah bagian "Log Entries" setelah header SESSION yang sesuai.*
+
+### Post-bootstrap — Custom MCP
+
+```
+[Post-bootstrap] [OPEN] Desain MCP server kustom (4 kandidat: budget, hw, llama, spec)
+  → Status: PROPOSED, belum diputuskan
+  → Lihat: spec/specs/RFC-002-custom-mcp-servers.md
+  → Diskusi: GitHub issues #1 (umbrella), #2 (A), #3 (B), #4 (C), #5 (D)
+  → Pertanyaan kunci: timeout tool call di Kiro, llama-cli vs llama-server, 1 vs 4 server
+```
