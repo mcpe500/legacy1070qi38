@@ -49,7 +49,7 @@ yang memakai arsitektur `qwen35` (lihat C-20), tetapi itu bukan Qwen3.8-27B dan 
 | C-20 | File lokal `Qwen3.8-9B-Q4_K_M.gguf`: arsitektur `qwen35`, 32 blok, `full_attention_interval=4`, `head_count_kv=4`, `key_length=256`, 5.38 GiB | `gguf inspect` | Terukur | ✅ | - |
 | C-21 | "Qwen3.8-9B" di Hugging Face adalah distilasi komunitas ke arsitektur Qwen3.5-9B, bukan rilis Qwen resmi | [empero-ai/Qwen3.8-9B-Distill](https://huggingface.co/empero-ai/Qwen3.8-9B-Distill) | Komunitas | ⚠ Asal file lokal kita tidak diverifikasi. Pakai 9B sebagai pengganti **arsitektur**, bukan pengganti 27B | - |
 | C-22 | `iso3` = IsoQuant: rotasi kuaternion 4D + Lloyd-Max 3-bit pada KV cache; blok 128 nilai = 50 byte (3,125 bit/nilai) | `ggml/src/ggml-iso-quant.c`, `ggml-common.h` (`block_iso3_0`) | Kode | ✅ Hanya ada di fork. Belum dicek apakah ada di llama.cpp utama | - |
-| C-23 | Dampak kualitas iso3 terhadap jawaban | - | Tanpa sumber | ❌ Belum diukur. `quality kld` kini bisa mengukurnya | - |
+| C-23 | Dampak kualitas iso3 terhadap jawaban | - | Tanpa sumber | ❌ Belum diukur. Build CPU **segfault** (kode -11) dengan `-ctk iso3`; kode fork menyebut jalur ini khusus CUDA (`src/llama-context.cpp:1689`). Butuh GPU | - |
 | C-24 | Fork kita tidak membangun `llama-perplexity`/`llama-quantize` secara bawaan di `build/bin`; keduanya dibangun terpisah di `~/llama-cpu-build` (CPU) | `ls build/bin`, `llama build --target` | Terukur | ✅ | - |
 
 ## C. Kinerja
@@ -87,6 +87,8 @@ yang memakai arsitektur `qwen35` (lihat C-20), tetapi itu bukan Qwen3.8-27B dan 
 | C-42 | `llama-cli` fork mengabaikan `-no-cnv`; `-st` keluar dengan kode 0 setelah satu jawaban; timing dicetak `[ Prompt: X t/s \| Generation: Y t/s ]` | uji nyata, PR #29 | Terukur | ✅ |
 | C-43 | `llama-perplexity` mencetak PPL dengan `+/-` dan KLD dengan `±` | uji nyata, PR #29 | Terukur | ✅ |
 | C-44 | Berkas logit KLD ≈ 0.118 GiB per chunk (ctx 512, vocab 248.320); 100 chunk ≈ 11.8 GiB | uji nyata (0.472 GiB / 4 chunk) | Terukur | ✅ untuk vocab ini |
+| C-47 | Dampak KV quant pada model `qwen35` 0.8B (IQ4_XS, wikitext-2 test, 4 chunk, ctx 512, KLD terhadap KV f16): q8_0 mean KLD 0.0038 (same-top-p 96.9%); q4_0 0.0200 (91.5%) | `quality kld --kv-type`, PR #29 | Terukur | ⚠ Model kecil, 6 layer attention, konteks pendek; **tidak berlaku otomatis untuk 27B** (OQ-004) |
+| C-48 | KLD kuantisasi bobot sebagai pembanding skala: IQ4_XS -> Q3_K_S (requant, hanya uji pipeline) mean KLD 0.348, same-top-p 70.0% | `quality kld`, PR #29 | Terukur | ⚠ Requant dari quant lain; **bukan** klaim kualitas Q3_K_S |
 | C-45 | `llama-perplexity` menjalankan 4 sekuens paralel pada ctx 512 (KV 24 MiB = 4 x 6 MiB) | log nyata | Terukur | ✅ |
 
 ## Cara memakai
