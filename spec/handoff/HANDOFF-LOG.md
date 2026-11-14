@@ -181,3 +181,18 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [FINDING] bwrap (bubblewrap) belum terpasang. Mode shell dimatikan sampai terpasang dan diuji
 [Post-bootstrap] [OPEN] OQ-017 Apakah --sandbox mengizinkan akses GPU (/dev/nvidia*)?  → setelah bubblewrap terpasang
 ```
+
+### CLI tooling — SPEC-007
+
+```
+[Post-bootstrap] [UPDATE] SPEC-007-cli-tooling dibuat; tools/legacy.py dan tools/test_legacy.py ditulis atas permintaan di issue #1
+  → Cakupan: budget, hw, gguf, llama (build/run/bench/placement), spec. Belum ada: llama compare, llama-server, bench analyze, quality eval
+  → Gambar: spec/specs/assets/spec-007-cli-implementation.svg; panduan pakai: tools/README.md
+  → RFC-002 tetap Proposed; keputusan desain (versi Python, llama-cli vs llama-server) belum diambil pemilik repo
+```
+
+```
+[Post-bootstrap] [OPEN] Test tools/test_legacy.py ditulis oleh agen tanpa shell dan belum dijalankan
+  → Perlu: jalankan `python tools/test_legacy.py -v` dan `python tools/legacy.py spec validate`, lalu catat hasilnya
+  → Asumsi yang perlu dicek: tabel tipe ggml, opsi llama.cpp (-o json, -no-cnv), format baris log/timing
+```
