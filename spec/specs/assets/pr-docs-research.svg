@@ -60,7 +60,7 @@
   <text x="855" y="472" font-size="12" text-anchor="middle" fill="#334155">pembungkus kustom</text>
 
   <rect x="30" y="514" width="900" height="80" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
-  <text x="46" y="538" font-size="13" fill="#334155">Berkas baru: README.md, spec/research/CLAIMS.md (46 klaim), .kiro/hooks/spec-validate-on-save.json.</text>
+  <text x="46" y="538" font-size="13" fill="#334155">Berkas baru: README.md, spec/research/CLAIMS.md (48 klaim), .kiro/hooks/spec-validate-on-save.json.</text>
   <text x="46" y="558" font-size="13" fill="#334155">Diubah: MASTER, RFC-001, RFC-002, SPEC-000/004/007, KIRO-USAGE, HANDOFF-LOG (hanya ditambah).</text>
   <text x="46" y="578" font-size="13" fill="#334155">Belum: GGUF 27B, GPU, llama.cpp utama di Pascal, dual channel. Semua dipindah ke issue uji 27B.</text>
 </svg>
