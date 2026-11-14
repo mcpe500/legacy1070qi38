@@ -169,3 +169,15 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [OPEN] OQ-016 Selisih TPS Vulkan vs CUDA di Pascal?  → SPEC-005 Task 6
 [Post-bootstrap] [RESOLVED] OQ-001, OQ-002, OQ-003 digantikan oleh OQ-010. OQ-004 (KV q4_0) kini rendah prioritas karena KV kecil
 ```
+
+### Agen GitHub /kiro
+
+```
+[Post-bootstrap] [DECISION] Agen pemicu GitHub: skrip di laptop (tools/agent/), bukan GitHub Actions
+  → Hanya ID 68177813, 73787745, 113233053; pemicu "/kiro"; 12 run/jam; PR dari fork diabaikan; hasil lewat PR
+  → Lihat: spec/specs/RFC-003-github-agent-trigger.md, tools/agent/README.md
+[Post-bootstrap] [FINDING] Uji nyata (issue #13..#15, PR #16..#17, semuanya ditutup):
+  → balasan benar; PR dibuat; perubahan ke tools/agent/config.json ditolak; baca ~/.config/gh ditolak
+[Post-bootstrap] [FINDING] bwrap (bubblewrap) belum terpasang. Mode shell dimatikan sampai terpasang dan diuji
+[Post-bootstrap] [OPEN] OQ-017 Apakah --sandbox mengizinkan akses GPU (/dev/nvidia*)?  → setelah bubblewrap terpasang
+```

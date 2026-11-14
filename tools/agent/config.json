@@ -1,0 +1,22 @@
+{
+  "repo": "mcpe500/legacy1070qi38",
+  "allowed_users": {
+    "68177813": "mcpe500",
+    "73787745": "ibrahimmuh26",
+    "113233053": "nicostap"
+  },
+  "trigger": "/kiro",
+  "poll_seconds": 60,
+  "max_runs_per_hour": 12,
+  "run_timeout_seconds": 1800,
+  "base_branch": "main",
+  "allow_shell": false,
+  "agent_shell": "legacy-bot",
+  "agent_noshell": "legacy-bot-noshell",
+  "protected_paths": ["tools/agent/", ".github/", ".kiro/", ".git/"],
+  "max_file_bytes": 5000000,
+  "max_comment_chars": 6000,
+  "max_instruction_chars": 8000,
+  "git_author_name": "mcpe500",
+  "git_author_email": "68177813+mcpe500@users.noreply.github.com"
+}

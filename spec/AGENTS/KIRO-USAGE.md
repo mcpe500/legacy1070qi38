@@ -20,6 +20,8 @@ menjawab syarat submission: *"Name each product you used and what it does in you
 | Built-in tools (read/list/search file) | ✅ Ya | Membaca dan memverifikasi isi workspace |
 | Live steering | ✅ Ya | User menyisipkan instruksi saat sub-agent sedang berjalan |
 | Web search dan web fetch | ✅ Ya | Memverifikasi model dan arsitektur; menangkap kesalahan asumsi awal |
+| Headless mode (`--no-interactive`) | ✅ Ya | Menjalankan Kiro dari skrip pemantau GitHub tanpa sesi interaktif |
+| Custom agent + permissions (`~/.kiro/agents/legacy-bot*.json`) | ✅ Ya | Profil agent bot dengan aturan izin per path dan tool; diuji menolak akses terlarang |
 | Spec-driven development (requirements → design → tasks) | ✅ Ya (struktur) | Format `SPEC-NNN-*/` mengikuti pola requirements/design/tasks |
 | Hooks | ❌ Belum | — |
 | Steering files (`.kiro/steering/`) | ❌ Belum | — |
@@ -85,6 +87,18 @@ Riwayat koreksi ada di `spec/handoff/HANDOFF-LOG.md`.
 
 Pelajaran: klaim faktual wajib bersumber. Sumber yang dipakai adalah model card komunitas, belum kartu resmi.
 
+### 8. Headless mode dan custom agent (agen GitHub `/kiro`)
+`tools/agent/kiro_gh_agent.py` memantau issue GitHub. Perintah `/kiro` dari tiga ID yang diizinkan menjalankan
+`kiro-cli chat --v3 --no-interactive --agent legacy-bot-noshell` memakai login Kiro yang ada.
+
+- **Custom agent:** dua profil (`legacy-bot`, `legacy-bot-noshell`) ditulis oleh `install-agent` ke `~/.kiro/agents/`.
+  Memuat daftar tool (`read`, `write`, `web`, dan `shell` hanya di profil bersandbox) dan `permissions.rules`.
+- **Permissions:** `deny` untuk menulis ke `tools/agent`, `.github`, `.kiro`, `.git`; `deny` untuk membaca `~/.ssh`,
+  `~/.config/gh`, folder status; tulis hanya di worktree.
+- **Bukti uji nyata** (RFC-003): pembacaan token `gh` ditolak, perubahan `tools/agent/config.json` ditolak,
+  penulisan ke `/tmp` tidak terjadi, perintah dari ID yang sah menghasilkan balasan dan PR.
+- Kode dan aturan ditulis dengan bantuan Kiro (sesi ini). Uji coba memakai issue #13 sampai #15 dan PR #16, #17 (sudah ditutup).
+
 ---
 
 ## Belum Digunakan (rencana)
@@ -99,6 +113,8 @@ Pelajaran: klaim faktual wajib bersumber. Sumber yang dipakai adalah model card 
   `spec/specs/RFC-002-cli-tooling.md` dan diskusi di GitHub issue #1.
 - **Powers / Skills**: skills direncanakan (`vram-budget`, `run-benchmark`, `update-handoff`);
   powers belum ada kebutuhan konkret.
+
+Hooks (`.kiro/hooks`) dan steering files di dalam repo sengaja dilarang untuk agen bot, karena menentukan perilaku agent pada run berikutnya.
 
 Saat salah satu dipakai, pindahkan ke bagian "Detail Penggunaan" beserta buktinya.
 
