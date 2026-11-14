@@ -181,3 +181,14 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [FINDING] bwrap (bubblewrap) belum terpasang. Mode shell dimatikan sampai terpasang dan diuji
 [Post-bootstrap] [OPEN] OQ-017 Apakah --sandbox mengizinkan akses GPU (/dev/nvidia*)?  → setelah bubblewrap terpasang
 ```
+
+### Perbaikan: satu PR per issue, SVG di PR
+
+```
+[Post-bootstrap] [CORRECTION] PR #18 dan #19 seharusnya satu PR. Akar masalah: skrip agen membuat branch baru dari main
+    untuk setiap /kiro di issue, jadi permintaan lanjutan ("tambahkan SVG di PR 18") menjadi PR terpisah
+  → PR #19 digabung ke PR #18 lalu ditutup. Skrip diperbaiki: perintah lanjutan menambah ke PR terbuka milik issue yang sama
+  → Lihat: spec/specs/RFC-003-github-agent-trigger.md (bagian Revisi)
+[Post-bootstrap] [DECISION] Aturan PR dicatat di MASTER.md: satu tugas satu PR; deskripsi teks tapi divisualkan dengan SVG
+    sebisa mungkin; bukti test dan daftar "yang belum" wajib. SVG disematkan lewat tautan SHA
+```
