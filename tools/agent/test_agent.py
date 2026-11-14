@@ -1,0 +1,124 @@
+import unittest
+
+import kiro_gh_agent as a
+
+CFG = a.load_config()
+ME = {"id": 68177813, "login": "mcpe500", "type": "User"}
+IBRAHIM = {"id": 73787745, "login": "ibrahimmuh26", "type": "User"}
+NICO = {"id": 113233053, "login": "nicostap", "type": "User"}
+STRANGER = {"id": 999, "login": "stranger", "type": "User"}
+
+
+def ev(user=ME, body="/kiro halo", kind="comment", created="2026-11-13T10:00:00Z", updated=None):
+    return {"id": "c1", "kind": kind, "number": 1, "user": user, "body": body,
+            "created_at": created, "updated_at": updated or created, "url": "u"}
+
+
+class Allowlist(unittest.TestCase):
+    def test_three_allowed(self):
+        for u in (ME, IBRAHIM, NICO):
+            self.assertEqual(a.classify(ev(user=u), CFG)[0], "run", u["login"])
+
+    def test_stranger_ignored(self):
+        self.assertEqual(a.classify(ev(user=STRANGER), CFG), ("skip", "pengirim tidak diizinkan"))
+
+    def test_same_login_different_id_ignored(self):
+        impostor = {"id": 12345, "login": "mcpe500", "type": "User"}
+        self.assertEqual(a.classify(ev(user=impostor), CFG)[0], "skip")
+
+    def test_bot_with_allowed_id_ignored(self):
+        self.assertEqual(a.classify(ev(user={**ME, "type": "Bot"}), CFG)[0], "skip")
+
+    def test_missing_user_ignored(self):
+        self.assertEqual(a.classify(ev(user=None), CFG)[0], "skip")
+        self.assertEqual(a.classify(ev(user={}), CFG)[0], "skip")
+
+    def test_id_compared_as_string_not_substring(self):
+        self.assertFalse(a.is_allowed({"id": 6817781, "type": "User"}, CFG))
+
+
+class Trigger(unittest.TestCase):
+    def test_requires_prefix(self):
+        self.assertEqual(a.classify(ev(body="halo /kiro tes"), CFG)[1], "tanpa pemicu")
+        self.assertEqual(a.classify(ev(body="> /kiro tes"), CFG)[1], "tanpa pemicu")
+
+    def test_requires_word_boundary(self):
+        self.assertEqual(a.classify(ev(body="/kirofoo"), CFG)[1], "tanpa pemicu")
+
+    def test_instruction_extracted(self):
+        self.assertEqual(a.classify(ev(body="/kiro  buat file\nbaris dua"), CFG),
+                         ("run", "buat file\nbaris dua"))
+
+    def test_empty_instruction_skipped(self):
+        self.assertEqual(a.classify(ev(body="/kiro   "), CFG)[1], "instruksi kosong")
+
+    def test_leading_whitespace_and_bom(self):
+        self.assertEqual(a.parse_trigger("\ufeff \n/kiro x", "/kiro"), "x")
+
+    def test_instruction_clipped(self):
+        long = "/kiro " + "x" * 20000
+        self.assertEqual(len(a.classify(ev(body=long), CFG)[1]), CFG["max_instruction_chars"])
+
+
+class Loops(unittest.TestCase):
+    def test_agent_comment_ignored_even_if_allowed_author(self):
+        body = f"{a.MARKER}\n/kiro ulangi"
+        self.assertEqual(a.classify(ev(body=body), CFG)[1], "komentar agen sendiri")
+
+    def test_edited_comment_ignored(self):
+        e = ev(updated="2026-11-13T10:05:00Z")
+        self.assertEqual(a.classify(e, CFG)[1], "komentar sudah diedit")
+
+    def test_issue_body_edit_rule_not_applied(self):
+        e = ev(kind="issue", updated="2026-11-13T10:05:00Z")
+        self.assertEqual(a.classify(e, CFG)[0], "run")
+
+
+class Limits(unittest.TestCase):
+    def test_rate_limit_12(self):
+        now = 10_000.0
+        self.assertTrue(a.rate_ok([now - 10] * 11, now, 12))
+        self.assertFalse(a.rate_ok([now - 10] * 12, now, 12))
+
+    def test_old_runs_dont_count(self):
+        now = 10_000.0
+        self.assertTrue(a.rate_ok([now - 3601] * 50, now, 12))
+
+    def test_limit_value_in_config(self):
+        self.assertEqual(CFG["max_runs_per_hour"], 12)
+
+
+class Guards(unittest.TestCase):
+    def test_protected_paths(self):
+        paths = ["spec/a.md", "tools/agent/kiro_gh_agent.py", ".github/workflows/x.yml", ".kiro/agents/x.json", ".git/config"]
+        self.assertEqual(a.violates_protected(paths, CFG["protected_paths"]), paths[1:])
+
+    def test_similar_prefix_not_protected(self):
+        self.assertEqual(a.violates_protected(["tools/agentx/a.py", "spec/.github/x"], CFG["protected_paths"]), [])
+
+    def test_mentions_neutralized(self):
+        out = a.neutralize_mentions("halo @octocat dan @a-b, email x@y.com")
+        self.assertNotIn("@octocat", out)
+        self.assertIn("@\u200boctocat", out)
+
+    def test_safe_ref(self):
+        for bad in ("-rf", "a b", "../x", "a;b", ""):
+            self.assertFalse(a.SAFE_REF.match(bad) and ".." not in bad, bad)
+        self.assertTrue(a.SAFE_REF.match("kiro/issue-1-c123"))
+
+
+class Normalize(unittest.TestCase):
+    def test_comment_number_from_issue_url(self):
+        c = {"id": 5, "issue_url": "https://api.github.com/repos/o/r/issues/42", "user": {"id": 1, "login": "x", "type": "User"},
+             "body": None, "created_at": "t", "updated_at": "t", "html_url": "h"}
+        n = a.norm_comment(c)
+        self.assertEqual((n["number"], n["body"], n["id"]), (42, "", "c5"))
+
+    def test_deleted_user_does_not_crash(self):
+        c = {"id": 5, "issue_url": "https://x/issues/1", "user": None, "body": "/kiro x",
+             "created_at": "t", "updated_at": "t", "html_url": "h"}
+        self.assertEqual(a.classify(a.norm_comment(c), CFG)[0], "skip")
+
+
+if __name__ == "__main__":
+    unittest.main()
