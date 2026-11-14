@@ -35,6 +35,7 @@ Agar berjalan di latar belakang: `nohup python3 tools/agent/kiro_gh_agent.py run
 | Diabaikan | Pengirim lain, komentar yang sudah diedit, komentar buatan agen, PR dari fork, issue/PR yang sudah ditutup |
 | Batas | 12 run per jam (`max_runs_per_hour`). Kelebihannya ditunda dan dibalas sekali |
 | Hasil | Balasan di thread. Bila ada perubahan file: commit di branch `kiro/issue-N-...` dan PR. Tidak pernah push ke `main` |
+| Tempat komentar | **Di dalam PR**: dibahas dan dikerjakan di PR itu. **Di issue tanpa PR**: agent analisis dulu, pertanyaan dijawab tanpa PR, PR dibuat hanya bila instruksi meminta perubahan file. **Di issue yang sudah punya PR**: perubahan masuk ke PR itu |
 | Satu PR | Perintah `/kiro` lanjutan pada issue yang sama **menambah ke PR yang sudah terbuka**, bukan membuat PR baru. Komentar langsung di PR juga menambah ke PR itu |
 | SVG di PR | SVG yang diubah divalidasi (XML valid, tanpa script), lalu disematkan di deskripsi PR lewat tautan SHA. Tata letak diperiksa dengan perkiraan lebar teks dan peringatannya ditulis di PR. PR berisi banyak berkas tanpa SVG diberi peringatan |
 | Terlindungi | Agent tidak boleh mengubah `tools/agent/`, `.github/`, `.kiro/`, `.git/`. File > 5 MB ditolak |
@@ -67,7 +68,7 @@ Bila `allow_shell` true tapi `bwrap` tidak ada, skrip otomatis kembali ke mode t
 |---|---|
 | `kiro_gh_agent.py` | Skrip utama (hanya library standar) |
 | `config.json` | Daftar ID, batas, path terlindungi |
-| `test_agent.py` | 47 unit test: filter keamanan, PR tunggal, validasi SVG: `cd tools/agent && python3 -m unittest` |
+| `test_agent.py` | 61 unit test: filter keamanan, PR tunggal, validasi SVG, niat per tempat komentar: `cd tools/agent && python3 -m unittest` |
 
 Status dan log ada di `~/.kiro-agent/` (state.json, logs/). Worktree sementara di `~/.kiro-agent-work/`.
 Agent dilarang membaca folder status itu.
