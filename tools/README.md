@@ -42,6 +42,8 @@ python tools/legacy.py bench analyze --gen-tps 2.1 --gguf m.gguf --gpu-fraction 
 python tools/legacy.py quality ppl --model m.gguf --file wiki.test.raw --chunks 20 --bin-dir build/bin
 python tools/legacy.py quality kld --base-model ref.gguf --model q3.gguf --file wiki.test.raw \
        --chunks 20 --kld-file /tmp/ref.kld --bin-dir build/bin     # berkas logit BESAR: ~0.12 GiB per chunk (vocab 248k)
+python tools/legacy.py quality kld --base-model m.gguf --model m.gguf --kv-type q8_0 --file wiki.test.raw \
+       --chunks 20 --kld-file /tmp/f16.kld --bin-dir build/bin     # dampak KV quant pada model yang sama
 python tools/legacy.py quality prompts --model m.gguf --prompts tools/quality/prompts-v1.txt --out a.json
 python tools/legacy.py quality prompts --compare a.json b.json
 
@@ -94,6 +96,7 @@ alat ini.
 | `hw membw` | Laju salin `memmove`; batas bawah laju baca. Tidak membedakan single/dual channel |
 | `bench analyze` | Batas atas dari bandwidth; efisiensi > 1 berarti asumsi bandwidth terlalu rendah |
 | `quality kld` | Berkas logit referensi besar (vocab 248.320: ±0.12 GiB per chunk pada ctx 512) |
+| KV `iso3` | Hanya CUDA di fork; build CPU **segfault** (kode -11) saat `quality kld --kv-type iso3` |
 | `llama-server` | Tidak dibungkus; benchmark memakai binary per panggilan agar hasil terkontrol |
 | Pembungkus MCP | Tidak dibuat (keputusan di RFC-002) |
 | Python | Hanya 3.10.12 yang diuji |
