@@ -1,0 +1,10 @@
+# Set prompt tetap v1 untuk `legacy.py quality prompts`. Satu prompt per baris. Jangan diubah;
+# buat prompts-v2.txt bila perlu, agar hasil antar quant tetap sebanding.
+Sebutkan tiga warna primer dan jelaskan satu kalimat tentang masing-masing.
+Berapa 17 dikali 23? Tunjukkan langkahnya.
+Write a Python function that returns the n-th Fibonacci number iteratively.
+Apa ibu kota Australia, dan kota mana yang sering dikira ibu kotanya?
+Summarize in two sentences why the sky appears blue.
+Terjemahkan ke bahasa Inggris: "Saya sedang belajar menjalankan model besar di GPU kecil."
+List the planets of the solar system in order from the Sun.
+Jelaskan perbedaan RAM dan VRAM dalam tiga kalimat.
