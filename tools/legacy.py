@@ -948,8 +948,9 @@ def parse_placement(text):
         "layers_on_gpu": int(offload.group(1)) if offload else None,
         "layers_total_reported": int(offload.group(2)) if offload else None,
         "buffers_mib": {k: round(v, 2) for k, v in buffers.items()},
-        "note": "ASSUMPTION: pola baris log berdasarkan keluaran llama.cpp yang umum; "
-                "total yang dilaporkan bisa menghitung output layer",
+        "note": "pola dicocokkan dengan string di src/llama-model.cpp fork 08e025c ('offloaded %d/%d layers "
+                "to GPU', 'model buffer size') dan log CPU asli; log GPU asli belum diuji. "
+                "Total yang dilaporkan bisa menghitung output layer",
     }
 
 
