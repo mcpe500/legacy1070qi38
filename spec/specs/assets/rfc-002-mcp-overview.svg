@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" font-family="Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="572" viewBox="0 0 960 572" font-family="Helvetica, Arial, sans-serif">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
       <path d="M0 0 L10 5 L0 10 z" fill="#475569"/>
     </marker>
   </defs>
-  <rect width="960" height="560" fill="#ffffff"/>
-  <text x="30" y="30" font-size="21" font-weight="bold" fill="#0f172a">RFC-002 · Empat MCP kustom dan apa yang mereka sentuh</text>
+  <rect width="960" height="572" fill="#ffffff"/>
+  <text x="30" y="30" font-size="21" font-weight="bold" fill="#0f172a">RFC-002 · Satu CLI (tools/legacy.py), empat kelompok subcommand</text>
 
-  <text x="105" y="58" font-size="13" font-weight="bold" fill="#64748b" text-anchor="middle">Agent</text>
-  <text x="465" y="58" font-size="13" font-weight="bold" fill="#64748b" text-anchor="middle">MCP server (stdio, lokal)</text>
+  <text x="105" y="58" font-size="13" font-weight="bold" fill="#64748b" text-anchor="middle">Pemanggil</text>
+  <text x="465" y="58" font-size="13" font-weight="bold" fill="#64748b" text-anchor="middle">Subcommand</text>
   <text x="810" y="58" font-size="13" font-weight="bold" fill="#64748b" text-anchor="middle">Yang disentuh</text>
 
-  <!-- Agent -->
+  <!-- Caller -->
   <rect x="30" y="242" width="150" height="120" rx="12" fill="#0f172a"/>
-  <text x="105" y="296" font-size="18" font-weight="bold" fill="#ffffff" text-anchor="middle">Kiro agent</text>
-  <text x="105" y="320" font-size="12" fill="#cbd5e1" text-anchor="middle">kiro-cli chat</text>
+  <text x="105" y="290" font-size="18" font-weight="bold" fill="#ffffff" text-anchor="middle">Agent / Anda</text>
+  <text x="105" y="314" font-size="12" fill="#cbd5e1" text-anchor="middle">lewat bash</text>
+  <text x="105" y="332" font-size="12" fill="#cbd5e1" text-anchor="middle">atau terminal</text>
 
-  <!-- Arrows agent -> servers -->
   <path d="M180 302 C 240 302 240 122 300 122" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
   <path d="M180 302 C 240 302 240 242 300 242" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
   <path d="M180 302 C 240 302 240 362 300 362" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
@@ -25,9 +25,9 @@
 
   <!-- A -->
   <rect x="300" y="70" width="330" height="104" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
-  <text x="316" y="98" font-size="17" font-weight="bold" fill="#0f172a">A · legacy-budget</text>
-  <text x="316" y="122" font-size="13" fill="#334155">estimate_vram · suggest_ngl</text>
-  <text x="316" y="140" font-size="13" fill="#334155">compare_estimate_vs_measured</text>
+  <text x="316" y="98" font-size="17" font-weight="bold" fill="#0f172a">A · legacy.py budget</text>
+  <text x="316" y="122" font-size="13" fill="#334155">estimate · suggest-ngl · compare</text>
+  <text x="316" y="140" font-size="12.5" fill="#475569">rumus VRAM, KV cache, -ngl</text>
   <text x="316" y="162" font-size="12.5" font-weight="bold" fill="#166534">● Murni · tanpa efek samping · PBT</text>
   <path d="M630 122 L690 122" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
   <rect x="690" y="70" width="240" height="104" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
@@ -37,9 +37,9 @@
 
   <!-- B -->
   <rect x="300" y="190" width="330" height="104" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="2"/>
-  <text x="316" y="218" font-size="17" font-weight="bold" fill="#0f172a">B · legacy-hw</text>
-  <text x="316" y="242" font-size="13" fill="#334155">gpu_status · sample_gpu</text>
-  <text x="316" y="260" font-size="13" fill="#334155">ram_status · check_headroom</text>
+  <text x="316" y="218" font-size="17" font-weight="bold" fill="#0f172a">B · legacy.py hw</text>
+  <text x="316" y="242" font-size="13" fill="#334155">gpu · sample · ram · headroom</text>
+  <text x="316" y="260" font-size="12.5" fill="#475569">pantau VRAM, suhu, RAM, swap</text>
   <text x="316" y="282" font-size="12.5" font-weight="bold" fill="#075985">● Read-only, risiko rendah</text>
   <path d="M630 242 L690 242" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
   <rect x="690" y="190" width="240" height="104" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
@@ -49,11 +49,10 @@
 
   <!-- C -->
   <rect x="300" y="310" width="330" height="104" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
-  <text x="316" y="338" font-size="17" font-weight="bold" fill="#0f172a">C · legacy-llama</text>
-  <text x="316" y="357" font-size="12.5" fill="#334155">inspect_gguf · build_llamacpp</text>
-  <text x="316" y="373" font-size="12.5" fill="#334155">run_inference · run_benchmark</text>
-  <text x="316" y="389" font-size="12.5" fill="#334155">compare_results</text>
-  <text x="316" y="406" font-size="12.5" font-weight="bold" fill="#92400e">● Menjalankan proses · pakai lock</text>
+  <text x="316" y="338" font-size="17" font-weight="bold" fill="#0f172a">C · legacy.py gguf / llama</text>
+  <text x="316" y="360" font-size="13" fill="#334155">gguf inspect · llama build · llama run</text>
+  <text x="316" y="378" font-size="13" fill="#334155">llama bench · llama compare</text>
+  <text x="316" y="402" font-size="12.5" font-weight="bold" fill="#92400e">● Menjalankan proses · pakai lock</text>
   <path d="M630 362 L690 362" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
   <rect x="690" y="310" width="240" height="104" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
   <text x="706" y="344" font-size="14" font-weight="bold" fill="#0f172a">llama.cpp + file GGUF</text>
@@ -62,13 +61,15 @@
 
   <!-- D -->
   <rect x="300" y="430" width="330" height="104" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
-  <text x="316" y="458" font-size="17" font-weight="bold" fill="#0f172a">D · legacy-spec</text>
-  <text x="316" y="482" font-size="13" fill="#334155">new_spec · append_handoff · new_session</text>
-  <text x="316" y="500" font-size="13" fill="#334155">list/resolve_question · validate_specs</text>
+  <text x="316" y="458" font-size="17" font-weight="bold" fill="#0f172a">D · legacy.py spec</text>
+  <text x="316" y="482" font-size="13" fill="#334155">new · handoff · session</text>
+  <text x="316" y="500" font-size="13" fill="#334155">questions · validate</text>
   <text x="316" y="522" font-size="12.5" font-weight="bold" fill="#5b21b6">● Menulis file dokumentasi</text>
   <path d="M630 482 L690 482" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
   <rect x="690" y="430" width="240" height="104" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
   <text x="706" y="464" font-size="14" font-weight="bold" fill="#0f172a">Folder spec/</text>
   <text x="706" y="488" font-size="13" fill="#334155">SPEC-*, RFC-*</text>
   <text x="706" y="510" font-size="13" fill="#334155">HANDOFF-LOG.md</text>
+
+  <text x="30" y="560" font-size="12.5" fill="#64748b">Satu file Python, hanya library standar · setiap subcommand punya opsi --json · MCP hanya pembungkus opsional di akhir</text>
 </svg>
