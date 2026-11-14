@@ -270,3 +270,14 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [CORRECTION] Tiga cacat CLI ditemukan saat uji binary asli: llama run macet (-no-cnv diabaikan, stdin), kv_layers_estimate salah pada hibrida,
     tidak ada test kontrak. Diperbaiki di PR #29
 ```
+
+### iso3 + MTP di llama.cpp utama (2026-11-14)
+
+```
+[Post-bootstrap] [UPDATE] iso3 diporting ke llama.cpp utama 3549c27 (CPU + CUDA), patches/llama.cpp/. TDD: red lalu green
+  → test-iso3 PASSED, test-backend-ops CUDA0 iso3 28/28, regresi 5041/5041, ctest -L main rc 0
+[Post-bootstrap] [FINDING] KLD iso3 vs f16 pada 0.8B (8 chunk): 0.0495, same top p 87.7%
+[Post-bootstrap] [FINDING] MTP + iso3 jalan bersama di 27B IQ4_XS. Keluaran MTP tidak identik bit dengan tanpa MTP, juga pada f16
+[Post-bootstrap] [FINDING] KV konteks MTP (1 layer) memakai -ctkd/-ctvd (default f16), tidak mewarisi -ctk/-ctv. Belum diubah (keputusan perilaku)
+  → Lihat spec/research/reports/2026-11-14-iso3-mtp-main.md
+```

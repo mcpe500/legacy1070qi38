@@ -1,0 +1,428 @@
+From fc9437a920968b16bc0c94fa4e40e6a39557eadb Mon Sep 17 00:00:00 2001
+From: mcpe500 <68177813+mcpe500@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 18:53:07 +0000
+Subject: [PATCH 1/2] tests: iso3 KV cache tests (red)
+
+test-iso3: traits/shapes, CPU roundtrip, CUDA SET_ROWS vs CPU ref, CUDA FA iso3 vs f16.
+test-backend-ops: SET_ROWS and FLASH_ATTN_EXT iso3 cases. test-quantize-fns: iso3 thresholds.
+Red: build of test-iso3 fails, GGML_TYPE_ISO3_0 not declared.
+---
+ tests/CMakeLists.txt        |   1 +
+ tests/test-backend-ops.cpp  |  18 ++
+ tests/test-iso3.cpp         | 322 ++++++++++++++++++++++++++++++++++++
+ tests/test-quantize-fns.cpp |   8 +-
+ 4 files changed, 348 insertions(+), 1 deletion(-)
+ create mode 100644 tests/test-iso3.cpp
+
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 36e48a0..b745858 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -367,6 +367,7 @@ endif()
+ llama_build(test-backend-ops.cpp LINK ggml Threads::Threads)
+ 
+ llama_build_and_test(test-backend-tensor.cpp LINK ggml)
++llama_build_and_test(test-iso3.cpp LABEL "main backend" LINK ggml)
+ 
+ if (BUILD_SHARED_LIBS)
+     llama_build_and_test(test-llama-mmap.cpp ${PROJECT_SOURCE_DIR}/src/llama-impl.cpp ${PROJECT_SOURCE_DIR}/src/llama-mmap.cpp LABEL behavior)
+diff --git a/tests/test-backend-ops.cpp b/tests/test-backend-ops.cpp
+index c328072..0ee7445 100644
+--- a/tests/test-backend-ops.cpp
++++ b/tests/test-backend-ops.cpp
+@@ -10797,6 +10797,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+     test_cases.emplace_back(new test_set_rows(GGML_TYPE_F32, GGML_TYPE_F32, GGML_TYPE_I64, { 1, 8, 1, 3 }, { 1, 1 }, 2, false));
+     test_cases.emplace_back(new test_set_rows(GGML_TYPE_F32, GGML_TYPE_F32, GGML_TYPE_I32, { 1, 8, 1, 3 }, { 1, 1 }, 2, false));
+     test_cases.emplace_back(new test_set_rows(GGML_TYPE_F32, GGML_TYPE_Q8_0, GGML_TYPE_I32, { 256, 5, 1, 3 }, { 1, 1, }, 1, false));
++    // iso3 KV cache writes (block of 128, KV heads of 128 and 256)
++    for (int64_t ne0 : {128, 256, 1024}) {
++        for (bool v : {false, true}) {
++            test_cases.emplace_back(new test_set_rows(GGML_TYPE_F32, GGML_TYPE_ISO3_0, GGML_TYPE_I64, { ne0, 11, 1, 3 }, { 2, 3, }, 7, v));
++            test_cases.emplace_back(new test_set_rows(GGML_TYPE_F32, GGML_TYPE_ISO3_0, GGML_TYPE_I32, { ne0, 5,  7, 1 }, { 1, 1, }, 1, v));
++        }
++    }
+     for (ggml_type src_type : {GGML_TYPE_F16, GGML_TYPE_F32}) {
+         for (ggml_type type : all_types) {
+             for (int b : {1, 7}) {
+@@ -13052,6 +13059,17 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
+         }
+     }
+ 
++    // iso3 KV cases: decode (nb=1), MTP verify batches (nb=2..4), prefill, GQA, permuted KV, mixed with f16/q8_0
++    for (int hs : {128, 256}) {
++        for (int nb : {1, 2, 4, 35}) {
++            test_cases.emplace_back(new test_flash_attn_ext(hs, hs, 2, {4, 1}, 512, nb, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_ISO3_0, GGML_TYPE_ISO3_0));
++        }
++        test_cases.emplace_back(new test_flash_attn_ext(hs, hs, 2, {4, 1}, 113, 1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_ISO3_0, GGML_TYPE_ISO3_0));
++        test_cases.emplace_back(new test_flash_attn_ext(hs, hs, 2, {4, 1}, 512, 1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_ISO3_0, GGML_TYPE_ISO3_0, {0, 2, 1, 3}));
++        test_cases.emplace_back(new test_flash_attn_ext(hs, hs, 2, {4, 1}, 512, 1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_ISO3_0, GGML_TYPE_F16));
++        test_cases.emplace_back(new test_flash_attn_ext(hs, hs, 2, {4, 1}, 512, 1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_ISO3_0));
++    }
++
+     // q8_0 KV cases: decode and prompt batches, KV pad, permuted KV, feature flags, and long context
+     test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {16, 1},   113,   1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0));
+     test_cases.emplace_back(new test_flash_attn_ext(256, 256, 2, {16, 1},  1024,   1, true, false, 0, 0, GGML_PREC_F32, GGML_TYPE_Q8_0, GGML_TYPE_Q8_0));
+diff --git a/tests/test-iso3.cpp b/tests/test-iso3.cpp
+new file mode 100644
+index 0000000..2610056
+--- /dev/null
++++ b/tests/test-iso3.cpp
+@@ -0,0 +1,322 @@
++// Tests for the iso3 (IsoQuant 3-bit) KV cache type:
++//   - type traits and tensor shapes
++//   - CPU reference quantize/dequantize roundtrip
++//   - CUDA SET_ROWS (KV write) against the CPU reference bytes
++//   - CUDA FLASH_ATTN_EXT with iso3 K/V against f16 K/V
++//
++// The GPU part is mandatory: iso3 is meant for CUDA, and an earlier implementation crashed only
++// in CPU builds. Set ISO3_ALLOW_NO_GPU=1 to run only the CPU part on machines without a GPU.
++
++#include "ggml.h"
++#include "ggml-alloc.h"
++#include "ggml-backend.h"
++#include "ggml-cpu.h"
++
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <random>
++#include <vector>
++
++static int n_failed = 0;
++
++#define CHECK(cond, ...) do {                 \
++    if (!(cond)) {                            \
++        printf("  FAIL %s:%d: ", __FILE__, __LINE__); \
++        printf(__VA_ARGS__);                  \
++        printf("\n");                         \
++        n_failed++;                           \
++    } else {                                  \
++        printf("  ok   "); printf(__VA_ARGS__); printf("\n"); \
++    }                                         \
++} while (0)
++
++static std::vector<float> gaussian(size_t n, uint32_t seed, float scale = 1.0f) {
++    std::mt19937 rng(seed);
++    std::normal_distribution<float> d(0.0f, scale);
++    std::vector<float> v(n);
++    for (auto & x : v) {
++        x = d(rng);
++    }
++    return v;
++}
++
++// relative squared error: sum((a-b)^2) / sum(a^2)
++static double nmse(const float * a, const float * b, size_t n) {
++    double num = 0.0, den = 0.0;
++    for (size_t i = 0; i < n; ++i) {
++        num += (double) (a[i] - b[i]) * (a[i] - b[i]);
++        den += (double) a[i] * a[i];
++    }
++    return den > 0.0 ? num / den : num;
++}
++
++static void test_traits() {
++    printf("traits and shapes\n");
++    const ggml_type t = GGML_TYPE_ISO3_0;
++    CHECK(strcmp(ggml_type_name(t), "iso3") == 0, "type name is iso3 (got %s)", ggml_type_name(t));
++    CHECK(ggml_blck_size(t) == 128, "block size 128 (got %lld)", (long long) ggml_blck_size(t));
++    CHECK(ggml_type_size(t) == 50, "block bytes 50 (got %zu)", ggml_type_size(t));
++    CHECK(ggml_row_size(t, 256) == 100, "row of 256 values = 100 bytes (got %zu)", ggml_row_size(t, 256));
++    CHECK(ggml_is_quantized(t), "is quantized");
++
++    // K cache tensor of a model with 4 KV heads x head_dim 256 (Qwen3.8-27B), 4096 cells
++    ggml_init_params ip = { 4*1024*1024, nullptr, true };
++    ggml_context * ctx = ggml_init(ip);
++    ggml_tensor * k = ggml_new_tensor_2d(ctx, t, 4*256, 4096);
++    CHECK(ggml_nbytes(k) == (size_t) 4096*4*256/128*50, "KV tensor 1024 x 4096 = %zu bytes", ggml_nbytes(k));
++    CHECK(k->nb[1] == 4*256/128*50, "row stride %zu", k->nb[1]);
++    ggml_tensor * view = ggml_view_3d(ctx, k, 256, 4, 4096, ggml_row_size(t, 256), k->nb[1], 0);
++    CHECK(view->nb[1] == 100 && view->nb[2] == 400, "per-head view strides %zu %zu", view->nb[1], view->nb[2]);
++    ggml_free(ctx);
++}
++
++static void test_cpu_roundtrip() {
++    printf("CPU reference roundtrip\n");
++    const auto * tr = ggml_get_type_traits(GGML_TYPE_ISO3_0);
++    CHECK(tr->from_float_ref != nullptr && tr->to_float != nullptr, "reference quantize and dequantize exist");
++    if (!tr->from_float_ref || !tr->to_float) {
++        return;
++    }
++
++    const size_t n = 128*64;
++    for (float scale : { 0.01f, 1.0f, 50.0f }) {
++        const auto x = gaussian(n, 1234, scale);
++        std::vector<uint8_t> q(ggml_row_size(GGML_TYPE_ISO3_0, n));
++        std::vector<float>   y(n);
++        tr->from_float_ref(x.data(), q.data(), n);
++        tr->to_float(q.data(), y.data(), n);
++        const double e = nmse(x.data(), y.data(), n);
++        // 3-bit Lloyd-Max on a Gaussian has relative MSE 0.0345; allow some margin for the fixed codebook
++        CHECK(e < 0.05, "gaussian scale %g: nmse %.4f < 0.05", scale, e);
++
++        // requantizing the dequantized values must reproduce the same codes (codes are self-consistent)
++        std::vector<uint8_t> q2(q.size());
++        tr->from_float_ref(y.data(), q2.data(), n);
++        size_t same = 0;
++        for (size_t i = 0; i < q.size(); ++i) {
++            same += q[i] == q2[i];
++        }
++        CHECK(same >= q.size()*99/100, "requantize stable: %zu / %zu bytes equal", same, q.size());
++    }
++
++    std::vector<float> z(256, 0.0f), y(256, 1.0f);
++    std::vector<uint8_t> q(ggml_row_size(GGML_TYPE_ISO3_0, 256));
++    tr->from_float_ref(z.data(), q.data(), 256);
++    tr->to_float(q.data(), y.data(), 256);
++    bool all_zero = true;
++    for (float v : y) {
++        all_zero = all_zero && v == 0.0f;
++    }
++    CHECK(all_zero, "zero vector stays zero (no NaN)");
++
++    // CPU backend dot product (used by CPU flash attention for layers kept in RAM)
++    const auto * trc = ggml_get_type_traits_cpu(GGML_TYPE_ISO3_0);
++    CHECK(trc->from_float != nullptr && trc->vec_dot != nullptr, "CPU from_float and vec_dot exist");
++    if (trc->from_float && trc->vec_dot) {
++        const auto a = gaussian(1024, 7);
++        const auto b = gaussian(1024, 8);
++        std::vector<uint8_t> qa(ggml_row_size(GGML_TYPE_ISO3_0, 1024));
++        trc->from_float(a.data(), qa.data(), 1024);
++        std::vector<float> da(1024);
++        tr->to_float(qa.data(), da.data(), 1024);
++
++        const auto * trv = ggml_get_type_traits_cpu(trc->vec_dot_type);
++        std::vector<uint8_t> qb(ggml_row_size(trc->vec_dot_type, 1024));
++        trv->from_float(b.data(), qb.data(), 1024);
++        float got = 0.0f;
++        trc->vec_dot(1024, &got, 0, qa.data(), 0, qb.data(), 0, 1);
++        double ref = 0.0;
++        for (int i = 0; i < 1024; ++i) {
++            ref += (double) da[i]*b[i];
++        }
++        CHECK(std::fabs(got - ref) < 1e-2*std::sqrt(1024.0), "vec_dot matches dequantized dot (%.4f vs %.4f)", got, ref);
++    }
++}
++
++struct gpu_ctx {
++    ggml_backend_t backend = nullptr;
++    ggml_context * ctx = nullptr;
++    ggml_backend_buffer_t buf = nullptr;
++
++    ~gpu_ctx() {
++        if (buf) ggml_backend_buffer_free(buf);
++        if (ctx) ggml_free(ctx);
++    }
++};
++
++static void compute(ggml_backend_t backend, ggml_context * ctx, ggml_tensor * out) {
++    ggml_cgraph * gf = ggml_new_graph(ctx);
++    ggml_build_forward_expand(gf, out);
++    const ggml_status st = ggml_backend_graph_compute(backend, gf);
++    GGML_ASSERT(st == GGML_STATUS_SUCCESS);
++}
++
++static void test_gpu_set_rows(ggml_backend_t backend) {
++    printf("GPU SET_ROWS f32 -> iso3 (KV cache write)\n");
++    const int64_t ne0 = 256, n_rows = 16, n_cells = 32;
++
++    gpu_ctx g;
++    ggml_init_params ip = { 16*ggml_tensor_overhead() + ggml_graph_overhead(), nullptr, true };
++    g.ctx = ggml_init(ip);
++    ggml_tensor * dst = ggml_new_tensor_2d(g.ctx, GGML_TYPE_ISO3_0, ne0, n_cells);
++    ggml_tensor * src = ggml_new_tensor_2d(g.ctx, GGML_TYPE_F32, ne0, n_rows);
++    ggml_tensor * idx = ggml_new_tensor_1d(g.ctx, GGML_TYPE_I64, n_rows);
++    ggml_tensor * out = ggml_set_rows(g.ctx, dst, src, idx);
++
++    const bool supported = ggml_backend_supports_op(backend, out);
++    CHECK(supported, "%s supports SET_ROWS to iso3", ggml_backend_name(backend));
++    if (!supported) {
++        return;
++    }
++
++    g.buf = ggml_backend_alloc_ctx_tensors(g.ctx, backend);
++    ggml_backend_buffer_clear(g.buf, 0);
++
++    const auto x = gaussian(ne0*n_rows, 99, 3.0f);
++    std::vector<int64_t> rows(n_rows);
++    for (int64_t i = 0; i < n_rows; ++i) {
++        rows[i] = (i*7 + 3) % n_cells; // scattered, like cells in a KV cache
++    }
++    ggml_backend_tensor_set(src, x.data(), 0, ggml_nbytes(src));
++    ggml_backend_tensor_set(idx, rows.data(), 0, ggml_nbytes(idx));
++    compute(backend, g.ctx, out);
++
++    std::vector<uint8_t> got(ggml_nbytes(dst));
++    ggml_backend_tensor_get(dst, got.data(), 0, got.size());
++
++    const auto * tr = ggml_get_type_traits(GGML_TYPE_ISO3_0);
++    const size_t rs = ggml_row_size(GGML_TYPE_ISO3_0, ne0);
++    size_t same = 0, total = 0;
++    double worst = 0.0;
++    std::vector<uint8_t> ref(rs);
++    std::vector<float> y(ne0);
++    for (int64_t i = 0; i < n_rows; ++i) {
++        tr->from_float_ref(x.data() + i*ne0, ref.data(), ne0);
++        const uint8_t * row = got.data() + rows[i]*rs;
++        for (size_t b = 0; b < rs; ++b) {
++            same += row[b] == ref[b];
++        }
++        total += rs;
++        tr->to_float(row, y.data(), ne0);
++        worst = std::max(worst, nmse(x.data() + i*ne0, y.data(), ne0));
++    }
++    CHECK(same >= total*99/100, "GPU bytes equal CPU reference: %zu / %zu", same, total);
++    CHECK(worst < 0.06, "worst row nmse of GPU-written cells %.4f < 0.06", worst);
++}
++
++// attention output with K/V of type type_kv, inputs given as f32
++static std::vector<float> run_fa(ggml_backend_t backend, ggml_type type_kv, const std::vector<float> & q,
++                                 const std::vector<float> & k, const std::vector<float> & v,
++                                 int64_t hs, int64_t n_q, int64_t n_kv, int64_t n_head, int64_t n_head_kv) {
++    gpu_ctx g;
++    ggml_init_params ip = { 32*ggml_tensor_overhead() + ggml_graph_overhead(), nullptr, true };
++    g.ctx = ggml_init(ip);
++
++    ggml_tensor * tq  = ggml_new_tensor_3d(g.ctx, GGML_TYPE_F32, hs, n_q, n_head);
++    // K/V stored like the llama.cpp KV cache: one row per cell holding all KV heads
++    ggml_tensor * tk  = ggml_new_tensor_3d(g.ctx, type_kv, hs, n_head_kv, n_kv);
++    ggml_tensor * tv  = ggml_new_tensor_3d(g.ctx, type_kv, hs, n_head_kv, n_kv);
++    ggml_tensor * tm  = ggml_new_tensor_2d(g.ctx, GGML_TYPE_F16, n_kv, n_q);
++    // non-contiguous views [hs, n_kv, n_head_kv], as built by llama_kv_cache::get_k/get_v
++    ggml_tensor * kp  = ggml_permute(g.ctx, tk, 0, 2, 1, 3);
++    ggml_tensor * vp  = ggml_permute(g.ctx, tv, 0, 2, 1, 3);
++    ggml_tensor * out = ggml_flash_attn_ext(g.ctx, tq, kp, vp, tm, 1.0f/std::sqrt((float) hs), 0.0f, 0.0f);
++    ggml_prec_set_acc(out, GGML_PREC_F32);
++
++    if (!ggml_backend_supports_op(backend, out)) {
++        return {};
++    }
++
++    g.buf = ggml_backend_alloc_ctx_tensors(g.ctx, backend);
++
++    auto upload = [&](ggml_tensor * t, const std::vector<float> & data) {
++        if (t->type == GGML_TYPE_F32) {
++            ggml_backend_tensor_set(t, data.data(), 0, ggml_nbytes(t));
++            return;
++        }
++        std::vector<uint8_t> tmp(ggml_nbytes(t));
++        ggml_quantize_chunk(t->type, data.data(), tmp.data(), 0, ggml_nrows(t), t->ne[0], nullptr);
++        ggml_backend_tensor_set(t, tmp.data(), 0, tmp.size());
++    };
++    upload(tq, q);
++    upload(tk, k);
++    upload(tv, v);
++
++    // causal mask: query i sees cells 0 .. n_kv - n_q + i
++    std::vector<ggml_fp16_t> m(n_kv*n_q);
++    for (int64_t i = 0; i < n_q; ++i) {
++        for (int64_t j = 0; j < n_kv; ++j) {
++            m[i*n_kv + j] = ggml_fp32_to_fp16(j <= n_kv - n_q + i ? 0.0f : -INFINITY);
++        }
++    }
++    ggml_backend_tensor_set(tm, m.data(), 0, ggml_nbytes(tm));
++
++    compute(backend, g.ctx, out);
++    std::vector<float> res(ggml_nelements(out));
++    ggml_backend_tensor_get(out, res.data(), 0, ggml_nbytes(out));
++    return res;
++}
++
++static void test_gpu_flash_attn(ggml_backend_t backend) {
++    printf("GPU FLASH_ATTN_EXT with iso3 K/V\n");
++    const auto * tr = ggml_get_type_traits(GGML_TYPE_ISO3_0);
++
++    for (int64_t hs : { 128, 256 }) {
++        for (int64_t n_q : { 1, 4, 32 }) {     // 1 = decode, 4 = MTP verify batch, 32 = prefill
++            const int64_t n_kv = 256, n_head = 8, n_head_kv = 2;
++            const auto q = gaussian(hs*n_q*n_head, 11);
++            const auto k = gaussian(hs*n_kv*n_head_kv, 12);
++            const auto v = gaussian(hs*n_kv*n_head_kv, 13);
++
++            // the f16 reference uses the iso3-dequantized K/V, so it isolates kernel errors from quantization error
++            std::vector<uint8_t> tmp(ggml_row_size(GGML_TYPE_ISO3_0, k.size()));
++            std::vector<float> kd(k.size()), vd(v.size());
++            tr->from_float_ref(k.data(), tmp.data(), k.size());
++            tr->to_float(tmp.data(), kd.data(), k.size());
++            tr->from_float_ref(v.data(), tmp.data(), v.size());
++            tr->to_float(tmp.data(), vd.data(), v.size());
++
++            const auto o_iso = run_fa(backend, GGML_TYPE_ISO3_0, q, k, v, hs, n_q, n_kv, n_head, n_head_kv);
++            CHECK(!o_iso.empty(), "hs=%lld n_q=%lld: %s supports FA with iso3 K/V", (long long) hs, (long long) n_q, ggml_backend_name(backend));
++            if (o_iso.empty()) {
++                continue;
++            }
++            const auto o_deq = run_fa(backend, GGML_TYPE_F16, q, kd, vd, hs, n_q, n_kv, n_head, n_head_kv);
++            const auto o_f16 = run_fa(backend, GGML_TYPE_F16, q, k, v, hs, n_q, n_kv, n_head, n_head_kv);
++
++            const double e_kernel = nmse(o_deq.data(), o_iso.data(), o_iso.size());
++            const double e_quant  = nmse(o_f16.data(), o_iso.data(), o_iso.size());
++            CHECK(e_kernel < 1e-4, "hs=%lld n_q=%lld: iso3 vs f16(dequantized) nmse %.2e < 1e-4", (long long) hs, (long long) n_q, e_kernel);
++            CHECK(e_quant < 0.1, "hs=%lld n_q=%lld: iso3 vs f16(original) nmse %.4f < 0.1", (long long) hs, (long long) n_q, e_quant);
++        }
++    }
++}
++
++int main() {
++    ggml_backend_load_all();
++
++    test_traits();
++    test_cpu_roundtrip();
++
++    ggml_backend_dev_t dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
++    if (dev == nullptr) {
++        const char * allow = getenv("ISO3_ALLOW_NO_GPU");
++        if (allow && atoi(allow) != 0) {
++            printf("no GPU device: GPU tests skipped (ISO3_ALLOW_NO_GPU=1)\n");
++        } else {
++            printf("  FAIL no GPU device found; the iso3 tests must run on CUDA (set ISO3_ALLOW_NO_GPU=1 to skip)\n");
++            n_failed++;
++        }
++    } else {
++        ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
++        printf("GPU backend: %s\n", ggml_backend_name(backend));
++        test_gpu_set_rows(backend);
++        test_gpu_flash_attn(backend);
++        ggml_backend_free(backend);
++    }
++
++    printf("%s: %d failed\n", n_failed ? "FAILED" : "PASSED", n_failed);
++    return n_failed ? 1 : 0;
++}
+diff --git a/tests/test-quantize-fns.cpp b/tests/test-quantize-fns.cpp
+index 1542ab6..e0e60ab 100644
+--- a/tests/test-quantize-fns.cpp
++++ b/tests/test-quantize-fns.cpp
+@@ -25,6 +25,9 @@ constexpr float MAX_QUANTIZATION_TOTAL_ERROR_2BITS = 0.0075f;
+ constexpr float MAX_QUANTIZATION_TOTAL_ERROR_3BITS = 0.0040f;
+ constexpr float MAX_QUANTIZATION_TOTAL_ERROR_3BITS_XXS = 0.0050f;
+ constexpr float MAX_QUANTIZATION_TOTAL_ERROR_FP4 = 0.0030f;
++// iso3: per-128 L2 norm + fixed 3-bit codebook after a quaternion rotation (KV cache type)
++constexpr float MAX_QUANTIZATION_TOTAL_ERROR_ISO3 = 0.0060f;
++constexpr float MAX_DOT_PRODUCT_ERROR_ISO3 = 0.04f;
+ constexpr float MAX_DOT_PRODUCT_ERROR = 0.02f;
+ constexpr float MAX_DOT_PRODUCT_ERROR_LOWBIT = 0.04f;
+ constexpr float MAX_DOT_PRODUCT_ERROR_FP4 = 0.03f;
+@@ -344,7 +347,8 @@ static int test_vec_dot_q(bool verbose) {
+                 type == GGML_TYPE_Q3_K    ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
+                 type == GGML_TYPE_IQ3_S   ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
+                 type == GGML_TYPE_IQ3_XXS ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS_XXS :
+-                type == GGML_TYPE_NVFP4   ? MAX_QUANTIZATION_TOTAL_ERROR_FP4 : MAX_QUANTIZATION_TOTAL_ERROR;
++                type == GGML_TYPE_NVFP4   ? MAX_QUANTIZATION_TOTAL_ERROR_FP4 :
++                type == GGML_TYPE_ISO3_0  ? MAX_QUANTIZATION_TOTAL_ERROR_ISO3 : MAX_QUANTIZATION_TOTAL_ERROR;
+             bool failed = !(total_error < max_quantization_error);
+             num_failed += failed;
+             if (failed || verbose) {
+@@ -368,6 +372,8 @@ static int test_vec_dot_q(bool verbose) {
+                 ? MAX_DOT_PRODUCT_ERROR_TERNARY
+                 : type == GGML_TYPE_NVFP4
+                 ? MAX_DOT_PRODUCT_ERROR_FP4
++                : type == GGML_TYPE_ISO3_0
++                ? MAX_DOT_PRODUCT_ERROR_ISO3
+                 : MAX_DOT_PRODUCT_ERROR;
+             failed = !(vec_dot_error < max_allowed_error);
+             num_failed += failed;
+-- 
+2.34.1
+
