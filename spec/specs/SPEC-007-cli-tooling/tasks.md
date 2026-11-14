@@ -1,6 +1,6 @@
 # Tasks — CLI Tooling (`tools/legacy.py`)
 
-> Spec: SPEC-007 | Status: **In Progress** (kode dan test ditulis; test belum dijalankan oleh agen)
+> Spec: SPEC-007 | Status: **In Review** (87 test lulus di sandbox; uji dengan llama.cpp dan GGUF asli belum)
 > Dependencies: RFC-002 (Proposed)
 > Blocks: SPEC-002 Task 4, SPEC-006
 
@@ -26,7 +26,7 @@
 - [x] **Task 4: `hw`**
   - Implementation: parser murni + pembaca `/proc` dan `nvidia-smi`
   - Test: `HwParsers`, `HwRealSystem`, `HwGpuMissing`
-  - Done when: test lulus (⚠️ belum dikonfirmasi); `hw gpu` diuji di GTX 1070 Ti (belum)
+  - Done when: test lulus (⚠️ belum dikonfirmasi); `hw gpu`, `hw cpu`, `hw ram`, `hw membw` dijalankan di GTX 1070 Ti ✅ (hasil di HANDOFF-LOG)
 
 - [x] **Task 5: `llama`**
   - Implementation: argv list, allowlist, `InferenceLock`, timeout, parser timing/bench/placement
@@ -38,10 +38,10 @@
   - Test: `SpecScaffold`, `SpecHandoff`, `SpecQuestions`, `SpecValidate` (termasuk `test_real_repo_passes`)
   - Done when: test lulus (⚠️ belum dikonfirmasi)
 
-- [ ] **Task 7: Konfirmasi hasil test**
+- [x] **Task 7: Konfirmasi hasil test**
   - Implementation: jalankan `python tools/test_legacy.py -v` dan tempel keluaran di PR
   - Test: semua test lulus; kegagalan diperbaiki
-  - Done when: keluaran test terlampir
+  - Done when: keluaran test terlampir ✅ (87 test OK, 1 dilewati karena khusus mesin tanpa GPU; lihat deskripsi PR)
 
 - [ ] **Task 8: Uji pada data asli**
   - Implementation: `gguf inspect` pada Qwen3.8-27B GGUF, `hw gpu`/`hw membw` pada mesin target, `llama run` pada llama.cpp asli

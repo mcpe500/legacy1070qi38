@@ -196,3 +196,17 @@ Daftar open questions yang belum terjawab (update saat resolved):
   → Perlu: jalankan `python tools/test_legacy.py -v` dan `python tools/legacy.py spec validate`, lalu catat hasilnya
   → Asumsi yang perlu dicek: tabel tipe ggml, opsi llama.cpp (-o json, -no-cnv), format baris log/timing
 ```
+
+### Pengukuran nyata pertama (lewat `tools/legacy.py`, PR ini)
+
+```
+[Post-bootstrap] [FINDING] CPU: AMD Ryzen 5 2400G, 4 core / 8 thread, AVX2 ya, AVX-512 tidak (hw cpu)
+[Post-bootstrap] [FINDING] RAM: 15.53 GiB total, 9.25 GiB tersedia saat diukur, swap 4 GiB (hw ram). Single/dual channel BELUM diketahui
+[Post-bootstrap] [FINDING] Bandwidth salin RAM satu thread Python: 11.09 GB/s (hw membw). Ini batas bawah kasar, bukan bandwidth maksimum
+[Post-bootstrap] [FINDING] VRAM saat diukur: 7875 dari 8192 MiB terpakai, 231 MiB bebas. Pemakainya sebuah llama-server dari build lokal
+    "llama-cpp-turboquant" milik pemilik repo. Artinya build llama.cpp CUDA sudah berjalan di GPU Pascal ini.
+    Selama proses itu hidup, tidak ada uji GPU lain yang bisa jalan. Fork "turboquant" layak dicek: kemungkinan relevan dengan quantization
+[Post-bootstrap] [UPDATE] OQ-011 terjawab sebagian: CPU dan RAM diketahui; channel dan bandwidth maksimum belum
+[Post-bootstrap] [FINDING] Sandbox Kiro (--sandbox): token gh tersembunyi, home read-only, jaringan terblokir, /dev/nvidia* TIDAK terlihat
+    Konsekuensi: agen bersandbox tidak bisa menjalankan uji GPU. Uji CPU bisa
+```

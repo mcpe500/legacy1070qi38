@@ -9,6 +9,8 @@
 
 ![Isi legacy.py: yang sudah ditulis dan yang belum](../assets/spec-007-cli-implementation.svg)
 
+![Panduan visual: alur satu perintah dan contoh hitungan budget Qwen3.8-27B Q4_K_M](../assets/spec-007-cli-visual-guide.svg)
+
 Logika ada di fungsi murni. Lapisan argparse di bagian bawah file hanya membaca argumen, memanggil fungsi,
 dan mencetak hasil. Fungsi yang sama bisa dibungkus MCP nanti tanpa mengubah logika.
 

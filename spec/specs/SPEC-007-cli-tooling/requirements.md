@@ -1,6 +1,6 @@
 # Requirements — CLI Tooling (`tools/legacy.py`)
 
-> Spec: SPEC-007 | Status: **Draft** (kode ditulis, hasil test belum terkonfirmasi)
+> Spec: SPEC-007 | Status: **In Review** (test lulus di sandbox; belum diuji dengan llama.cpp dan GGUF asli)
 > Referensi: RFC-002 (status **Proposed**; keputusan desain masih milik pemilik repo), issue #1
 > Priority: P1
 
