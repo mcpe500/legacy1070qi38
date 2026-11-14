@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" font-family="Helvetica, Arial, sans-serif">
+  <rect width="960" height="560" fill="#ffffff"/>
+  <text x="30" y="34" font-size="21" font-weight="bold" fill="#0f172a">SPEC-007 · Isi tools/legacy.py: yang sudah ditulis dan yang belum</text>
+  <text x="30" y="56" font-size="13" fill="#64748b">Satu file Python, library standar · semua subcommand punya --json · exit code 0 ok, 1 gagal, 2 input salah, 3 alat tidak ada</text>
+
+  <!-- legend -->
+  <rect x="30" y="72" width="14" height="14" rx="3" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="50" y="84" font-size="12.5" fill="#334155">Sudah ditulis dan punya test</text>
+  <rect x="250" y="72" width="14" height="14" rx="3" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <text x="270" y="84" font-size="12.5" fill="#334155">Belum dibuat (tercantum di RFC-002 / issue)</text>
+
+  <!-- budget -->
+  <rect x="30" y="104" width="170" height="300" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+  <text x="115" y="130" font-size="16" font-weight="bold" fill="#0f172a" text-anchor="middle">budget</text>
+  <text x="115" y="148" font-size="11" fill="#64748b" text-anchor="middle">tanpa hardware</text>
+  <rect x="44" y="164" width="142" height="34" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="115" y="186" font-size="13" fill="#0f172a" text-anchor="middle">estimate</text>
+  <rect x="44" y="208" width="142" height="34" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="115" y="230" font-size="13" fill="#0f172a" text-anchor="middle">suggest-ngl</text>
+  <rect x="44" y="252" width="142" height="34" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="115" y="274" font-size="13" fill="#0f172a" text-anchor="middle">compare</text>
+  <text x="115" y="318" font-size="11.5" fill="#475569" text-anchor="middle">Test: nilai tangan +</text>
+  <text x="115" y="334" font-size="11.5" fill="#475569" text-anchor="middle">uji properti (seed tetap)</text>
+
+  <!-- hw -->
+  <rect x="212" y="104" width="170" height="300" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+  <text x="297" y="130" font-size="16" font-weight="bold" fill="#0f172a" text-anchor="middle">hw</text>
+  <text x="297" y="148" font-size="11" fill="#64748b" text-anchor="middle">read-only</text>
+  <rect x="226" y="160" width="142" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="297" y="178" font-size="12.5" fill="#0f172a" text-anchor="middle">gpu · sample</text>
+  <rect x="226" y="192" width="142" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="297" y="210" font-size="12.5" fill="#0f172a" text-anchor="middle">ram · cpu</text>
+  <rect x="226" y="224" width="142" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="297" y="242" font-size="12.5" fill="#0f172a" text-anchor="middle">membw · faults</text>
+  <rect x="226" y="256" width="142" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="297" y="274" font-size="12.5" fill="#0f172a" text-anchor="middle">headroom (go/no-go)</text>
+  <rect x="226" y="288" width="142" height="26" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <text x="297" y="306" font-size="12" fill="#0f172a" text-anchor="middle">status throttle GPU</text>
+  <text x="297" y="340" font-size="11.5" fill="#475569" text-anchor="middle">Test: parser + /proc</text>
+  <text x="297" y="356" font-size="11.5" fill="#475569" text-anchor="middle">nyata; GPU butuh mesin</text>
+  <text x="297" y="372" font-size="11.5" fill="#475569" text-anchor="middle">dengan nvidia-smi</text>
+
+  <!-- gguf -->
+  <rect x="394" y="104" width="170" height="300" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+  <text x="479" y="130" font-size="16" font-weight="bold" fill="#0f172a" text-anchor="middle">gguf</text>
+  <text x="479" y="148" font-size="11" fill="#64748b" text-anchor="middle">hanya header</text>
+  <rect x="408" y="164" width="142" height="34" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="479" y="186" font-size="13" fill="#0f172a" text-anchor="middle">inspect</text>
+  <rect x="408" y="208" width="142" height="34" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="479" y="230" font-size="13" fill="#0f172a" text-anchor="middle">tensors</text>
+  <text x="479" y="274" font-size="11.5" fill="#475569" text-anchor="middle">Test: file GGUF sintetis,</text>
+  <text x="479" y="290" font-size="11.5" fill="#475569" text-anchor="middle">file terpotong, panjang</text>
+  <text x="479" y="306" font-size="11.5" fill="#475569" text-anchor="middle">berbahaya</text>
+  <text x="479" y="340" font-size="11.5" fill="#92400e" text-anchor="middle">Belum dicoba pada GGUF</text>
+  <text x="479" y="356" font-size="11.5" fill="#92400e" text-anchor="middle">Qwen3.8-27B asli</text>
+
+  <!-- llama -->
+  <rect x="576" y="104" width="170" height="300" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+  <text x="661" y="130" font-size="16" font-weight="bold" fill="#0f172a" text-anchor="middle">llama</text>
+  <text x="661" y="148" font-size="11" fill="#64748b" text-anchor="middle">allowlist + lock</text>
+  <rect x="590" y="160" width="142" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="661" y="178" font-size="12.5" fill="#0f172a" text-anchor="middle">build (CUDA SM 61)</text>
+  <rect x="590" y="192" width="142" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="661" y="210" font-size="12.5" fill="#0f172a" text-anchor="middle">run · bench</text>
+  <rect x="590" y="224" width="142" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="661" y="242" font-size="12.5" fill="#0f172a" text-anchor="middle">placement (log)</text>
+  <rect x="590" y="256" width="142" height="26" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <text x="661" y="274" font-size="12.5" fill="#0f172a" text-anchor="middle">compare · server</text>
+  <rect x="590" y="288" width="142" height="26" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <text x="661" y="306" font-size="12" fill="#0f172a" text-anchor="middle">analyze · quality</text>
+  <text x="661" y="340" font-size="11.5" fill="#475569" text-anchor="middle">Test: argv, lock, skrip</text>
+  <text x="661" y="356" font-size="11.5" fill="#475569" text-anchor="middle">llama palsu. llama.cpp</text>
+  <text x="661" y="372" font-size="11.5" fill="#92400e" text-anchor="middle">asli belum dijalankan</text>
+
+  <!-- spec -->
+  <rect x="758" y="104" width="172" height="300" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2"/>
+  <text x="844" y="130" font-size="16" font-weight="bold" fill="#0f172a" text-anchor="middle">spec</text>
+  <text x="844" y="148" font-size="11" fill="#64748b" text-anchor="middle">hanya menulis di spec/</text>
+  <rect x="772" y="160" width="144" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="844" y="178" font-size="12.5" fill="#0f172a" text-anchor="middle">new · session</text>
+  <rect x="772" y="192" width="144" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="844" y="210" font-size="12.5" fill="#0f172a" text-anchor="middle">handoff append-only</text>
+  <rect x="772" y="224" width="144" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="844" y="242" font-size="12.5" fill="#0f172a" text-anchor="middle">questions</text>
+  <rect x="772" y="256" width="144" height="26" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="844" y="274" font-size="12.5" fill="#0f172a" text-anchor="middle">validate (exit 1)</text>
+  <rect x="772" y="288" width="144" height="26" rx="6" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <text x="844" y="306" font-size="12" fill="#0f172a" text-anchor="middle">hook Kiro (simpan)</text>
+  <text x="844" y="340" font-size="11.5" fill="#475569" text-anchor="middle">Test: repo sementara +</text>
+  <text x="844" y="356" font-size="11.5" fill="#475569" text-anchor="middle">validate pada repo ini</text>
+
+  <!-- safety strip -->
+  <rect x="30" y="424" width="900" height="72" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+  <text x="46" y="448" font-size="13" font-weight="bold" fill="#92400e">Pengaman</text>
+  <text x="46" y="468" font-size="12.5" fill="#334155">Tanpa shell bebas (argv berupa list) · hanya llama-cli, llama-bench, llama-server · satu inference sekaligus (lock file)</text>
+  <text x="46" y="485" font-size="12.5" fill="#334155">Penulisan dibatasi ke spec/ · log handoff tidak pernah ditimpa · parser GGUF menolak file terpotong atau berukuran ganjil</text>
+
+  <!-- test status -->
+  <rect x="30" y="506" width="900" height="46" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="46" y="525" font-size="12.5" font-weight="bold" fill="#5b21b6">Test: python3 tools/test_legacy.py → 87 test lulus (1 dilewati: khusus mesin tanpa GPU)</text>
+  <text x="46" y="542" font-size="12" fill="#334155">Dijalankan di sandbox bwrap: folder home disembunyikan dan tanpa jaringan. Hasil lengkap ada di deskripsi PR.</text>
+</svg>

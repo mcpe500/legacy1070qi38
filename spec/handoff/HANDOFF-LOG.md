@@ -182,6 +182,35 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [OPEN] OQ-017 Apakah --sandbox mengizinkan akses GPU (/dev/nvidia*)?  → setelah bubblewrap terpasang
 ```
 
+### CLI tooling — SPEC-007
+
+```
+[Post-bootstrap] [UPDATE] SPEC-007-cli-tooling dibuat; tools/legacy.py dan tools/test_legacy.py ditulis atas permintaan di issue #1
+  → Cakupan: budget, hw, gguf, llama (build/run/bench/placement), spec. Belum ada: llama compare, llama-server, bench analyze, quality eval
+  → Gambar: spec/specs/assets/spec-007-cli-implementation.svg; panduan pakai: tools/README.md
+  → RFC-002 tetap Proposed; keputusan desain (versi Python, llama-cli vs llama-server) belum diambil pemilik repo
+```
+
+```
+[Post-bootstrap] [OPEN] Test tools/test_legacy.py ditulis oleh agen tanpa shell dan belum dijalankan
+  → Perlu: jalankan `python tools/test_legacy.py -v` dan `python tools/legacy.py spec validate`, lalu catat hasilnya
+  → Asumsi yang perlu dicek: tabel tipe ggml, opsi llama.cpp (-o json, -no-cnv), format baris log/timing
+```
+
+### Pengukuran nyata pertama (lewat `tools/legacy.py`, PR ini)
+
+```
+[Post-bootstrap] [FINDING] CPU: AMD Ryzen 5 2400G, 4 core / 8 thread, AVX2 ya, AVX-512 tidak (hw cpu)
+[Post-bootstrap] [FINDING] RAM: 15.53 GiB total, 9.25 GiB tersedia saat diukur, swap 4 GiB (hw ram). Single/dual channel BELUM diketahui
+[Post-bootstrap] [FINDING] Bandwidth salin RAM satu thread Python: 11.09 GB/s (hw membw). Ini batas bawah kasar, bukan bandwidth maksimum
+[Post-bootstrap] [FINDING] VRAM saat diukur: 7875 dari 8192 MiB terpakai, 231 MiB bebas. Pemakainya sebuah llama-server dari build lokal
+    "llama-cpp-turboquant" milik pemilik repo. Artinya build llama.cpp CUDA sudah berjalan di GPU Pascal ini.
+    Selama proses itu hidup, tidak ada uji GPU lain yang bisa jalan. Fork "turboquant" layak dicek: kemungkinan relevan dengan quantization
+[Post-bootstrap] [UPDATE] OQ-011 terjawab sebagian: CPU dan RAM diketahui; channel dan bandwidth maksimum belum
+[Post-bootstrap] [FINDING] Sandbox Kiro (--sandbox): token gh tersembunyi, home read-only, jaringan terblokir, /dev/nvidia* TIDAK terlihat
+    Konsekuensi: agen bersandbox tidak bisa menjalankan uji GPU. Uji CPU bisa
+```
+
 ### Perbaikan: satu PR per issue, SVG di PR
 
 ```
