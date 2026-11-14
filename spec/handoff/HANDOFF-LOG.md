@@ -243,3 +243,30 @@ Daftar open questions yang belum terjawab (update saat resolved):
   → Lihat: spec/specs/RFC-003-github-agent-trigger.md (Revisi 3), tools/agent/README.md
 [Post-bootstrap] [FINDING] Kiro menolak fs_write ke ~/.kiro/settings/mcp.json (aturan bawaan). Pendaftaran global dilakukan pemilik repo
 ```
+
+### Riset dan koreksi (2026-11-13): kartu resmi, llama.cpp utama, iso3, kalibrasi
+
+```
+[Post-bootstrap] [FINDING] Kartu resmi Qwen/Qwen3.8-27B dicocokkan: 64 layer = 16 x (3 DeltaNet + 1 Gated Attention), hidden 5120,
+    4 head KV x head dim 256, 48 head V DeltaNet, vocab 248.320, konteks 262.144, MTP dilatih. Repo resmi tanpa GGUF
+  → KV 64 KiB/token terkonfirmasi (turunan resmi); dugaan "kv_heads x head_dim = 1024 turunan" diganti angka resmi (4 x 256)
+[Post-bootstrap] [RESOLVED] OQ-010 kartu resmi: layer, KV heads, head dim terjawab. State DeltaNet = 0.146 GiB (turunan, rumus cocok persis pada 0.8B)
+[Post-bootstrap] [UPDATE] OQ-009: kernel Gated DeltaNet berjalan di GTX 1070 Ti untuk model qwen35 9B di fork (server pengguna, 20.4 tok/s). Belum untuk 27B dan llama.cpp utama
+[Post-bootstrap] [FINDING] llama.cpp utama mendukung qwen35 (CUDA Ada/Blackwell, ROCm RDNA2) dan MTP (--spec-type draft-mtp). Fork 08e025c tidak punya draft-mtp
+  → Strategi C butuh build llama.cpp utama atau fork lebih baru
+[Post-bootstrap] [FINDING] iso3 = IsoQuant (rotasi kuaternion 4D + Lloyd-Max 3-bit), 50 byte per 128 nilai (0,195x FP16). Hanya di fork. Dampak kualitas belum diukur
+[Post-bootstrap] [FINDING] "Qwen3.8-9B" di Hugging Face adalah distilasi komunitas ke arsitektur Qwen3.5-9B. 9B dipakai sebagai pengganti ARSITEKTUR, bukan 27B
+[Post-bootstrap] [CORRECTION] MASTER.md menulis "Tidak ada 8B yang terverifikasi" dan menganggap semua fakta model dari komunitas
+  → Dikoreksi: fakta model dari kartu resmi; ada GGUF 9B qwen35 lokal (terukur)
+[Post-bootstrap] [FINDING] Kalibrasi budget pada 9B: estimate 6.99 GiB vs nvidia-smi 7.70 GiB. Overhead nyata ≈ 1.6 GiB di luar bobot dan KV
+  → Strategi B (Q3-DOWN-XS 7.68 GiB) tidak muat penuh di 1070 Ti menurut hitungan: ±1.5 GiB tetap di RAM
+[Post-bootstrap] [UPDATE] OQ-011: laju salin RAM 14.15 GB/s (2 thread); bandwidth baca CPU minimal 18.4 GB/s (0.8B di CPU)
+  → Dual channel kemungkinan besar (lalu lintas 28 GB/s > puncak single channel DDR4-2933 23.4 GB/s) tetapi belum dikonfirmasi; butuh sudo dmidecode
+[Post-bootstrap] [UPDATE] OQ-013: hitungan menunjukkan B tidak muat penuh; TPS dan kualitas nyata belum diukur (butuh GGUF 27B)
+[Post-bootstrap] [UPDATE] OQ-012: fork tanpa draft-mtp; percepatan di hybrid tidak diketahui (pihak lain: 1.3-1.5x di GPU penuh, 1.1x di ROCm)
+[Post-bootstrap] [DECISION] RFC-002 Accepted. Satu file (ambang diganti: >2500 baris atau kebutuhan impor); proses panjang = background + polling;
+    llama-cli per panggilan (llama-server tidak dibungkus); hook spec validate saat simpan; Python 3.8 (hanya 3.10.12 diuji); tanpa pembungkus MCP
+  → Diputuskan agen berdasarkan bukti; pemilik repo dapat membukanya kembali. Lihat RFC-002, bagian Keputusan
+[Post-bootstrap] [CORRECTION] Tiga cacat CLI ditemukan saat uji binary asli: llama run macet (-no-cnv diabaikan, stdin), kv_layers_estimate salah pada hibrida,
+    tidak ada test kontrak. Diperbaiki di PR #29
+```

@@ -1,7 +1,7 @@
 # Tasks — CLI Tooling (`tools/legacy.py`)
 
-> Spec: SPEC-007 | Status: **In Review** (87 test lulus di sandbox; uji dengan llama.cpp dan GGUF asli belum)
-> Dependencies: RFC-002 (Proposed)
+> Spec: SPEC-007 | Status: **Done untuk alat** (127 test unit + 3 test kontrak binary asli lulus). Uji pada GGUF 27B dan GPU dipindah ke issue uji 27B
+> Dependencies: RFC-002 (Accepted)
 > Blocks: SPEC-002 Task 4, SPEC-006
 
 ---
@@ -43,15 +43,15 @@
   - Test: semua test lulus; kegagalan diperbaiki
   - Done when: keluaran test terlampir ✅ (87 test OK, 1 dilewati karena khusus mesin tanpa GPU; lihat deskripsi PR)
 
-- [ ] **Task 8: Uji pada data asli**
-  - Implementation: `gguf inspect` pada Qwen3.8-27B GGUF, `hw gpu`/`hw membw` pada mesin target, `llama run` pada llama.cpp asli
-  - Test: hasil dicatat di HANDOFF-LOG (menjawab OQ-010, OQ-011)
-  - Done when: OQ terkait ditandai terjawab dengan bukti
+- [x] **Task 8: Uji pada data asli** (model `qwen35` 9B dan 0.8B, fork `08e025c`, CPU)
+  - Implementation: `gguf inspect`/`tensors` pada 9B, `hw gpu`/`cpu`/`ram`/`membw` di mesin target, `llama run`/`bench` pada binary asli
+  - Test: `RealBinaryContract` (3 test) + hasil di HANDOFF-LOG dan `spec/research/CLAIMS.md`
+  - Done when: OQ-009 (9B), OQ-010, OQ-011 (sebagian) ditandai dengan bukti ✅. GGUF 27B belum ada di mesin: lihat issue uji 27B
 
-- [ ] **Task 9: Subcommand yang belum ada**
-  - Implementation: `llama compare`, `llama-server`, `bench analyze`, `quality eval`, status throttle GPU
-  - Test: ikuti pola task di atas
-  - Done when: diputuskan pemilik repo (RFC-002)
+- [x] **Task 9: Subcommand tambahan** (PR #29)
+  - Implementation: `llama compare`, `bench analyze`, `quality ppl|kld|prompts`, clock + throttle GPU, `hw membw` multi-thread
+  - Test: `FixedDefectsTests`, `GpuClockTests`, `MembwTests`, `AnalyzeAndCompareTests`, `QualityTests`, `RealBinaryContract`
+  - Done when: lulus ✅. `llama-server` sengaja tidak dibungkus; pembungkus MCP tidak dibuat (RFC-002, keputusan 3 dan 6)
 
 ---
 
@@ -59,5 +59,6 @@
 
 - Perintah test: `python tools/test_legacy.py -v` atau `python -m unittest discover -s tools -p "test_legacy.py" -v` dari root repo.
 - Test `llama` memakai skrip shell palsu di folder sementara; gagal bila folder sementara dipasang `noexec`.
+- Test kontrak: `LEGACY_LLAMA_BIN_DIR=... LEGACY_TEST_MODEL=... python tools/test_legacy.py RealBinaryContract -v` (dilewati bila kosong; dipaksa CPU).
 - Test `HwGpuMissing` hanya berjalan di mesin tanpa `nvidia-smi`.
 - Tidak ada file di `tools/agent/` yang diubah.

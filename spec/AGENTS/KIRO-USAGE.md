@@ -15,6 +15,7 @@ menjawab syarat submission: *"Name each product you used and what it does in you
 | Fitur Kiro | Dipakai? | Peran di proyek |
 |---|---|---|
 | Kiro CLI (`kiro-cli chat`) | ✅ Ya | Antarmuka utama seluruh sesi kerja |
+| Knowledge base (`knowledge` tool) | ✅ Ya | Folder `spec/` diindeks (38 berkas, BM25) lalu dicari dengan pertanyaan bahasa Indonesia; lihat bagian 10 |
 | Planning agent (plan → handoff ke execution) | ✅ Ya | Requirements gathering + rencana implementasi sebelum menulis file |
 | Sub-agent `context-gatherer` | ✅ Ya | Riset teknis hardware/model, dan menulis file spec secara paralel |
 | Built-in tools (read/list/search file) | ✅ Ya | Membaca dan memverifikasi isi workspace |
@@ -23,7 +24,7 @@ menjawab syarat submission: *"Name each product you used and what it does in you
 | Headless mode (`--no-interactive`) | ✅ Ya | Menjalankan Kiro dari skrip pemantau GitHub tanpa sesi interaktif |
 | Custom agent + permissions (`~/.kiro/agents/legacy-bot*.json`) | ✅ Ya | Profil agent bot dengan aturan izin per path dan tool; diuji menolak akses terlarang |
 | Spec-driven development (requirements → design → tasks) | ✅ Ya (struktur) | Format `SPEC-NNN-*/` mengikuti pola requirements/design/tasks |
-| Hooks | ❌ Belum | — |
+| Hooks | ✅ Ya | `.kiro/hooks/spec-validate-on-save.json` (`PostFileSave`, pola `spec/.*\.md$`) menjalankan `legacy.py spec validate`; dibuat lewat tool `createHook` |
 | Steering files (`.kiro/steering/`) | ❌ Belum | — |
 | Skills (`.kiro/skills/`) | ❌ Belum | — |
 | MCP servers | ✅ Ya | Sequential Thinking MCP (`@modelcontextprotocol/server-sequential-thinking` 2.1.1) dipakai agent GitHub `/kiro` untuk menguraikan maksud permintaan sebelum bertindak |
@@ -85,7 +86,9 @@ bukan transformer biasa 52 layer, melainkan hibrida 64 layer (16 full attention 
 Dokumen `MASTER.md`, `RFC-001`, `SPEC-000`, `SPEC-002`, `SPEC-004`, `SPEC-005` dikoreksi dengan sumber model card.
 Riwayat koreksi ada di `spec/handoff/HANDOFF-LOG.md`.
 
-Pelajaran: klaim faktual wajib bersumber. Sumber yang dipakai adalah model card komunitas, belum kartu resmi.
+Pelajaran: klaim faktual wajib bersumber. Pencarian kedua (2026-11-13) mengambil kartu resmi `Qwen/Qwen3.8-27B`,
+diskusi dan issue llama.cpp, serta dokumentasi vLLM; hasilnya ada di `spec/research/CLAIMS.md` (49 klaim, tiap baris punya jenis sumber).
+Hasil penting: "Qwen3.8-9B" ternyata distilasi komunitas, dan fork kita tidak punya MTP.
 
 ### 8. Headless mode dan custom agent (agen GitHub `/kiro`)
 `tools/agent/kiro_gh_agent.py` memantau issue GitHub. Perintah `/kiro` dari tiga ID yang diizinkan menjalankan
@@ -113,12 +116,21 @@ konfigurasi global. Agent diwajibkan memakainya sebelum bertindak, lalu menulis 
 - **Catatan:** Kiro melarang agent menulis ke `~/.kiro/settings/`, jadi pendaftaran global untuk sesi interaktif
   dilakukan manual dengan `kiro-cli mcp add` (perintahnya dicetak oleh skrip pemasangan).
 
+### 10. Hooks dan Knowledge base
+- **Hook:** `.kiro/hooks/spec-validate-on-save.json` memicu `python3 tools/legacy.py spec validate` setiap berkas
+  `spec/**/*.md` disimpan. Perintah yang sama sudah dijalankan tangan (`ok: True`). **Belum diamati terpicu**; hook
+  aktif pada sesi berikutnya.
+- **Knowledge base:** `knowledge add` pada `spec/` (indeks `fast`/BM25, 38 berkas) lalu `knowledge search`
+  "berapa KV cache per token Qwen3.8-27B". Hasil pertama benar (`SPEC-004/design.md`), tetapi peringkat BM25
+  kasar: hasil kedua dan ketiga hanya `HANDOFF-LOG.md`. Untuk tanya-jawab dokumen yang presisi, indeks
+  semantik (`best`) belum dicoba.
+
 ---
 
 ## Belum Digunakan (rencana)
 
-- **Hooks**: kandidat — auto-update `HANDOFF-LOG.md` setelah task selesai, atau
-  pengingat memeriksa daftar approach terlarang saat file spec disimpan.
+- **Hooks tambahan**: kandidat — auto-update `HANDOFF-LOG.md` setelah task selesai, atau
+  pengingat memeriksa daftar approach terlarang saat file spec disimpan. (Satu hook sudah dipakai: lihat bagian 10.)
 - **Steering files**: kandidat — memindahkan hardware constraints dari `MASTER.md`
   ke `.kiro/steering/` agar otomatis dimuat di setiap sesi.
 - **PBT**: kandidat saat ada kode, mis. properti "estimasi VRAM selalu ≥ ukuran weights".

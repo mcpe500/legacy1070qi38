@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="620" viewBox="0 0 960 620" font-family="Helvetica, Arial, sans-serif">
+  <rect width="960" height="620" fill="#ffffff"/>
+  <text x="30" y="36" font-size="21" font-weight="bold" fill="#0f172a">PR dokumen: apa yang berubah setelah fakta dicek ke sumber</text>
+  <text x="30" y="58" font-size="13" fill="#64748b">Sumber: kartu resmi Qwen/Qwen3.8-27B, diskusi llama.cpp, kode fork, dan pengukuran di mesin ini</text>
+
+  <rect x="30" y="76" width="14" height="14" rx="3" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="50" y="88" font-size="12.5" fill="#334155">Dugaan lama</text>
+  <rect x="150" y="76" width="14" height="14" rx="3" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="170" y="88" font-size="12.5" fill="#334155">Fakta sekarang</text>
+  <rect x="300" y="76" width="14" height="14" rx="3" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.5"/>
+  <text x="320" y="88" font-size="12.5" fill="#334155">Masih belum pasti</text>
+
+  <rect x="30" y="104" width="440" height="62" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="46" y="128" font-size="13" fill="#334155">Fakta model dari model card komunitas;</text>
+  <text x="46" y="148" font-size="13" fill="#334155">KV = 8 head x 128 (turunan dari 64 KiB)</text>
+  <rect x="490" y="104" width="440" height="62" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="506" y="128" font-size="13" fill="#334155">Kartu resmi: 64 layer, 4 head KV x 256,</text>
+  <text x="506" y="148" font-size="13" fill="#334155">64 KiB/token terkonfirmasi (C-01..C-05)</text>
+
+  <rect x="30" y="178" width="440" height="62" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="46" y="202" font-size="13" fill="#334155">"Tidak ada 8B yang terverifikasi";</text>
+  <text x="46" y="222" font-size="13" fill="#334155">state DeltaNet "belum diketahui"</text>
+  <rect x="490" y="178" width="440" height="62" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="506" y="202" font-size="13" fill="#334155">9B qwen35 ada lokal (distilasi komunitas);</text>
+  <text x="506" y="222" font-size="13" fill="#334155">state DeltaNet 0.146 GiB, rumus cocok persis</text>
+
+  <rect x="30" y="252" width="440" height="62" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="46" y="276" font-size="13" fill="#334155">Strategi B: 7.68 GiB "muat penuh di 8 GB"</text>
+  <text x="46" y="296" font-size="13" fill="#334155">MTP "tinggal diuji di build kita"</text>
+  <rect x="490" y="252" width="440" height="62" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="506" y="276" font-size="13" fill="#334155">B tidak muat: overhead terukur 1.6 GiB (9B).</text>
+  <text x="506" y="296" font-size="13" fill="#334155">Fork 08e025c tanpa draft-mtp; perlu build utama</text>
+
+  <rect x="30" y="326" width="440" height="62" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="46" y="350" font-size="13" fill="#334155">Bandwidth RAM 20 atau 40 GB/s (asumsi);</text>
+  <text x="46" y="370" font-size="13" fill="#334155">CPU tidak diketahui</text>
+  <rect x="490" y="326" width="440" height="62" rx="8" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.5"/>
+  <text x="506" y="350" font-size="13" fill="#334155">Ryzen 5 2400G; baca minimal 18.4 GB/s terukur;</text>
+  <text x="506" y="370" font-size="13" fill="#334155">dual channel mungkin, belum dikonfirmasi</text>
+
+  <text x="30" y="418" font-size="15" font-weight="bold" fill="#0f172a">Keputusan RFC-002 (diambil agen berdasarkan bukti, dapat dibuka ulang)</text>
+  <rect x="30" y="430" width="140" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="100" y="452" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">1. Satu file</text>
+  <text x="100" y="472" font-size="12" text-anchor="middle" fill="#334155">ambang 2500 baris</text>
+  <rect x="180" y="430" width="140" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="250" y="452" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">2. Background</text>
+  <text x="250" y="472" font-size="12" text-anchor="middle" fill="#334155">+ polling log</text>
+  <rect x="330" y="430" width="140" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="400" y="452" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">3. llama-cli</text>
+  <text x="400" y="472" font-size="12" text-anchor="middle" fill="#334155">per panggilan</text>
+  <rect x="480" y="430" width="140" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="550" y="452" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">4. Hook Kiro</text>
+  <text x="550" y="472" font-size="12" text-anchor="middle" fill="#334155">spec validate</text>
+  <rect x="630" y="430" width="140" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="700" y="452" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">5. Python 3.8</text>
+  <text x="700" y="472" font-size="12" text-anchor="middle" fill="#334155">hanya 3.10 diuji</text>
+  <rect x="780" y="430" width="150" height="64" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="855" y="452" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">6. Tanpa MCP</text>
+  <text x="855" y="472" font-size="12" text-anchor="middle" fill="#334155">pembungkus kustom</text>
+
+  <rect x="30" y="514" width="900" height="80" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="46" y="538" font-size="13" fill="#334155">Berkas baru: README.md, spec/research/CLAIMS.md (49 klaim), .kiro/hooks/spec-validate-on-save.json.</text>
+  <text x="46" y="558" font-size="13" fill="#334155">Diubah: MASTER, RFC-001, RFC-002, SPEC-000/004/007, KIRO-USAGE, HANDOFF-LOG (hanya ditambah).</text>
+  <text x="46" y="578" font-size="13" fill="#334155">Belum: GGUF 27B, GPU, llama.cpp utama di Pascal, dual channel. Semua dipindah ke issue uji 27B.</text>
+</svg>

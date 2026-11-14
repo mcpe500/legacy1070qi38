@@ -3,8 +3,10 @@
 > **Baca dokumen ini pertama sebelum mengerjakan apapun dalam proyek ini.**
 > Semua agents, baik role-based maupun phase-based, tunduk pada aturan di dokumen ini.
 >
-> **Revisi (pasca-bootstrap):** target model dikoreksi dari "Qwen3-8B / Qwen3-27B" menjadi
-> **Qwen3.8-27B saja**. Versi awal memakai asumsi arsitektur yang salah. Lihat "Fakta Model" di bawah.
+> **Revisi 2:** target model dikoreksi dari "Qwen3-8B / Qwen3-27B" menjadi **Qwen3.8-27B saja**.
+> **Revisi 3 (2026-11-13):** fakta model kini dicocokkan dengan kartu resmi `Qwen/Qwen3.8-27B`, hardware
+> diukur, dan setiap klaim faktual punya baris di [`spec/research/CLAIMS.md`](../research/CLAIMS.md)
+> (ID `C-nn` dipakai di bawah). Klaim tanpa baris di sana tidak boleh ditambahkan.
 
 ---
 
@@ -32,8 +34,8 @@ Tidak diasumsikan seluruh model muat di VRAM.
 | Bandwidth GPU | 256 GB/s |
 | CUDA Cores | 2432 |
 | System RAM | 16 GB DDR4 |
-| Bandwidth RAM | **Belum diketahui.** ~20 GB/s bila single-channel, ~40 GB/s bila dual-channel (asumsi, ukur dengan `hw membw`) |
-| CPU | **Belum diketahui** (model, jumlah core, dukungan AVX2) |
+| Bandwidth RAM | **Terukur ≥ 18.4 GB/s baca** (C-34; laju salin 14.15 GB/s, C-33). Dual channel kemungkinan besar (C-35) tetapi **belum dikonfirmasi**. Angka 20/40 GB/s di bawah tetap dipakai sebagai skenario, bukan fakta |
+| CPU | Ryzen 5 2400G, 4 core / 8 thread, AVX2, tanpa AVX-512 (C-31) |
 | PCIe | 3.0 x16 (~12–13 GB/s praktis) |
 | TDP GPU | 180W |
 
@@ -49,25 +51,25 @@ Tidak diasumsikan seluruh model muat di VRAM.
 
 ## Fakta Model: Qwen3.8-27B
 
-> Sumber: model card komunitas di Hugging Face
-> ([6block](https://huggingface.co/6block/Qwen3.8-27B-GGUF),
-> [guideboardlabs](https://huggingface.co/guideboardlabs/Qwen3.8-27B-Q3-DOWN-XS-GGUF)) dan satu wiki.
-> **Belum dicocokkan dengan kartu resmi `Qwen/Qwen3.8-27B`.** Verifikasi dengan `gguf inspect` pada file asli.
+> Sumber: kartu resmi [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), dicocokkan 2026-11-13.
+> Repo resmi hanya berisi safetensors; **GGUF berasal dari pihak ketiga** (C-13). Verifikasi file GGUF
+> yang dipakai dengan `gguf inspect` dan `gguf tensors`.
 
-| Properti | Nilai | Status |
-|---|---|---|
-| Jenis | Dense, vision-language (teks, gambar, video masuk; teks keluar) | Dari model card |
-| Parameter | 27B teks, 27.8B termasuk vision tower | Dari model card |
-| Layer | **64**: 16 full attention (GQA) + 48 Gated DeltaNet (linear attention); `full_attention_interval=4` | Dari model card (satu repo menulis 49 layer DeltaNet, kemungkinan menghitung MTP head) |
-| Hidden dim | 5120 | Dari model card |
-| Vocab | 248,320, embedding dan output **tidak di-tie** (dua salinan) | Dari model card |
-| Konteks | 262,144 native | Dari model card |
-| KV cache | ≈ **64 KiB per token** (hanya 16 layer full attention); 4096 token ≈ 256 MiB, 32k ≈ 2 GiB (FP16) | Dari model card |
-| KV heads × head dim | 1024 (turunan dari 64 KiB/token: 4 KiB per layer per token) | ⚠️ Turunan, belum dikonfirmasi |
-| State DeltaNet | Ukuran tetap, tidak tumbuh dengan konteks; **besarnya belum diketahui** | ⚠️ Ukur |
-| MTP head | Ada, bisa dipakai untuk speculative decoding (`--spec-type draft-mtp`) | Dari model card, belum diuji di build kita |
-| Vision | `mmproj` terpisah (~0.9 GiB), opsional; tanpa mmproj model jalan sebagai teks | Dari model card |
-| Ukuran lain dalam keluarga | Wiki hanya menyebut 27B dan Max (2.4T MoE). **Tidak ada 8B yang terverifikasi** | ⚠️ Cek |
+| Properti | Nilai | ID | Status |
+|---|---|---|---|
+| Jenis | Dense, vision-language (teks, gambar, video masuk; teks keluar); thinking aktif secara default | C-10 | ✅ Resmi |
+| Parameter | 27B teks, 27.8B dengan vision tower | C-12 | ⚠ Komunitas |
+| Layer | **64** = 16 x (3 x Gated DeltaNet + 1 x Gated Attention), tiap layer diikuti FFN dense (intermediate 17.408) | C-01, C-02 | ✅ Resmi |
+| Hidden dim | 5120 | C-02 | ✅ Resmi |
+| Gated Attention | 24 head Q, **4 head KV**, head dim 256 | C-03 | ✅ Resmi |
+| Gated DeltaNet | 48 head V, 16 head QK, head dim 128 | C-04 | ✅ Resmi |
+| Vocab | 248.320 (padded); embedding dan output tercantum terpisah | C-07 | ⚠ "untied" belum dikonfirmasi di GGUF 27B |
+| Konteks | 262.144 native, 1.000.000 dengan YaRN statis | C-08 | ✅ Resmi |
+| KV cache | **64 KiB per token** (FP16) = 16 x 2 x 4 x 256 x 2 B; 4096 token = 256 MiB, 32k = 2 GiB | C-05 | ✅ Turunan dari resmi |
+| State DeltaNet | **≈ 0.146 GiB**, ukuran tetap (tidak tumbuh dengan konteks) | C-06 | ⚠ Turunan; rumus cocok persis pada 0.8B, belum diukur pada 27B |
+| MTP head | Ada, dilatih multi-langkah. Di llama.cpp utama: `--spec-type draft-mtp`; **fork kita tidak punya** | C-09, C-18, C-19 | ✅ ada; ⚠ belum diuji di build kita |
+| Vision | `mmproj` terpisah (±0.9 GiB), opsional | C-12 | ⚠ Komunitas |
+| Model lain dengan arsitektur sama | Ada GGUF **9B** `qwen35` (32 blok, `full_attention_interval=4`) yang dipakai sebagai pengganti arsitektur untuk menguji kernel dan alat. Asalnya diduga distilasi komunitas, **bukan** rilis resmi Qwen | C-20, C-21 | ✅ terukur; ⚠ asal file |
 
 Dampak: rumus KV cache lama (semua layer punya KV) **salah** untuk model ini. Lihat `RFC-001`.
 
@@ -75,7 +77,8 @@ Dampak: rumus KV cache lama (semua layer punya KV) **salah** untuk model ini. Li
 
 ## Pilihan Quantization (ukuran file nyata)
 
-> Sumber: tabel 6block. PPL diukur dalam satu setup internal; **hanya bisa dibandingkan di dalam tabel ini**.
+> Sumber: tabel 6block (C-13). PPL diukur dalam satu setup internal; **hanya bisa dibandingkan di dalam tabel ini**.
+> Kita punya alat untuk mengukur sendiri dengan satu protokol: `quality ppl` dan `quality kld`.
 
 | Quant | Ukuran (GiB) | PPL | Catatan |
 |---|---|---|---|
@@ -90,7 +93,13 @@ Dampak: rumus KV cache lama (semua layer punya KV) **salah** untuk model ini. Li
 
 ---
 
-## Memory Budget (ESTIMASI, belum diukur)
+## Memory Budget (ESTIMASI)
+
+> Kalibrasi nyata (C-29): pada model 9B yang sama, `budget estimate` memberi 6.99 GiB sedangkan
+> `nvidia-smi` mencatat 7.70 GiB (7883 MiB). Overhead di luar bobot dan KV sekitar **1.6 GiB**, bukan
+> 0.9 GiB (CUDA 0.4 + compute 0.5) yang diasumsikan di bawah. Tabel di bawah masih memakai asumsi lama,
+> jadi **RAM total kemungkinan sedikit lebih besar dan layer di GPU sedikit lebih sedikit** dari yang tertulis.
+> Rumus sekarang menghitung juga state DeltaNet (0.146 GiB).
 
 Total memori fisik = 8 GiB VRAM + 16 GiB RAM = 24 GiB. Bobot yang masuk VRAM **tidak** perlu ada di RAM.
 
@@ -121,9 +130,9 @@ Batas atas TPS ≈ bandwidth RAM ÷ bobot di RAM   (bobot GPU menambah ~0.03 s p
 | | Strategi | Gagasan | Risiko |
 |---|---|---|---|
 | A | Hybrid CPU+GPU, Q4_K_M sampai IQ3 | Sebagian layer di VRAM, sisanya di RAM | Tertahan bandwidth RAM |
-| B | Muat penuh di 8 GB, ultra-low-bit (~7.7 GiB) | Tidak ada layer di CPU. Model card melaporkan 24.5 tok/s di RX 5700 XT 8 GB (Vulkan), kualitas 86.5% terhadap kontrol 3-bit | Kualitas turun; di 1070 Ti kurang ruang untuk KV dan compute buffer; bandwidth 256 vs 448 GB/s (skala kasar ≈ 14 tok/s, tebakan) |
-| C | Speculative decoding dengan MTP head | Verifikasi beberapa token per satu kali baca bobot, mengurangi beban bandwidth RAM | Dukungan di build kita belum diuji |
-| D | Backend Vulkan sebagai pembanding CUDA | Hasil B didapat dengan Vulkan | Performa Vulkan di Pascal belum diketahui |
+| B | Hampir penuh di GPU, ultra-low-bit (~7.7 GiB) | Model card melaporkan 24.5 tok/s di RX 5700 XT 8 GB (Vulkan), kualitas 86.5% terhadap kontrol 3-bit. **Hitungan kita (C-30): 7.68 GiB + KV + state + overhead ≈ 1.6 GiB tidak muat 8 GiB**, sehingga ±1.5 GiB tetap di RAM | Kualitas turun; bandwidth 256 vs 448 GB/s (skala kasar ≈ 14 tok/s, tebakan); sebagian kecil di CPU tetap membatasi TPS |
+| C | Speculative decoding dengan MTP head | Verifikasi beberapa token per satu kali baca bobot, mengurangi beban bandwidth RAM. Pihak lain melaporkan 1.3-1.5x di GPU penuh (C-25) dan 1.1x di ROCm (C-26) | **Fork kita tidak punya `draft-mtp`** (C-19): perlu build llama.cpp utama; percepatan pada hybrid CPU belum diketahui |
+| D | Backend Vulkan sebagai pembanding CUDA | Hasil B didapat dengan Vulkan; di RDNA2 Vulkan pernah crash pada arsitektur ini (C-46) | Performa dan kestabilan Vulkan di Pascal belum diketahui |
 
 ---
 
@@ -249,12 +258,12 @@ Pemeriksaan tata letak hanya perkiraan (tanpa renderer). Lihat gambarnya langsun
 
 Daftar aktif dan statusnya ada di `spec/handoff/HANDOFF-LOG.md`. Yang paling menentukan:
 
-- [ ] Apakah kernel Gated DeltaNet di llama.cpp CUDA jalan di SM 6.1? (bisa langsung gagal)
-- [ ] Nama dan konfigurasi persis dari kartu resmi `Qwen/Qwen3.8-27B` (layer, KV heads, head dim)?
-- [ ] Berapa bandwidth RAM aktual dan apakah single atau dual channel?
-- [ ] Apakah MTP speculative decoding jalan di build kita, dan berapa percepatannya?
-- [ ] Apakah strategi B (muat penuh di 8 GB) cukup ruang di 1070 Ti, dan seberapa turun kualitasnya?
-- [ ] Apakah auto-fit layer lebih baik dari `-ngl` manual?
+- [x] Kernel Gated DeltaNet di SM 6.1: **ya untuk 9B di fork** (C-17). Untuk 27B dan llama.cpp utama: lihat issue uji 27B
+- [x] Konfigurasi kartu resmi (layer, KV heads, head dim): **terjawab** (C-01..C-05)
+- [~] Bandwidth RAM: ≥ 18.4 GB/s baca terukur; **single/dual channel belum dikonfirmasi** (C-35)
+- [ ] Apakah MTP jalan di build kita, dan berapa percepatannya? Fork tidak punya; perlu build utama (issue uji 27B)
+- [~] Strategi B: **tidak muat penuh** menurut hitungan (C-30); kualitas dan TPS nyata belum diukur
+- [ ] Apakah auto-fit layer lebih baik dari `-ngl` manual? (issue uji 27B)
 
 ---
 

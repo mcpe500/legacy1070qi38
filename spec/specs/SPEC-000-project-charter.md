@@ -39,11 +39,12 @@ Rincian lengkap dan sumber ada di `spec/AGENTS/MASTER.md`, bagian "Fakta Model".
 |---|---|
 | Parameter | 27B teks (27.8B dengan vision tower) |
 | Layer | 64 (16 full attention + 48 Gated DeltaNet) |
-| KV cache | ≈ 64 KiB per token |
+| KV cache | 64 KiB per token (4 head KV x 256 x 16 layer, FP16) |
+| State DeltaNet | ≈ 0.146 GiB, tetap |
 | Konteks native | 262,144 |
 | MTP head | Ada (untuk speculative decoding) |
 
-> ⚠️ Fakta di atas dari model card komunitas. Verifikasi ke kartu resmi dan dengan `gguf inspect`.
+> Layer, KV, konteks, dan MTP sudah dicocokkan dengan kartu resmi (`spec/research/CLAIMS.md`, C-01..C-09). State DeltaNet adalah turunan. Verifikasi file GGUF dengan `gguf inspect`.
 
 ---
 
@@ -56,7 +57,7 @@ Rincian lengkap dan sumber ada di `spec/AGENTS/MASTER.md`, bagian "Fakta Model".
 | BF16 | ❌ | Emulasi, lambat |
 | FP16 fast path | ❌ (GP104) | FP16 ≈ FP32 |
 | FlashAttention (library) | ❌ | FA bawaan llama.cpp perlu diuji |
-| Bandwidth RAM | ❓ | Menentukan TPS hybrid; ukur |
+| Bandwidth RAM | ⚠ ≥ 18.4 GB/s baca terukur; channel belum pasti | Menentukan TPS hybrid |
 
 ---
 
