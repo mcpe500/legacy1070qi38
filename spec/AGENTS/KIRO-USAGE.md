@@ -87,7 +87,7 @@ Dokumen `MASTER.md`, `RFC-001`, `SPEC-000`, `SPEC-002`, `SPEC-004`, `SPEC-005` d
 Riwayat koreksi ada di `spec/handoff/HANDOFF-LOG.md`.
 
 Pelajaran: klaim faktual wajib bersumber. Pencarian kedua (2026-11-13) mengambil kartu resmi `Qwen/Qwen3.8-27B`,
-diskusi dan issue llama.cpp, serta dokumentasi vLLM; hasilnya ada di `spec/research/CLAIMS.md` (46 klaim, tiap baris punya jenis sumber).
+diskusi dan issue llama.cpp, serta dokumentasi vLLM; hasilnya ada di `spec/research/CLAIMS.md` (48 klaim, tiap baris punya jenis sumber).
 Hasil penting: "Qwen3.8-9B" ternyata distilasi komunitas, dan fork kita tidak punya MTP.
 
 ### 8. Headless mode dan custom agent (agen GitHub `/kiro`)

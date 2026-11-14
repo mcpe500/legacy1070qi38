@@ -15,7 +15,7 @@ hitungan, bukan hasil ukur.
 | Sudah ada | Bukti |
 |---|---|
 | Spesifikasi (SPEC-000..007, RFC-001..003) dan aturan agen | `spec/` |
-| Fakta model dari kartu resmi, 46 klaim bersumber | [`spec/research/CLAIMS.md`](spec/research/CLAIMS.md) |
+| Fakta model dari kartu resmi, 48 klaim bersumber | [`spec/research/CLAIMS.md`](spec/research/CLAIMS.md) |
 | CLI `tools/legacy.py` (budget, hw, gguf, llama, bench, quality, spec) | 123 test unit + 3 test dengan binary llama.cpp asli |
 | Agen GitHub `/kiro` (balas issue/PR dari 3 pengguna terdaftar) | `tools/agent/`, 73 test |
 | Kernel Gated DeltaNet berjalan di GTX 1070 Ti | Model `qwen35` 9B, ±20 tok/s, di fork llama.cpp (bukan 27B) |
