@@ -221,3 +221,14 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [DECISION] Aturan PR dicatat di MASTER.md: satu tugas satu PR; deskripsi teks tapi divisualkan dengan SVG
     sebisa mungkin; bukti test dan daftar "yang belum" wajib. SVG disematkan lewat tautan SHA
 ```
+
+### Perbaikan: perilaku /kiro menurut tempat komentar
+
+```
+[Post-bootstrap] [CORRECTION] Pesan awal agen selalu menulis "membuat PR baru bila ada perubahan", termasuk saat komentar ada di dalam PR
+  → Di dalam PR: dibahas dan dikerjakan di PR itu. Di issue tanpa PR: analisis dulu, PR hanya bila perlu. Di issue dengan PR: tambah ke PR itu
+  → Pengaman: "Keputusan: tidak perlu PR" + perubahan file = tidak di-commit
+  → Uji nyata: issue pertanyaan tanpa PR; issue perubahan dengan PR; komentar di PR (pertanyaan dan perubahan) tanpa PR baru
+  → Lihat: spec/specs/RFC-003-github-agent-trigger.md (Revisi 2)
+[Post-bootstrap] [FINDING] Komentar pada baris kode (tab Files changed) dan isi review tidak dipantau; hanya komentar di tab Conversation
+```
