@@ -28,51 +28,47 @@ Selalu ingat: target hardware adalah **Pascal SM 6.1** (GTX 1070 Ti).
 Implikasi untuk inference optimization:
 - Decode phase adalah **memory-bandwidth-bound** → bottleneck utama adalah 256 GB/s GDDR5
 - Prefill phase adalah **compute-bound** → 2432 CUDA cores tanpa tensor cores
-- Tidak ada Flash Attention → gunakan standard SDPA kernel llama.cpp
+- FlashAttention library tidak mendukung SM 6.1; FA bawaan llama.cpp perlu diuji (jangan diasumsikan)
 - FP16 matmul tidak lebih cepat dari FP32 pada GP104 → jangan asumsikan FP16 speedup
 - Dequantization overhead adalah cost nyata untuk GGUF quantized formats
 
-## Decode Throughput Ceiling (Teoritis)
+## Batas Throughput Decode (teoritis, Qwen3.8-27B)
 
-Berdasarkan memory bandwidth 256 GB/s:
+Decode memory-bandwidth-bound. Batas atas TPS ≈ bandwidth ÷ bobot yang dibaca per token. Layer di CPU memakai
+bandwidth RAM (belum diukur; asumsi 20 GB/s single-channel atau 40 GB/s dual-channel), layer di GPU memakai
+256 GB/s. Tabel lengkap ada di `spec/AGENTS/MASTER.md` (Memory Budget).
 
-| Model | Quant | Weight Size | Teoritis Max | Praktis Est. |
-|---|---|---|---|---|
-| Qwen3-8B | Q5_K_M | 6.1 GB | ~42 tok/s | 12–22 tok/s |
-| Qwen3-8B | Q6_K | 7.0 GB | ~37 tok/s | 10–18 tok/s |
-| Qwen3-8B | Q4_K_M | 5.0 GB | ~51 tok/s | 15–28 tok/s |
-| Qwen3-27B | Q3_K_M (GPU layers) | ~6.9 GB on GPU | GPU portion ~37 tok/s | Combined 3–6 tok/s |
+| Quant | Bobot di RAM (est.) | Batas atas TPS (20 / 40 GB/s) |
+|---|---|---|
+| Q4_K_M | ~10.0 GiB | ~1.9 / ~3.7 |
+| IQ3_M | ~6.1 GiB | ~3.1 / ~6.1 |
+| IQ3_XXS | ~5.1 GiB | ~3.6 / ~7.3 |
 
-> ⚠️ ASSUMPTION: Angka-angka ini berdasarkan formula `bandwidth / weight_size`. Angka aktual dipengaruhi dequant overhead, attention computation, dan CUDA scheduling overhead.
+> ⚠️ Batas atas teoritis, bukan prediksi. Dequantization (terutama IQ-quant), attention, dan scheduling
+> menurunkannya. Tidak ada angka di sini yang terukur.
 
-## Parameter Tuning Guide
+## Tuas Optimasi yang Diketahui
 
-### Untuk Qwen3-8B (full VRAM)
+| Tuas | Efek yang diharapkan | Status |
+|---|---|---|
+| Quant lebih kecil di layer CPU | Mengurangi bobot yang dibaca per token | Perlu diukur dampak kualitasnya |
+| MTP speculative decoding (`--spec-type draft-mtp`) | Beberapa token diverifikasi per satu kali baca bobot | Belum diuji di build kita |
+| Muat penuh di VRAM (strategi B) | Menghilangkan bottleneck RAM | Kualitas turun; ruang tipis di 1070 Ti |
+| Auto-fit layer vs `-ngl` manual | Model card menganjurkan auto-fit | Belum diverifikasi |
+| Vulkan vs CUDA | Hasil strategi B diperoleh dengan Vulkan | Belum diuji di Pascal |
 
-```bash
-# Starting point yang direkomendasikan
--ngl 99                    # Offload semua layer ke GPU
---ctx-size 4096            # Context window
---batch-size 512           # Batch size untuk prefill
---ubatch-size 512          # Micro-batch size
---cache-type-k q8_0        # KV cache quantization (hemat ~288 MB di 4096 ctx)
---cache-type-v q8_0
---threads 1                # CPU threads (minimal, karena semua di GPU)
---flash-attn               # Dicoba, akan diabaikan otomatis jika Pascal tidak support
-```
-
-### Untuk Qwen3-27B (hybrid)
+## Panduan Parameter (titik awal untuk diukur)
 
 ```bash
-# Starting point untuk Q3_K_M
--ngl 27                    # ~27 layer ke GPU, sisanya CPU
---ctx-size 2048            # Context pendek untuk hemat KV cache
---batch-size 256           # Lebih kecil untuk hybrid mode
---cache-type-k q4_0        # KV cache agresif (hemat VRAM)
---cache-type-v q4_0
---threads 8                # CPU threads untuk layer CPU
---no-mmap                  # Load semua ke RAM (lebih cepat vs mmap)
+# Hybrid, auto-fit
+llama-cli -m Qwen3.8-27B-Q4_K_M.gguf -c 4096 -t <jumlah core fisik>
+
+# Hybrid, manual
+llama-cli -m Qwen3.8-27B-Q4_K_M.gguf -c 4096 -ngl 28 -ctk q8_0 -ctv q8_0 -t <jumlah core fisik>
 ```
+
+> ⚠️ Belum diverifikasi: dukungan Gated DeltaNet di CUDA SM 6.1, apakah `-ctv` quantized butuh `-fa`,
+> dan apakah FA bawaan llama.cpp berjalan di Pascal. Jangan menganggap `-fa` otomatis diabaikan.
 
 ## Output Format
 

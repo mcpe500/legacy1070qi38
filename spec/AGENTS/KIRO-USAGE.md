@@ -19,6 +19,7 @@ menjawab syarat submission: *"Name each product you used and what it does in you
 | Sub-agent `context-gatherer` | ✅ Ya | Riset teknis hardware/model, dan menulis file spec secara paralel |
 | Built-in tools (read/list/search file) | ✅ Ya | Membaca dan memverifikasi isi workspace |
 | Live steering | ✅ Ya | User menyisipkan instruksi saat sub-agent sedang berjalan |
+| Web search dan web fetch | ✅ Ya | Memverifikasi model dan arsitektur; menangkap kesalahan asumsi awal |
 | Spec-driven development (requirements → design → tasks) | ✅ Ya (struktur) | Format `SPEC-NNN-*/` mengikuti pola requirements/design/tasks |
 | Hooks | ❌ Belum | — |
 | Steering files (`.kiro/steering/`) | ❌ Belum | — |
@@ -50,7 +51,7 @@ Keputusan yang lahir dari tahap ini (dijawab user):
 
 ### 3. Sub-agent `context-gatherer`
 Dipanggil lewat tool `invoke_sub_agent`. Dipakai untuk dua hal:
-- **Riset**: analisis kelayakan Qwen3-8B/27B pada GTX 1070 Ti (Pascal SM 6.1) + 16GB RAM —
+- **Riset**: analisis kelayakan awal (dengan asumsi model yang kemudian terbukti salah) pada GTX 1070 Ti (Pascal SM 6.1) + 16GB RAM —
   memory footprint, kuantisasi, estimasi TPS, bottleneck. Hasilnya menjadi dasar
   `RFC-001-quantization-strategy.md` dan tabel memory budget di `MASTER.md`.
 - **Penulisan file**: membuat file di `spec/` secara paralel (roles, phases, specs, handoff).
@@ -72,6 +73,17 @@ Pesan itu diterima tanpa menghentikan sesi dan menghasilkan dokumen ini.
 Struktur `spec/specs/SPEC-NNN-*/{requirements,design,tasks}.md` mengikuti pola spec
 Kiro. Tambahan khas proyek ini (bukan bawaan Kiro): RFC untuk keputusan arsitektur,
 `spec/AGENTS/` untuk instruksi agent, dan `spec/handoff/` untuk transisi antar sesi.
+
+---
+
+### 7. Web search dan web fetch
+Dipakai setelah bootstrap untuk memeriksa nama model "Qwen 3.8 27B" yang disebut user. Hasilnya menunjukkan
+bahwa riset awal sub-agent (berbasis pengetahuan model, tanpa sumber) memakai arsitektur yang salah:
+bukan transformer biasa 52 layer, melainkan hibrida 64 layer (16 full attention + 48 Gated DeltaNet).
+Dokumen `MASTER.md`, `RFC-001`, `SPEC-000`, `SPEC-002`, `SPEC-004`, `SPEC-005` dikoreksi dengan sumber model card.
+Riwayat koreksi ada di `spec/handoff/HANDOFF-LOG.md`.
+
+Pelajaran: klaim faktual wajib bersumber. Sumber yang dipakai adalah model card komunitas, belum kartu resmi.
 
 ---
 

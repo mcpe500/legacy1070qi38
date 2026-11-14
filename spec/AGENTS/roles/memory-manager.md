@@ -21,86 +21,66 @@ Scope tanggung jawab:
 - Pemilihan quantization format → lihat `spec/specs/RFC-001-quantization-strategy.md`
 - Pengukuran benchmark → lihat `roles/benchmarker.md`
 
-## Memory Budget Reference
+## Memory Budget Reference (Qwen3.8-27B)
 
-### VRAM 8 GB — Qwen3-8B Breakdown
+Fakta model dan sumbernya ada di `spec/AGENTS/MASTER.md`. Semua angka di bawah adalah **estimasi**.
 
-```
-Total VRAM: 8192 MB
-├── CUDA runtime overhead:     ~400 MB  (driver, context, libraries)
-├── Model weights (Q5_K_M):   ~6100 MB
-├── KV cache (4096 ctx, FP16): ~576 MB
-├── Activation buffers:         ~100 MB
-└── Headroom:                   ~16 MB  ← SANGAT TIPIS
+### Prinsip
 
-Dengan KV cache q8_0 (4096 ctx):
-├── CUDA runtime:              ~400 MB
-├── Model weights (Q5_K_M):   ~6100 MB
-├── KV cache (4096 ctx, q8_0): ~288 MB
-├── Activation buffers:         ~100 MB
-└── Headroom:                  ~304 MB  ← LEBIH AMAN
-```
-
-### RAM 16 GB — Qwen3-27B Breakdown
+Total memori fisik 24 GiB (8 VRAM + 16 RAM). Bobot yang ada di VRAM tidak perlu ada di RAM.
 
 ```
-Total RAM: 16384 MB
-├── OS + background:          ~1500 MB  (tutup semua app dulu)
-├── llama.cpp runtime:         ~200 MB
-├── Model weights (Q3_K_M):  ~13500 MB
-├── KV cache (2048 ctx):       ~415 MB
-└── Headroom:                  ~769 MB  ← TIPIS, risiko swap
+Kapasitas VRAM untuk bobot ≈ 8.0 − 0.4 (CUDA context) − KV − compute buffer (~0.5, tebakan)
+Bobot di RAM              ≈ ukuran file − kapasitas VRAM untuk bobot
+RAM total                 ≈ bobot di RAM + ~2.5 GiB (OS, runtime, KV layer CPU)
 ```
 
-> ⚠️ ASSUMPTION: OS overhead ~1.5 GB adalah estimasi untuk Linux minimal. Desktop environment bisa +500 MB – 1 GB.
-
-## Layer Offloading Strategy
-
-### Formula Kalkulasi GPU Layers
+### Contoh: Q4_K_M (16.53 GiB), konteks 4096
 
 ```
-layer_size_MB = model_size_MB / num_layers
-available_vram_MB = total_vram_MB - cuda_overhead_MB - kv_cache_MB - activation_MB
-max_gpu_layers = floor(available_vram_MB / layer_size_MB)
+VRAM 8.0 GiB
+├── CUDA context            ~0.4
+├── KV (16 layer attention) ~0.25  (FP16; ~64 KiB/token)
+├── Compute buffer          ~0.5   ⚠️ tebakan
+├── State DeltaNet          ?      ⚠️ ukur
+└── Bobot                   ~6.5–6.8  → ±28 dari 64 layer
+
+RAM 16 GiB
+├── Bobot layer CPU         ~10.0
+├── OS + runtime            ~2.5   (tutup aplikasi lain)
+└── Sisa                    ~3.5
 ```
 
-### Qwen3-27B Layer Offload Table
+### Tabel per quant
 
-| Quant | Model Size | Layer Size | Available VRAM | GPU Layers | CPU Layers |
-|---|---|---|---|---|---|
-| Q4_K_M | 16400 MB | ~315 MB | ~7100 MB | ~22 | ~30 |
-| Q3_K_M | 13500 MB | ~260 MB | ~7100 MB | ~27 | ~25 |
-| Q2_K | 10400 MB | ~200 MB | ~7100 MB | ~35 | ~17 |
+| Quant | Ukuran | Bobot di RAM | RAM total | Risiko |
+|---|---|---|---|---|
+| Q5_K_M | 18.70 | ~12.2 | ~14.7 | 🔴 Mepet |
+| Q4_K_M | 16.53 | ~10.0 | ~12.5 | 🟢 |
+| IQ4_XS | 15.28 | ~8.8 | ~11.3 | 🟢 |
+| Q3_K_M | 13.23 | ~6.7 | ~9.2 | 🟢 |
+| IQ3_M | 12.56 | ~6.1 | ~8.6 | 🟢 |
+| IQ3_XXS | 11.60 | ~5.1 | ~7.6 | 🟢 |
 
-> ⚠️ ASSUMPTION: Embedding layer dan LM head (~1.5 GB) dihitung dalam model size dan bisa ditempatkan di GPU atau CPU tergantung strategi llama.cpp.
+Ukuran dalam GiB.
 
-## KV Cache Management
+> ⚠️ ASSUMPTION: bobot per layer seragam. Layer attention penuh dan DeltaNet kemungkinan berbeda ukuran, dan
+> embedding serta output (masing-masing ~4.7% backbone, tidak di-tie) tidak seragam. Pakai `gguf tensors`
+> untuk angka nyata.
 
-### KV Cache Size Formula
+## KV Cache dan State
 
-```
-kv_size_bytes = 2 × n_layers × n_kv_heads × head_dim × ctx_len × bytes_per_element
-```
+- Hanya 16 dari 64 layer menyimpan KV cache: ≈ **64 KiB per token** (FP16).
+- 48 layer Gated DeltaNet menyimpan state ukuran tetap; besarnya belum diketahui.
 
-### KV Cache untuk Qwen3-8B (36 layers, 8 KV heads, 128 head dim)
+| Konteks | KV FP16 | KV q8_0 (≈ setengah, asumsi) |
+|---|---|---|
+| 2048 | 128 MiB | ~64 MiB |
+| 4096 | 256 MiB | ~128 MiB |
+| 8192 | 512 MiB | ~256 MiB |
+| 32768 | 2 GiB | ~1 GiB |
 
-| Context | FP16 | q8_0 | q4_0 |
-|---|---|---|---|
-| 512 | 72 MB | 36 MB | 18 MB |
-| 1024 | 144 MB | 72 MB | 36 MB |
-| 2048 | 288 MB | 144 MB | 72 MB |
-| 4096 | 576 MB | 288 MB | 144 MB |
-
-### KV Cache untuk Qwen3-27B (52 layers, 8 KV heads, 128 head dim)
-
-| Context | FP16 | q8_0 | q4_0 |
-|---|---|---|---|
-| 512 | 104 MB | 52 MB | 26 MB |
-| 1024 | 208 MB | 104 MB | 52 MB |
-| 2048 | 415 MB | 208 MB | 104 MB |
-| 4096 | 830 MB | 415 MB | 208 MB |
-
-> ⚠️ ASSUMPTION: KV head count = 8 berdasarkan pola GQA Qwen2 family. Verifikasi dari model card.
+Pada model ini KV kecil, jadi KV quantization bukan tuas utama.
 
 ## Checklist Sebelum Launch
 

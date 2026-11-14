@@ -34,12 +34,28 @@ Satu file Python, `tools/legacy.py`, hanya memakai library standar. Isinya subco
 | C. `gguf`, `llama` | `gguf inspect`, `llama build`, `llama run`, `llama bench`, `llama compare` | Baca metadata GGUF tanpa memuat model; build SM 61; jalankan; benchmark 3x + sampling GPU | Sebagian | OQ-001..003, OQ-006 |
 | D. `spec` | `new`, `handoff`, `session`, `questions`, `validate` | Scaffold spec, tambah entri handoff, kelola OQ, cek konsistensi dokumen | Tidak | Konsistensi dokumen |
 
+### Tambahan setelah koreksi model
+
+| Subcommand | Fungsi | Alasan | GPU |
+|---|---|---|---|
+| `gguf tensors` | Ukuran tiap tensor dan layer dari header GGUF | Mengganti asumsi "layer seragam" dengan angka nyata untuk perhitungan layer di GPU | Tidak |
+| `llama placement` | Baca log pemuatan: layer di GPU atau CPU, ukuran buffer | Menjawab "model masuk ke bagian mana". Format log berbeda antar versi | Ya |
+| `hw cpu` | Model CPU, core, AVX2, frekuensi, throttle | Layer di CPU menentukan TPS | Tidak |
+| `hw membw` | Ukur bandwidth RAM nyata | Asumsi 20/40 GB/s belum terukur | Tidak |
+| `hw faults` | Page fault berat dan swap | Penyebab utama perlambatan saat RAM mepet | Tidak |
+| `bench analyze` | Bandwidth efektif vs teoritis | Menunjukkan penahan: GPU, CPU, atau PCIe | Ya |
+| `quality eval` | Perplexity dan KL divergence antar quant, set prompt tetap | Tujuan proyek mencakup kualitas | Ya |
+
+Dan satu dokumen, bukan CLI: `spec/research/` berisi daftar klaim (klaim, sumber, status, OQ terkait).
+
+> Gambar di atas menampilkan set awal; tambahan ini belum ada di gambar.
+
 Contoh:
 
 ```bash
-python tools/legacy.py budget estimate --layers 36 --kv-heads 8 --head-dim 128 --bpw 5.5 --ctx 4096 --json
-python tools/legacy.py gguf inspect models/qwen3-8b-q5_k_m.gguf --json
-python tools/legacy.py llama bench --model models/qwen3-8b-q5_k_m.gguf --runs 3
+python tools/legacy.py budget estimate --file-gib 16.53 --vram-gib 8 --ctx 4096 --json
+python tools/legacy.py gguf inspect models/Qwen3.8-27B-Q4_K_M.gguf --json
+python tools/legacy.py llama bench --model models/Qwen3.8-27B-Q4_K_M.gguf --runs 3
 python tools/legacy.py spec validate
 ```
 

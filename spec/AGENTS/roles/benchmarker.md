@@ -24,13 +24,16 @@ Scope tanggung jawab:
 
 ### Primary Metrics
 
-| Metrik | Unit | Cara Ukur | Target Qwen3-8B | Target Qwen3-27B |
-|---|---|---|---|---|
-| **Decode TPS** | tok/s | llama.cpp built-in stats | ≥10 tok/s | ≥2 tok/s |
-| **Prefill speed** | tok/s | llama.cpp built-in stats | ≥200 tok/s | ≥50 tok/s |
-| **VRAM usage** | MB | `nvidia-smi` saat inference | ≤7500 MB | ≤7500 MB |
-| **RAM usage** | MB | `/proc/meminfo` atau `htop` | ≤4000 MB | ≤15000 MB |
-| **Time to first token** | ms | Manual timing atau wrapper | ≤5000 ms | ≤15000 ms |
+Target ada di `spec/AGENTS/MASTER.md` (tabel "Target Performa"; masih usulan). Model: Qwen3.8-27B.
+
+| Metrik | Unit | Cara Ukur |
+|---|---|---|
+| **Decode TPS** | tok/s | llama.cpp built-in stats |
+| **Prefill speed** | tok/s | llama.cpp built-in stats |
+| **VRAM usage** | MiB | `nvidia-smi` saat inference |
+| **RAM usage (puncak)** | MiB | `/proc/meminfo`, RSS proses |
+| **Time to first token** | ms | Manual timing atau wrapper |
+| **Kualitas** | PPL / KLD | `llama-perplexity` pada set tetap |
 
 ### Secondary Metrics
 

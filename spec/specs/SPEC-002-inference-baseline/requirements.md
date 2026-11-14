@@ -1,54 +1,59 @@
 # Requirements — SPEC-002: Inference Baseline
 
-> Spec: SPEC-002 | Status: **Ready to Implement**
-> Referensi: RFC-001 (Quantization Strategy), SPEC-000 (Project Charter)
-> Priority: P0 — Ini adalah komponen pertama yang harus berjalan
+> Spec: SPEC-002 | Status: **Ready to Implement (direvisi)**
+> Referensi: RFC-001, SPEC-000
+> Priority: P0
+
+> **Revisi:** versi awal memakai Qwen3-8B sebagai target. Goal proyek adalah Qwen3.8-27B. Spec ini
+> sekarang hanya memvalidasi **jalur kerja** (build, GPU terdeteksi, pengukuran) memakai model uji kecil,
+> lalu memeriksa apakah llama.cpp bisa membaca arsitektur Qwen3.8-27B.
 
 ---
 
 ## Problem Statement
 
-Sebelum mengoptimalkan apapun, kita perlu **baseline yang berjalan**: llama.cpp ter-compile untuk Pascal SM 6.1 yang bisa menjalankan Qwen3-8B dengan GGUF quantization dan menghasilkan output yang koheren. Semua spec lain (memory management, KV cache optimization, benchmark suite) bergantung pada baseline ini.
+Sebelum mengukur Qwen3.8-27B, kita perlu build llama.cpp untuk Pascal SM 6.1 yang terbukti jalan, dan tahu
+apakah arsitektur Gated DeltaNet didukung. Dua hal ini bisa menggagalkan seluruh rencana, jadi dicek paling awal.
 
 ---
 
 ## Functional Requirements
 
-- **FR-01:** llama.cpp ter-compile dengan CUDA support untuk Pascal SM 6.1 (`-DCMAKE_CUDA_ARCHITECTURES=61`)
-- **FR-02:** Model Qwen3-8B GGUF (Q5_K_M atau Q4_K_M) dapat di-load tanpa error
-- **FR-03:** Inference menghasilkan output teks yang koheren (bukan garbage/nonsense)
-- **FR-04:** Semua layer di-offload ke GPU (`-ngl 99`) secara default untuk Qwen3-8B Q5_K_M
-- **FR-05:** KV cache quantization q8_0 aktif secara default
-- **FR-06:** llama.cpp menampilkan statistik TPS (decode dan prefill) di output
+- **FR-01:** llama.cpp ter-build dengan CUDA untuk SM 61 (`-DCMAKE_CUDA_ARCHITECTURES=61`)
+- **FR-02:** Sebuah model uji kecil (GGUF apa saja yang lazim, dipilih saat mengerjakan) dimuat penuh ke GPU dan menghasilkan teks koheren
+- **FR-03:** Header GGUF Qwen3.8-27B dibaca (tanpa memuat bobot) dan arsitektur serta jumlah layer dicatat
+- **FR-04:** Dicoba memuat Qwen3.8-27B dengan sebagian layer di GPU, dan hasilnya (berhasil, gagal, atau pesan galat) dicatat
+- **FR-05:** Statistik TPS dari llama.cpp terbaca dan tercatat
 
 ---
 
 ## Non-Functional Requirements
 
-- **NFR-01: Performance** — Decode TPS ≥ 10 tok/s untuk Qwen3-8B Q5_K_M pada GTX 1070 Ti
-- **NFR-02: Memory (VRAM)** — Total VRAM usage ≤ 7.5 GB saat inference Qwen3-8B Q5_K_M, ctx 2048
-- **NFR-03: Compatibility** — Berjalan pada Pascal SM 6.1 (GTX 1070 Ti); tidak menggunakan Flash Attention, GPTQ, AWQ, BF16
-- **NFR-04: Stability** — Tidak crash atau OOM selama inference normal (100–500 token output)
-- **NFR-05: Reproducibility** — Setup bisa diikuti dari README tanpa manual debugging
+- **NFR-01: Reproducibility** — commit llama.cpp, versi CUDA, dan driver tercatat
+- **NFR-02: Compatibility** — hanya jalur yang kompatibel dengan Pascal (lihat daftar larangan di MASTER)
+- **NFR-03: Stability** — tidak crash pada 100–500 token keluaran model uji
 
 ---
 
-## Out of Scope (di SPEC-002 ini)
+## Out of Scope
 
-- Optimasi lanjutan (KV cache eviction, sliding window) → SPEC-004
-- Qwen3-27B hybrid inference → SPEC-005
-- Automated benchmark suite → SPEC-006
-- Python wrapper/API → future spec
-- Batched inference → future spec
+- Optimasi offload dan perbandingan quant → SPEC-005
+- Pengukuran kualitas → SPEC-006
+- Speculative decoding → spec terpisah setelah baseline
 
 ---
 
 ## Success Criteria
 
-- [ ] `cmake --build` selesai tanpa error, menghasilkan binary `llama-cli`
-- [ ] `llama-cli --version` menampilkan CUDA dan SM 61 di output
-- [ ] `llama-cli -m qwen3-8b-q5_k_m.gguf -ngl 99 -n 50` menghasilkan teks koheren
-- [ ] Output llama-cli menampilkan baris seperti: `llama_perf_sampler_print: ... X tok/s`
-- [ ] Measured decode TPS ≥ 10 tok/s
-- [ ] `nvidia-smi` menunjukkan VRAM usage ≤ 7500 MB saat inference berjalan
-- [ ] Tidak ada error CUDA OOM pada ctx-size 2048
+- [ ] Build selesai dan `llama-cli --version` menunjukkan CUDA
+- [ ] Model uji berjalan di GPU, TPS tercatat
+- [ ] Arsitektur Qwen3.8-27B terbaca dari GGUF dan dicatat (layer, tipe attention)
+- [ ] Hasil percobaan memuat Qwen3.8-27B tercatat, termasuk jika gagal di kernel Gated DeltaNet
+- [ ] Jawaban untuk "apakah kernel Gated DeltaNet jalan di SM 6.1" tercatat di handoff
+
+---
+
+## Dependencies
+
+- **Requires:** tidak ada
+- **Blocks:** SPEC-003, SPEC-004, SPEC-005, SPEC-006

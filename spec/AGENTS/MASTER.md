@@ -1,7 +1,10 @@
 # MASTER AGENT — legacy1070qi38
 
 > **Baca dokumen ini pertama sebelum mengerjakan apapun dalam proyek ini.**
-> Semua agents — baik role-based maupun phase-based — tunduk pada aturan di dokumen ini.
+> Semua agents, baik role-based maupun phase-based, tunduk pada aturan di dokumen ini.
+>
+> **Revisi (pasca-bootstrap):** target model dikoreksi dari "Qwen3-8B / Qwen3-27B" menjadi
+> **Qwen3.8-27B saja**. Versi awal memakai asumsi arsitektur yang salah. Lihat "Fakta Model" di bawah.
 
 ---
 
@@ -9,156 +12,172 @@
 
 **Nama:** `legacy1070qi38`
 **Spirit:** *Old Hardware, New Intelligence*
-**Tema:** Resurrection — memberikan kehidupan kedua pada GPU generasi lama
+**Tema:** Resurrection, memberi kehidupan kedua pada GPU generasi lama
 **Lisensi:** Apache 2.0
 
-Proyek ini adalah **LLM inference engine open-source** yang mengoptimalkan hardware lama — khususnya NVIDIA GTX 1070 Ti (8GB VRAM, Pascal SM 6.1) — untuk menjalankan model Large Language Model modern secara efisien. Fokus utama: **Qwen3-8B** dan **Qwen3-27B**, dengan target maximizing tokens per second, minimizing VRAM dan RAM usage, serta menjaga kualitas output tetap dapat diterima.
+Proyek ini adalah **LLM inference engine open-source** untuk hardware lama, khususnya NVIDIA GTX 1070 Ti
+(8 GB VRAM, Pascal SM 6.1) dengan RAM 16 GB DDR4. **Goal utama: menjalankan Qwen3.8-27B** dengan tokens per
+second setinggi mungkin, memakai VRAM dan RAM sehemat mungkin, dan kualitas output yang masih layak.
+Tidak diasumsikan seluruh model muat di VRAM.
 
 ---
 
 ## Hardware Constraints (NON-NEGOTIABLE)
 
-Semua keputusan teknis HARUS mempertimbangkan batasan hardware ini:
-
 | Komponen | Spesifikasi |
 |---|---|
 | GPU | NVIDIA GTX 1070 Ti |
-| GPU Architecture | Pascal (GP104, SM 6.1) |
+| Arsitektur | Pascal (GP104, SM 6.1) |
 | VRAM | 8 GB GDDR5 |
-| Memory Bandwidth (GPU) | 256 GB/s |
+| Bandwidth GPU | 256 GB/s |
 | CUDA Cores | 2432 |
 | System RAM | 16 GB DDR4 |
-| RAM Bandwidth (est.) | ~40–45 GB/s (dual-channel) |
-| PCIe | 3.0 x16 (~12–13 GB/s practical) |
-| GPU TDP | 180W |
+| Bandwidth RAM | **Belum diketahui.** ~20 GB/s bila single-channel, ~40 GB/s bila dual-channel (asumsi, ukur dengan `hw membw`) |
+| CPU | **Belum diketahui** (model, jumlah core, dukungan AVX2) |
+| PCIe | 3.0 x16 (~12–13 GB/s praktis) |
+| TDP GPU | 180W |
 
-### Apa yang TIDAK ADA di hardware ini:
-- ❌ **Tensor Cores** (tidak ada di Pascal — mulai Volta)
-- ❌ **Flash Attention** (membutuhkan SM ≥ 7.5 untuk v1, SM ≥ 8.0 untuk v2)
-- ❌ **Native INT8 acceleration** (tidak ada DP4A di Pascal)
-- ❌ **BF16 hardware support** (Pascal hanya FP32 dan FP16 CUDA-core, tanpa speedup FP16 di GP104)
-- ❌ **Shared memory besar** (48 KB/SM vs 96–164 KB di Ampere/Hopper)
-
----
-
-## Model Targets
-
-### Qwen3-8B
-- Parameter: ~8.19B
-- Layers: ~36 transformer layers
-- Hidden dim: 4096
-- KV heads (GQA): 8
-- Head dim: 128
-- FFN intermediate: 28,672
-- Vocabulary: 152,064 tokens
-
-### Qwen3-27B
-- Parameter: ~27.4B
-- Layers: ~52 transformer layers
-- Hidden dim: 5120
-- KV heads (GQA): 8
-- Head dim: 128
-- FFN intermediate: ~27,648–32,768
-
-> ⚠️ **ASSUMPTION:** Arsitektur Qwen3 di atas diekstrapolasi dari keluarga Qwen2/Qwen2.5. Verifikasi ke model card resmi saat model tersedia.
+### Yang tidak ada di GPU ini
+- ❌ **Tensor Cores** (mulai Volta)
+- ❌ **Native INT8 (DP4A) untuk matmul cepat** yang dipakai GPTQ/AWQ
+- ❌ **BF16 hardware**
+- ❌ **FP16 fast path** (GP104 FP16 ≈ FP32)
+- ⚠️ **FlashAttention (library Dao-AILab) tidak mendukung SM 6.1.** Apakah implementasi FA bawaan
+  llama.cpp (`-fa`) berjalan baik di Pascal **belum diverifikasi**. Uji, jangan diasumsikan.
 
 ---
 
-## Memory Budget
+## Fakta Model: Qwen3.8-27B
 
-### Qwen3-8B (full VRAM inference)
+> Sumber: model card komunitas di Hugging Face
+> ([6block](https://huggingface.co/6block/Qwen3.8-27B-GGUF),
+> [guideboardlabs](https://huggingface.co/guideboardlabs/Qwen3.8-27B-Q3-DOWN-XS-GGUF)) dan satu wiki.
+> **Belum dicocokkan dengan kartu resmi `Qwen/Qwen3.8-27B`.** Verifikasi dengan `gguf inspect` pada file asli.
 
-| Quant | Weights | +KV(4096ctx) | +overhead | Total | Status |
-|---|---|---|---|---|---|
-| Q8_0 | 8.8 GB | 0.58 GB | 0.4 GB | 9.8 GB | ❌ Tidak muat |
-| Q6_K | 7.0 GB | 0.29 GB | 0.4 GB | 7.7 GB | ⚠️ Tight (ctx≤2048) |
-| Q5_K_M | 6.1 GB | 0.58 GB | 0.4 GB | 7.1 GB | ✅ **RECOMMENDED** |
-| Q4_K_M | 5.0 GB | 0.58 GB | 0.4 GB | 6.0 GB | ✅ Comfortable |
-| Q3_K_M | 4.1 GB | 0.58 GB | 0.4 GB | 5.1 GB | ✅ Comfortable |
-
-> KV cache bisa dikurangi dengan `--cache-type-k q8_0 --cache-type-v q8_0` (~50% saving).
-
-### Qwen3-27B (hybrid CPU-GPU offloading)
-
-| Quant | Weights | RAM Total | GPU Layers | CPU Layers | Tok/s est. | Status |
-|---|---|---|---|---|---|---|
-| Q4_K_M | 16.4 GB | ~18 GB | ~22 | ~30 | 2–4 | ❌ RAM OOM |
-| Q3_K_M | 13.5 GB | ~15.5 GB | ~27 | ~25 | 3–6 | ⚠️ **MAX VIABLE** |
-| Q2_K | 10.4 GB | ~12.4 GB | ~35 | ~17 | 6–10 | ✅ Fits, quality↓ |
-
----
-
-## Expected Performance Targets
-
-| Skenario | Tok/s Target | Acceptable |
+| Properti | Nilai | Status |
 |---|---|---|
-| Qwen3-8B Q5_K_M full GPU | 12–22 tok/s | ≥10 tok/s |
-| Qwen3-8B Q6_K full GPU | 10–18 tok/s | ≥8 tok/s |
-| Qwen3-27B Q3_K_M hybrid | 3–6 tok/s | ≥2 tok/s |
-| Qwen3-27B Q2_K hybrid | 6–10 tok/s | ≥4 tok/s |
+| Jenis | Dense, vision-language (teks, gambar, video masuk; teks keluar) | Dari model card |
+| Parameter | 27B teks, 27.8B termasuk vision tower | Dari model card |
+| Layer | **64**: 16 full attention (GQA) + 48 Gated DeltaNet (linear attention); `full_attention_interval=4` | Dari model card (satu repo menulis 49 layer DeltaNet, kemungkinan menghitung MTP head) |
+| Hidden dim | 5120 | Dari model card |
+| Vocab | 248,320, embedding dan output **tidak di-tie** (dua salinan) | Dari model card |
+| Konteks | 262,144 native | Dari model card |
+| KV cache | ≈ **64 KiB per token** (hanya 16 layer full attention); 4096 token ≈ 256 MiB, 32k ≈ 2 GiB (FP16) | Dari model card |
+| KV heads × head dim | 1024 (turunan dari 64 KiB/token: 4 KiB per layer per token) | ⚠️ Turunan, belum dikonfirmasi |
+| State DeltaNet | Ukuran tetap, tidak tumbuh dengan konteks; **besarnya belum diketahui** | ⚠️ Ukur |
+| MTP head | Ada, bisa dipakai untuk speculative decoding (`--spec-type draft-mtp`) | Dari model card, belum diuji di build kita |
+| Vision | `mmproj` terpisah (~0.9 GiB), opsional; tanpa mmproj model jalan sebagai teks | Dari model card |
+| Ukuran lain dalam keluarga | Wiki hanya menyebut 27B dan Max (2.4T MoE). **Tidak ada 8B yang terverifikasi** | ⚠️ Cek |
+
+Dampak: rumus KV cache lama (semua layer punya KV) **salah** untuk model ini. Lihat `RFC-001`.
+
+---
+
+## Pilihan Quantization (ukuran file nyata)
+
+> Sumber: tabel 6block. PPL diukur dalam satu setup internal; **hanya bisa dibandingkan di dalam tabel ini**.
+
+| Quant | Ukuran (GiB) | PPL | Catatan |
+|---|---|---|---|
+| Q5_K_M | 18.70 | 6.8010 | |
+| Q4_K_M | 16.53 | 6.8103 | |
+| IQ4_XS | 15.28 | 6.8529 | |
+| Q3_K_M | 13.23 | 7.1020 | |
+| IQ3_M | 12.56 | 7.0306 | Lebih kecil dari Q3_K_M, PPL setara atau lebih baik |
+| Q3_K_S | 12.16 | 7.2176 | |
+| IQ3_XXS | 11.60 | 7.1994 | |
+| Q3-DOWN-XS (repo lain) | 7.68 | 8.27 (protokol berbeda) | Muat penuh di 8 GB; lihat strategi B |
+
+---
+
+## Memory Budget (ESTIMASI, belum diukur)
+
+Total memori fisik = 8 GiB VRAM + 16 GiB RAM = 24 GiB. Bobot yang masuk VRAM **tidak** perlu ada di RAM.
+
+```
+Kapasitas VRAM untuk bobot ≈ 8.0 − 0.4 (CUDA context) − 0.25 (KV, 4096 ctx) − ~0.5 (compute buffer, tebakan)
+                          ≈ 6.5–6.8 GiB
+Bobot di RAM ≈ ukuran file − 6.5 GiB
+RAM total    ≈ bobot di RAM + ~2.5 GiB (OS, runtime, KV layer CPU)
+Batas atas TPS ≈ bandwidth RAM ÷ bobot di RAM   (bobot GPU menambah ~0.03 s per token)
+```
+
+| Quant | Bobot di RAM | RAM total | Batas atas TPS (20 GB/s) | Batas atas TPS (40 GB/s) | Status |
+|---|---|---|---|---|---|
+| Q5_K_M | ~12.2 GiB | ~14.7 GiB | ~1.5 | ~3 | ⚠️ RAM mepet |
+| Q4_K_M | ~10.0 GiB | ~12.5 GiB | ~1.9 | ~3.7 | ✅ Muat |
+| IQ4_XS | ~8.8 GiB | ~11.3 GiB | ~2.1 | ~4.2 | ✅ |
+| Q3_K_M | ~6.7 GiB | ~9.2 GiB | ~2.8 | ~5.5 | ✅ |
+| IQ3_M | ~6.1 GiB | ~8.6 GiB | ~3.1 | ~6.1 | ✅ |
+| IQ3_XXS | ~5.1 GiB | ~7.6 GiB | ~3.6 | ~7.3 | ✅ |
+
+> Angka TPS adalah **batas atas teoritis**. Praktisnya lebih rendah. Koreksi dari versi awal: dulu ditulis
+> bahwa Q4_K_M "tidak muat di 16 GB RAM". Itu salah, karena sebagian bobot berada di VRAM.
+
+---
+
+## Strategi yang Akan Diuji
+
+| | Strategi | Gagasan | Risiko |
+|---|---|---|---|
+| A | Hybrid CPU+GPU, Q4_K_M sampai IQ3 | Sebagian layer di VRAM, sisanya di RAM | Tertahan bandwidth RAM |
+| B | Muat penuh di 8 GB, ultra-low-bit (~7.7 GiB) | Tidak ada layer di CPU. Model card melaporkan 24.5 tok/s di RX 5700 XT 8 GB (Vulkan), kualitas 86.5% terhadap kontrol 3-bit | Kualitas turun; di 1070 Ti kurang ruang untuk KV dan compute buffer; bandwidth 256 vs 448 GB/s (skala kasar ≈ 14 tok/s, tebakan) |
+| C | Speculative decoding dengan MTP head | Verifikasi beberapa token per satu kali baca bobot, mengurangi beban bandwidth RAM | Dukungan di build kita belum diuji |
+| D | Backend Vulkan sebagai pembanding CUDA | Hasil B didapat dengan Vulkan | Performa Vulkan di Pascal belum diketahui |
+
+---
+
+## Target Performa (usulan, harus dikalibrasi setelah pengukuran)
+
+| Skenario | Minimum | Target |
+|---|---|---|
+| A: Q4_K_M hybrid | 1.5 tok/s | 3 tok/s |
+| A: IQ3_M / Q3_K_M hybrid | 2 tok/s | 5 tok/s |
+| B: muat penuh di VRAM | 8 tok/s | 14 tok/s |
+| C: dengan MTP | +30% dari A | +80% dari A |
+| RAM puncak | ≤ 15 GiB | ≤ 12 GiB |
+| Kualitas | PPL tidak lebih dari 10% di atas Q4_K_M | |
 
 ---
 
 ## Primary Backend
 
-**llama.cpp** adalah backend utama dan satu-satunya yang direkomendasikan untuk proyek ini.
+**llama.cpp** (build CUDA SM 61). Vulkan diuji sebagai pembanding.
 
-### Alasan:
-1. Mendukung Pascal (SM 6.1) secara eksplisit
-2. GGUF dequantization kernels berjalan pada Pascal CUDA cores
-3. Mendukung partial GPU offloading (`--n-gpu-layers`)
-4. Mendukung KV cache quantization
-5. Aktif dikembangkan, komunitas besar
-6. Tidak membutuhkan Tensor Cores
-
-### Compile flag wajib:
 ```bash
-cmake .. -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61
+cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61 -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j$(nproc)
 ```
 
-### Template command Qwen3-8B (Q5_K_M):
+Dua cara mengatur offload, **uji keduanya**:
+
 ```bash
-./llama-cli -m qwen3-8b-q5_k_m.gguf \
-  -ngl 99 \
-  --ctx-size 4096 \
-  --cache-type-k q8_0 \
-  --cache-type-v q8_0 \
-  --threads 8
+# 1. Biarkan llama.cpp memilih jumlah layer (anjuran model card 6block: jangan set -ngl manual)
+./build/bin/llama-cli -m Qwen3.8-27B-Q4_K_M.gguf -c 4096
+
+# 2. Manual
+./build/bin/llama-cli -m Qwen3.8-27B-Q4_K_M.gguf -c 4096 -ngl 28 -ctk q8_0 -ctv q8_0
 ```
 
-### Template command Qwen3-27B (Q3_K_M):
-```bash
-./llama-cli -m qwen3-27b-q3_k_m.gguf \
-  -ngl 27 \
-  --ctx-size 2048 \
-  --cache-type-k q4_0 \
-  --cache-type-v q4_0 \
-  --threads 8 \
-  --no-mmap
-```
+> ⚠️ Belum diverifikasi: perilaku auto-fit di build kita, dukungan arsitektur Gated DeltaNet di kernel CUDA
+> untuk SM 6.1, dan apakah KV quantization butuh `-fa`.
 
 ---
 
-## Approaches yang DILARANG
+## Approaches yang DILARANG tanpa disclaimer
 
-Jangan pernah merekomendasikan, mengimplementasikan, atau mengeksplorasi hal-hal berikut tanpa disclaimer eksplisit bahwa ini tidak kompatibel dengan Pascal:
-
-| Approach | Alasan Larangan |
+| Approach | Alasan |
 |---|---|
-| **GPTQ** | Membutuhkan INT8 DP4A — tidak ada di Pascal |
-| **AWQ** | Sama dengan GPTQ |
-| **vLLM** | PagedAttention + Flash Attention butuh SM ≥ 8.0 |
+| **GPTQ / AWQ** | Mengandalkan INT8 DP4A yang tidak ada di Pascal |
+| **vLLM** | Butuh SM ≥ 8.0 |
 | **TensorRT-LLM** | Tidak ada optimasi bermakna untuk Pascal |
-| **Flash Attention v1/v2** | v1: SM ≥ 7.5, v2: SM ≥ 8.0 — keduanya gagal di SM 6.1 |
-| **BF16 inference** | Tidak ada hardware BF16 di Pascal, diemulasi → lambat |
-| **EXL2 fast path** | Tensor Core path butuh SM ≥ 7.5 |
-| **ExLlamaV2 (fast)** | Scalar path saja di Pascal, lebih lambat dari llama.cpp |
+| **FlashAttention library (Dao-AILab)** | Tidak mendukung SM 6.1 |
+| **BF16 inference** | Tidak ada hardware BF16 |
+| **EXL2 / ExLlamaV2** | Jalur cepatnya butuh Tensor Core |
 
 ---
 
 ## Struktur Spec System
-
-Semua spesifikasi dan dokumen ada di `spec/`:
 
 ```
 spec/
@@ -167,71 +186,50 @@ spec/
 └── handoff/        ← Log dan dokumen transisi antar sesi
 ```
 
-### Hirarki baca wajib sebelum mengerjakan sebuah spec:
-1. Baca `spec/AGENTS/MASTER.md` (dokumen ini)
-2. Baca role kamu di `spec/AGENTS/roles/`
-3. Baca phase kamu di `spec/AGENTS/phases/`
-4. Baca `spec/handoff/HANDOFF-LOG.md` untuk state terkini
-5. Baca spec yang akan dikerjakan di `spec/specs/`
+### Urutan baca sebelum mengerjakan sebuah spec
+1. `spec/AGENTS/MASTER.md` (dokumen ini)
+2. Role kamu di `spec/AGENTS/roles/`
+3. Phase kamu di `spec/AGENTS/phases/`
+4. `spec/handoff/HANDOFF-LOG.md` untuk state terkini
+5. Spec yang akan dikerjakan di `spec/specs/`
 
-### Konvensi penamaan spec:
-- Feature spec: `SPEC-NNN-nama-fitur/` (folder dengan requirements.md, design.md, tasks.md)
-- RFC arsitektur: `RFC-NNN-nama-keputusan.md` (file tunggal)
-- Nomor urut 3 digit: SPEC-001, SPEC-002, RFC-001, dst.
+### Penamaan
+- Feature spec: `SPEC-NNN-nama-fitur/` (requirements.md, design.md, tasks.md)
+- RFC: `RFC-NNN-nama.md`
 
 ---
 
 ## Aturan Umum Agent
 
-### Bahasa
-- Dokumentasi teknis: **Bahasa Indonesia** (dengan istilah teknis dalam Bahasa Inggris seperti biasa)
-- Komentar kode: **Bahasa Inggris**
-- Nama file, variabel, fungsi: **Bahasa Inggris**
-
-### Format Output
-- Gunakan tabel untuk perbandingan angka dan trade-off
-- Gunakan code block untuk perintah, konfigurasi, dan kode
-- Sertakan ⚠️ ASSUMPTION di setiap klaim yang belum diverifikasi empiris
-- Sertakan referensi ke spec/RFC terkait
-
-### Ketika menemukan konflik dengan spec:
-1. Catat konflik di `spec/handoff/HANDOFF-LOG.md` dengan label `[CONFLICT]`
-2. Jangan asumsikan — tanya atau escalate
-3. Jangan modifikasi spec lain tanpa explicit permission
-
-### Ketika selesai mengerjakan sebuah task:
-1. Update `spec/handoff/HANDOFF-LOG.md` dengan entri baru
-2. Jika ada keputusan baru yang dibuat, dokumentasikan alasannya
-3. Jika ada open question baru, tambahkan ke session handoff aktif
+- Dokumentasi teknis: Bahasa Indonesia. Komentar kode, nama file, variabel: Bahasa Inggris.
+- Gunakan tabel untuk perbandingan dan code block untuk perintah.
+- Tandai ⚠️ ASSUMPTION pada klaim yang belum diverifikasi. **Sertakan sumber untuk klaim faktual.**
+- Konflik dengan spec: catat `[CONFLICT]` di `HANDOFF-LOG.md`, jangan berasumsi.
+- Selesai satu task: tambahkan entri di `HANDOFF-LOG.md` (append-only).
 
 ---
 
 ## Success Criteria Proyek
 
-Proyek dianggap berhasil jika:
-
-1. **Qwen3-8B** dapat berjalan pada GTX 1070 Ti dengan ≥10 tok/s pada Q5_K_M
-2. **Qwen3-27B** dapat berjalan dengan hybrid offloading dan menghasilkan ≥2 tok/s pada Q3_K_M
-3. Penggunaan VRAM tidak melebihi 7.5 GB untuk Qwen3-8B (meninggalkan headroom)
-4. Total RAM usage untuk Qwen3-27B tidak melebihi 15 GB (menghindari swapping)
-5. Output model tetap koheren dan dapat dievaluasi kualitasnya
-6. Proses setup terdokumentasi dan dapat direproduksi
+1. Qwen3.8-27B berjalan di GTX 1070 Ti + 16 GB RAM dan menghasilkan output koheren.
+2. TPS terukur (bukan estimasi) ≥ minimum di tabel target untuk minimal satu strategi.
+3. RAM puncak ≤ 15 GiB tanpa swap.
+4. Kualitas terukur (perplexity atau KL divergence) untuk quant yang dipilih.
+5. Setup terdokumentasi dan bisa direproduksi.
 
 ---
 
-## Open Questions (Bootstrap)
+## Open Questions
 
-Pertanyaan-pertanyaan ini belum terjawab dan harus dijawab melalui eksperimen:
+Daftar aktif dan statusnya ada di `spec/handoff/HANDOFF-LOG.md`. Yang paling menentukan:
 
-- [ ] Berapa layer count Qwen3-8B dan Qwen3-27B yang sebenarnya? (perlu verifikasi model card)
-- [ ] Berapa KV head count Qwen3 yang sebenarnya?
-- [ ] Apakah llama.cpp versi terbaru memiliki regresi performa di Pascal?
-- [ ] Apakah KV cache quantization Q4 memengaruhi kualitas output secara signifikan?
-- [ ] Berapa TPS aktual (bukan estimasi) untuk masing-masing skenario?
-- [ ] Apakah system RAM 16 GB cukup untuk Q3_K_M 27B tanpa swap? (perlu pengukuran actual RSS)
-- [ ] Apakah ada CUDA kernel yang perlu di-patch untuk Pascal?
+- [ ] Apakah kernel Gated DeltaNet di llama.cpp CUDA jalan di SM 6.1? (bisa langsung gagal)
+- [ ] Nama dan konfigurasi persis dari kartu resmi `Qwen/Qwen3.8-27B` (layer, KV heads, head dim)?
+- [ ] Berapa bandwidth RAM aktual dan apakah single atau dual channel?
+- [ ] Apakah MTP speculative decoding jalan di build kita, dan berapa percepatannya?
+- [ ] Apakah strategi B (muat penuh di 8 GB) cukup ruang di 1070 Ti, dan seberapa turun kualitasnya?
+- [ ] Apakah auto-fit layer lebih baik dari `-ngl` manual?
 
 ---
 
-*Dokumen ini dibuat pada sesi bootstrap. Update jika ada keputusan arsitektur baru yang fundamental.*
-*Lihat: `spec/handoff/SESSION-001-bootstrap.md` untuk konteks sesi ini.*
+*Direvisi setelah verifikasi model. Lihat `spec/handoff/HANDOFF-LOG.md` untuk riwayat koreksi.*

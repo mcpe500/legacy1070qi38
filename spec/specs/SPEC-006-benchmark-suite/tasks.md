@@ -24,7 +24,7 @@
   - Done when: Memory metrics ada di output
 
 - [ ] **Task 4: Jalankan full benchmark untuk semua skenario dari MASTER.md**
-  - Implementation: Benchmark Qwen3-8B Q5_K_M, Q6_K, Q4_K_M (semua full GPU). Benchmark Qwen3-27B Q3_K_M dan Q2_K (hybrid). Simpan semua result
+  - Implementation: Benchmark Qwen3.8-27B pada Q4_K_M, IQ4_XS, IQ3_M, Q3_K_M, IQ3_XXS (hybrid) dan strategi B (muat penuh). Simpan semua result
   - Test: Semua hasil ada; TPS matches atau exceeds targets di MASTER.md
   - Done when: Semua result tersimpan di `benchmarks/results/`
 
