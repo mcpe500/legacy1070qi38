@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Validasi spec saat file spec disimpan",
+      "trigger": "PostFileSave",
+      "description": "Menjalankan `legacy.py spec validate` (tautan, penomoran FR/NFR) setiap kali berkas markdown di spec/ disimpan.",
+      "matcher": "spec/.*\\.md$",
+      "action": {
+        "type": "command",
+        "command": "python3 tools/legacy.py spec validate",
+        "timeout": 30
+      }
+    }
+  ]
+}
