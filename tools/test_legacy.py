@@ -69,7 +69,7 @@ class BudgetKnownValues(unittest.TestCase):
         self.assertAlmostEqual(legacy.kv_bytes_per_token(16, 8, 128, "q4_0") / f16, 18 / 64)
 
     def test_q4_k_m_split(self):
-        e = legacy.estimate(16.53)
+        e = legacy.estimate(16.53, rs_gib=0)   # nilai tangan tanpa state DeltaNet
         self.assertAlmostEqual(e["kv_gib"], 0.25, places=4)
         self.assertAlmostEqual(e["vram"]["weights_capacity_gib"], 6.85, places=3)
         self.assertAlmostEqual(e["ram"]["weights_gib"], 9.68, places=3)
@@ -79,7 +79,7 @@ class BudgetKnownValues(unittest.TestCase):
         self.assertAlmostEqual(e["tps_upper_bound"], 1.823, places=2)
 
     def test_q5_k_m_is_tight(self):
-        e = legacy.estimate(18.70)
+        e = legacy.estimate(18.70, rs_gib=0)
         self.assertAlmostEqual(e["ram"]["headroom_gib"], 1.65, places=3)
         self.assertEqual(e["risk"], "yellow")
 
@@ -100,9 +100,32 @@ class BudgetKnownValues(unittest.TestCase):
         self.assertEqual(e["vram"]["weights_gib"], 0)
 
     def test_suggest_ngl(self):
-        self.assertEqual(legacy.suggest_ngl(16.53, layers=64)["ngl"], 26)
-        self.assertEqual(legacy.suggest_ngl(5.0, layers=64)["ngl"], 64)
-        self.assertEqual(legacy.suggest_ngl(100.0, layers=64)["ngl"], 4)
+        self.assertEqual(legacy.suggest_ngl(16.53, layers=64, rs_gib=0)["ngl"], 26)
+        self.assertEqual(legacy.suggest_ngl(5.0, layers=64, rs_gib=0)["ngl"], 64)
+        self.assertEqual(legacy.suggest_ngl(100.0, layers=64, rs_gib=0)["ngl"], 4)
+
+    def test_recurrent_state_is_counted_by_default(self):
+        with_rs = legacy.estimate(16.53)
+        without = legacy.estimate(16.53, rs_gib=0)
+        self.assertAlmostEqual(without["vram"]["weights_capacity_gib"] - with_rs["vram"]["weights_capacity_gib"],
+                               legacy.DEFAULT_RS_GIB, places=4)
+        self.assertEqual(with_rs["vram"]["recurrent_state_gib"], 0.146)
+
+    def test_default_rs_matches_official_dims(self):
+        # 48 layer GDN x (48 head V x 128 x 128 x 4 B + konv 3 x (6144 + 2*16*128) x 4 B)
+        per_layer = 48 * 128 * 128 * 4 + 3 * (6144 + 2 * 16 * 128) * 4
+        self.assertAlmostEqual(48 * per_layer / GIB, legacy.DEFAULT_RS_GIB, places=3)
+
+    def test_recurrent_state_formula_matches_measured_08b(self):
+        # Log asli llama.cpp, Qwen3.5-0.8B, 4 sekuens: "RS buffer size = 77.06 MiB"
+        per_layer = 16 * 128 * 128 * 4 + 3 * (2048 + 2 * 16 * 128) * 4
+        self.assertAlmostEqual(4 * 18 * per_layer / 2 ** 20, 77.06, places=1)
+
+    def test_iso3_kv_factor_from_block_layout(self):
+        # block_iso3_0 = 2 + 128/4 + 128/8 = 50 byte per 128 nilai
+        self.assertEqual(2 + 32 + 16, 50)
+        f16 = legacy.kv_bytes_per_token(16, 4, 256, "f16")
+        self.assertAlmostEqual(legacy.kv_bytes_per_token(16, 4, 256, "iso3") / f16, 50 / 256)
 
     def test_compare(self):
         est = legacy.estimate(16.53)
@@ -890,7 +913,7 @@ class CliSurface(unittest.TestCase):
         self.assertEqual(cli(*base)[0], 2)
 
     def test_suggest_ngl_cli(self):
-        code, data, _ = cli_json("budget", "suggest-ngl", "--file-gib", "16.53")
+        code, data, _ = cli_json("budget", "suggest-ngl", "--file-gib", "16.53", "--rs-gib", "0")
         self.assertEqual((code, data["ngl"]), (0, 26))
 
     def test_unknown_subcommand_is_usage_error(self):
@@ -922,6 +945,337 @@ class CliSurface(unittest.TestCase):
         self.assertIn("  c:", text)
         self.assertIn("e: -", text)
         self.assertIn("f: -", text)
+
+
+
+# --------------------------------------------------------------------------
+# Perbaikan #4: -st, stdin tertutup, timing bentuk baru, KV hibrida
+# --------------------------------------------------------------------------
+
+BRACKET_TIMING = "\n[ Prompt: 69.1 t/s | Generation: 38.3 t/s ]\n\nExiting...\n"
+# Keluaran asli `llama-perplexity` fork 08e025c (dipotong), termasuk tanda ± pada KLD.
+KLD_REAL = """====== KL divergence statistics ======
+Mean    KLD:   0.348379 \u00b1   0.011129
+Maximum KLD:   3.404110
+99.9%   KLD:   3.204420
+99.0%   KLD:   1.563301
+95.0%   KLD:   0.977717
+Same top p: 70.000 \u00b1  1.436 %
+"""
+
+
+class FixedDefectsTests(TempDirCase):
+    def test_run_argv_uses_single_turn_not_no_cnv(self):
+        argv = legacy.build_run_argv("/b/llama-cli", "/m.gguf", prompt="x")
+        self.assertIn("-st", argv)
+        self.assertNotIn("-no-cnv", argv)
+        self.assertNotIn("-st", legacy.build_run_argv("/b/llama-cli", "/m.gguf", prompt="x",
+                                                      single_turn=False))
+
+    def test_parse_bracket_timing(self):
+        t = legacy.parse_llama_timing("garbage\n" + BRACKET_TIMING)
+        self.assertEqual((t["prompt_tps"], t["gen_tps"]), (69.1, 38.3))
+
+    def test_cli_that_waits_for_stdin_without_st_does_not_hang(self):
+        # Meniru perilaku asli: tanpa -st llama-cli membaca stdin selamanya.
+        script = ("#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = \"-st\" ] && st=1; done\n"
+                  "[ -z \"$st\" ] && { read line; echo waiting; exit 9; }\n"
+                  "printf '[ Prompt: 10.0 t/s | Generation: 5.0 t/s ]\\n'\n")
+        d = self.path("bin")
+        f = self.write(os.path.join("bin", "llama-cli"), script)
+        os.chmod(f, os.stat(f).st_mode | stat.S_IXUSR)
+        model = self.write("m.gguf", "x")
+        code, data, _ = cli_json("llama", "run", "--model", model, "--prompt", "hi", "--bin-dir", d,
+                                 "--lock-file", self.path("l.lock"), "--timeout", "10")
+        self.assertEqual(code, 0)
+        self.assertEqual(data["gen_tps"], 5.0)
+
+    def test_stdin_is_closed_for_children(self):
+        out = legacy.run_capture(["sh", "-c", "read x; echo got=$?"])
+        self.assertIn("got=1", out)   # EOF langsung, tidak menunggu
+
+    def hybrid(self, interval=4, blocks=32):
+        p = self.path("h.gguf")
+        make_gguf(p, [
+            kv_str("general.architecture", "qwen35"),
+            kv_u32("qwen35.block_count", blocks),
+            kv_u32("qwen35.full_attention_interval", interval),
+            kv_u32("qwen35.attention.head_count_kv", 4),
+        ], [tensor_info("token_embd.weight", [256, 10], 12),
+            tensor_info("output.weight", [256, 10], 12),
+            tensor_info("blk.0.x.weight", [256, 4], 12)])
+        return p
+
+    def test_kv_layers_for_hybrid_uses_interval(self):
+        s = legacy.summarize_gguf(legacy.parse_gguf(self.hybrid()))
+        self.assertEqual(s["kv_layers_estimate"], 8)           # nilai terverifikasi di Qwen3.8-9B
+        self.assertEqual(s["full_attention_interval"], 4)
+        self.assertIn("full_attention_interval", s["kv_layers_source"])
+
+    def test_kv_layers_falls_back_to_block_count(self):
+        p = self.path("d.gguf")
+        make_gguf(p, [kv_str("general.architecture", "dense"), kv_u32("dense.block_count", 12)],
+                  [tensor_info("token_embd.weight", [256], 12)])
+        s = legacy.summarize_gguf(legacy.parse_gguf(p))
+        self.assertEqual((s["kv_layers_estimate"], s["kv_layers_source"]), (12, "block_count"))
+
+
+class GpuClockTests(unittest.TestCase):
+    def test_ten_column_line(self):
+        g = legacy.parse_nvidia_csv("GPU, 8192, 100, 8092, 80, 170.5, 90, 1835, 3802, 0x0000000000000004\n")[0]
+        self.assertEqual(g["sm_clock_mhz"], 1835.0)
+        self.assertEqual(g["throttle_reasons"], ["sw_power_cap"])
+        self.assertTrue(g["throttle_limiting"])
+
+    def test_idle_is_not_limiting(self):
+        names, limiting = legacy.decode_throttle("0x0000000000000001")
+        self.assertEqual((names, limiting), (["gpu_idle"], False))
+        self.assertEqual(legacy.decode_throttle("0x0"), ([], False))
+        self.assertEqual(legacy.decode_throttle(None), (None, None))
+        self.assertEqual(legacy.decode_throttle("zz"), (None, None))
+
+    def test_seven_columns_still_accepted(self):
+        g = legacy.parse_nvidia_csv("GPU, 8192, 1024, 7168, 45, 30.5, 3\n")[0]
+        self.assertNotIn("sm_clock_mhz", g)
+
+    def test_samples_report_clock_and_throttle(self):
+        s = legacy.summarize_samples([
+            {"sm_clock_mhz": 1900, "util_pct": 99, "throttle_reasons": [], "throttle_limiting": False},
+            {"sm_clock_mhz": 1500, "util_pct": 99, "throttle_reasons": ["sw_power_cap"],
+             "throttle_limiting": True},
+            {"sm_clock_mhz": 139, "util_pct": 0, "throttle_reasons": ["gpu_idle"],
+             "throttle_limiting": False},
+        ])
+        self.assertEqual(s["peak_sm_clock_mhz"], 1900)
+        self.assertEqual(s["min_sm_clock_mhz_when_busy"], 1500)
+        self.assertEqual(s["samples_throttled"], 1)
+        self.assertEqual(s["throttle_reasons_seen"], ["gpu_idle", "sw_power_cap"])
+
+
+class RamSampleTests(unittest.TestCase):
+    def test_summary_reports_lowest_ram_and_peak_swap(self):
+        s = legacy.summarize_samples([
+            {"ram_available_gib": 6.0, "swap_used_gib": 0.1},
+            {"ram_available_gib": 2.5, "swap_used_gib": 0.9},
+            {"ram_available_gib": 4.0, "swap_used_gib": 0.4},
+        ])
+        self.assertEqual(s["min_ram_available_gib"], 2.5)
+        self.assertEqual(s["peak_swap_used_gib"], 0.9)
+
+    def test_summary_without_ram_fields(self):
+        s = legacy.summarize_samples([{"util_pct": 10}])
+        self.assertIsNone(s["min_ram_available_gib"])
+        self.assertIsNone(s["peak_swap_used_gib"])
+
+
+class MembwTests(unittest.TestCase):
+    def test_threads_validated_and_reported(self):
+        r = legacy.measure_membw(16, 1, 2)
+        self.assertEqual(r["threads"], 2)
+        self.assertGreater(r["copy_gb_per_s"], 0)
+        with self.assertRaises(legacy.CliError):
+            legacy.measure_membw(16, 1, 0)
+
+    def test_sweep(self):
+        r = legacy.measure_membw_sweep(16, 1, max_threads=2)
+        self.assertEqual(sorted(r["by_threads"]), ["1", "2"])
+        self.assertIn(r["best_threads"], (1, 2))
+
+
+class AnalyzeAndCompareTests(TempDirCase):
+    def test_efficiency_math(self):
+        # 4 GiB per token di GPU 256 GB/s -> batas = 256e9 / (4*2^30) ~ 59.6 tok/s
+        r = legacy.analyze_bandwidth(30.0, 4 * GIB, 1.0, 256.0)
+        self.assertAlmostEqual(r["ceiling_gen_tps"], 59.6, places=1)
+        self.assertAlmostEqual(r["efficiency"], 0.503, places=2)
+        self.assertAlmostEqual(r["effective_bandwidth_gb_per_s"], 128.8, places=1)
+
+    def test_hybrid_needs_ram_bandwidth(self):
+        with self.assertRaises(legacy.CliError):
+            legacy.analyze_bandwidth(2.0, 8 * GIB, 0.5, 256.0)
+        r = legacy.analyze_bandwidth(2.0, 8 * GIB, 0.5, 256.0, 20.0)
+        self.assertLess(r["ceiling_gen_tps"], 6)   # sisi CPU mendominasi
+        self.assertGreater(r["ceiling_gen_tps"], 4)
+
+    def test_over_one_is_flagged(self):
+        r = legacy.analyze_bandwidth(38.2, 0.4486 * GIB, 0.0, 256.0, 14.15)
+        self.assertGreater(r["efficiency"], 1.05)
+        self.assertIn("terlalu rendah", r["verdict"])
+
+    def test_bad_inputs(self):
+        for bad in ((0, GIB, 1.0), (10, 0, 1.0), (10, GIB, 1.5)):
+            with self.assertRaises(legacy.CliError):
+                legacy.analyze_bandwidth(*bad)
+
+    def test_weights_exclude_embedding_only_when_output_separate(self):
+        g = {"tensors": [{"name": "token_embd.weight", "nbytes": 100},
+                         {"name": "output.weight", "nbytes": 50},
+                         {"name": "blk.0.a.weight", "nbytes": 10}]}
+        self.assertEqual(legacy.weights_read_per_token(g)[0], 60)
+        g["tensors"].pop(1)
+        self.assertEqual(legacy.weights_read_per_token(g)[0], 110)
+
+    def write_bench(self, name, gen, prompt, std=0.5):
+        rows = [{"n_prompt": 128, "n_gen": 0, "avg_ts": prompt, "stddev_ts": std},
+                {"n_prompt": 0, "n_gen": 64, "avg_ts": gen, "stddev_ts": std}]
+        return self.write(name, json.dumps({"results": rows}))
+
+    def test_compare_verdicts(self):
+        a = legacy.load_bench_rows(self.write_bench("a.json", 38.0, 80.0))
+        b = legacy.load_bench_rows(self.write_bench("b.json", 30.0, 80.5))
+        rows = {(r["n_prompt"], r["n_gen"]): r for r in legacy.compare_bench(a, b)}
+        self.assertEqual(rows[(0, 64)]["verdict"], "lebih lambat")
+        self.assertEqual(rows[(128, 0)]["verdict"], "sama (dalam toleransi/noise)")
+        with self.assertRaises(legacy.CliError):
+            legacy.compare_bench(a, [{"n_prompt": 1, "n_gen": 1, "avg_ts": 1.0}])
+
+    def test_cli_compare_and_analyze(self):
+        a = self.write_bench("a.json", 38.0, 80.0)
+        b = self.write_bench("b.json", 50.0, 80.0)
+        code, data, _ = cli_json("llama", "compare", a, b)
+        self.assertEqual(code, 0)
+        self.assertEqual([r["verdict"] for r in data["rows"]][1], "lebih cepat")
+        code, data, _ = cli_json("bench", "analyze", "--bench-json", a, "--weights-gib", "2",
+                                 "--gpu-fraction", "1")
+        self.assertEqual(code, 0)
+        self.assertEqual(data["measured_gen_tps"], 38.0)
+        code, _, _ = cli("bench", "analyze", "--bench-json", a)
+        self.assertEqual(code, 2)   # tanpa sumber byte bobot
+
+    def test_missing_file_is_env_error(self):
+        with self.assertRaises(legacy.EnvError):
+            legacy.load_bench_rows(self.path("nope.json"))
+
+
+class QualityTests(TempDirCase):
+    def test_parse_ppl_and_kld_real_output(self):
+        self.assertEqual(legacy.parse_ppl("Final estimate: PPL = 16.4243 +/- 1.58524")["ppl"], 16.4243)
+        k = legacy.parse_kld(KLD_REAL)
+        self.assertEqual((k["mean_kld"], k["same_top_p_pct"], k["kld_p99"]), (0.348379, 70.0, 1.563301))
+        with self.assertRaises(legacy.CliError):
+            legacy.parse_ppl("tidak ada")
+        with self.assertRaises(legacy.CliError):
+            legacy.parse_kld("tidak ada")
+
+    def test_ppl_argv(self):
+        argv = legacy.build_ppl_argv("/b/llama-perplexity", "/m.gguf", "/t.txt", 512, 4, 0, 2)
+        self.assertEqual(argv[argv.index("--chunks") + 1], "4")
+        self.assertEqual(argv[argv.index("-ngl") + 1], "0")
+        with self.assertRaises(legacy.CliError):
+            legacy.build_ppl_argv("/b", "/m", "/t", 512, 0)
+
+    def test_kv_type_reaches_argv(self):
+        argv = legacy.build_ppl_argv("/b/p", "/m", "/t", 512, 2, 0, 2, kv_type="q8_0")
+        self.assertEqual(argv[argv.index("-ctk") + 1], "q8_0")
+        self.assertEqual(argv[argv.index("-ctv") + 1], "q8_0")
+        self.assertNotIn("-ctk", legacy.build_ppl_argv("/b/p", "/m", "/t"))
+        with self.assertRaises(legacy.CliError):
+            legacy.build_ppl_argv("/b/p", "/m", "/t", kv_type="bogus")
+
+    def test_kld_candidate_and_base_kv_types_are_separate(self):
+        m, t = self.write("m.gguf", "x"), self.write("t.txt", "x")
+        code, data, _ = cli_json("quality", "kld", "--base-model", m, "--model", m, "--file", t,
+                                 "--kld-file", self.path("k.bin"), "--kv-type", "q8_0", "--dry-run",
+                                 "--bin-dir", "x")
+        base_argv, cand_argv = data["argv"]
+        self.assertNotIn("-ctk", base_argv)
+        self.assertEqual(cand_argv[cand_argv.index("-ctk") + 1], "q8_0")
+        self.assertEqual(data["protocol"]["kv_type"], "q8_0")
+
+    def test_dry_run_commands(self):
+        m, t = self.write("m.gguf", "x"), self.write("t.txt", "x")
+        code, data, _ = cli_json("quality", "ppl", "--model", m, "--file", t, "--dry-run",
+                                 "--bin-dir", self.path("nobin"))
+        self.assertEqual(code, 0)
+        self.assertEqual(data["protocol"]["ctx"], 512)
+        code, data, _ = cli_json("quality", "kld", "--base-model", m, "--model", m, "--file", t,
+                                 "--kld-file", self.path("k.bin"), "--dry-run", "--bin-dir", "x")
+        self.assertIn("--kl-divergence-base", data["argv"][0])
+        self.assertIn("--kl-divergence", data["argv"][1])
+
+    def test_ppl_with_fake_binary(self):
+        script = "#!/bin/sh\necho 'Final estimate: PPL = 7.5000 +/- 0.1000'\n"
+        self.write(os.path.join("bin", "llama-perplexity"), script)
+        os.chmod(self.path("bin", "llama-perplexity"), 0o755)
+        m, t = self.write("m.gguf", "x"), self.write("t.txt", "x")
+        code, data, _ = cli_json("quality", "ppl", "--model", m, "--file", t, "--bin-dir", self.path("bin"),
+                                 "--lock-file", self.path("q.lock"))
+        self.assertEqual((code, data["ppl"]), (0, 7.5))
+
+    def test_strip_cli_noise(self):
+        raw = "banner\n\n> prompt text\n\n|\x08-\x08\\\x08 \x08Jawaban A\n" + BRACKET_TIMING
+        self.assertEqual(legacy.strip_cli_noise(raw), "Jawaban A")
+
+    def test_prompts_compare(self):
+        a = {"results": [{"prompt": "p1", "output": "sama"}, {"prompt": "p2", "output": "abcdef"}]}
+        b = {"results": [{"prompt": "p1", "output": "sama"}, {"prompt": "p2", "output": "abcxyz"}]}
+        r = legacy.compare_prompt_runs(a, b)
+        self.assertEqual((r["prompts"], r["identical"]), (2, 1))
+        self.assertTrue(0.5 < r["mean_similarity"] < 1.0)
+        with self.assertRaises(legacy.CliError):
+            legacy.compare_prompt_runs(a, {"results": [{"prompt": "lain", "output": "x"}]})
+
+    def test_prompts_file_rules(self):
+        f = self.write("p.txt", "# komentar\n\nsatu\ndua\n")
+        self.assertEqual(legacy.load_prompts(f), ["satu", "dua"])
+        with self.assertRaises(legacy.CliError):
+            legacy.load_prompts(self.write("e.txt", "# saja\n"))
+
+    def test_shipped_prompt_set_is_valid(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quality", "prompts-v1.txt")
+        self.assertEqual(len(legacy.load_prompts(path)), 8)
+
+    def test_build_targets(self):
+        _, build = legacy.build_cmake_argv("src", "b", "cpu", 2, ["llama-perplexity"])
+        self.assertEqual(build[-2:], ["--target", "llama-perplexity"])
+        with self.assertRaises(legacy.CliError):
+            legacy.build_cmake_argv("src", "b", "cpu", 2, ["x; rm -rf /"])
+
+
+# --------------------------------------------------------------------------
+# Kontrak dengan binary asli. Dilewati bila tidak diset; tidak memakai GPU.
+#   LEGACY_LLAMA_BIN_DIR=/path/build/bin LEGACY_TEST_MODEL=/path/kecil.gguf python tools/test_legacy.py
+# --------------------------------------------------------------------------
+
+REAL_BIN = os.environ.get("LEGACY_LLAMA_BIN_DIR")
+REAL_MODEL = os.environ.get("LEGACY_TEST_MODEL")
+
+
+@unittest.skipUnless(REAL_BIN and REAL_MODEL and os.path.isfile(os.path.join(REAL_BIN or "", "llama-cli")),
+                     "set LEGACY_LLAMA_BIN_DIR dan LEGACY_TEST_MODEL untuk uji binary asli")
+class RealBinaryContract(TempDirCase):
+    def setUp(self):
+        super().setUp()
+        self._old = os.environ.get("CUDA_VISIBLE_DEVICES")
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""      # jangan sentuh VRAM
+        self.addCleanup(self.restore)
+
+    def restore(self):
+        if self._old is None:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = self._old
+
+    def test_run_finishes_and_parses_timing(self):
+        code, data, _ = cli_json("llama", "run", "--model", REAL_MODEL, "--bin-dir", REAL_BIN, "--ngl", "0",
+                                 "--ctx", "256", "--n-predict", "8", "--prompt", "Halo",
+                                 "--timeout", "180", "--lock-file", self.path("r.lock"))
+        self.assertEqual(code, 0)
+        self.assertEqual(data["returncode"], 0)
+        self.assertGreater(data["gen_tps"], 0)
+        self.assertGreater(data["prompt_tps"], 0)
+
+    def test_bench_json_shape(self):
+        code, data, _ = cli_json("llama", "bench", "--model", REAL_MODEL, "--bin-dir", REAL_BIN, "--ngl", "0",
+                                 "--prompt-tokens", "16", "--gen-tokens", "8", "--runs", "1",
+                                 "--timeout", "180", "--lock-file", self.path("b.lock"))
+        self.assertEqual(code, 0)
+        self.assertTrue(any(r["n_gen"] for r in data["results"]))
+
+    def test_inspect_real_model(self):
+        s = legacy.summarize_gguf(legacy.parse_gguf(REAL_MODEL))
+        self.assertTrue(s["architecture"])
+        self.assertGreater(s["tensor_count"], 0)
 
 
 if __name__ == "__main__":

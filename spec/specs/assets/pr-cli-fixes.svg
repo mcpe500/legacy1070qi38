@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" font-family="Helvetica, Arial, sans-serif">
+  <rect width="960" height="600" fill="#ffffff"/>
+  <text x="30" y="36" font-size="21" font-weight="bold" fill="#0f172a">PR CLI: tiga cacat diperbaiki, lima kemampuan baru</text>
+  <text x="30" y="58" font-size="13" fill="#64748b">Setiap baris diuji dengan binary llama.cpp asli (fork 08e025c, CPU saja) dan dengan test unit</text>
+
+  <rect x="30" y="76" width="14" height="14" rx="3" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="50" y="88" font-size="12.5" fill="#334155">Sebelum</text>
+  <rect x="130" y="76" width="14" height="14" rx="3" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="150" y="88" font-size="12.5" fill="#334155">Sesudah</text>
+  <rect x="240" y="76" width="14" height="14" rx="3" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="260" y="88" font-size="12.5" fill="#334155">Baru</text>
+
+  <!-- defect 1 -->
+  <rect x="30" y="104" width="440" height="96" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="46" y="128" font-size="15" font-weight="bold" fill="#991b1b">1. llama run macet sampai timeout</text>
+  <text x="46" y="150" font-size="13" fill="#334155">-no-cnv diabaikan fork; llama-cli menunggu stdin</text>
+  <text x="46" y="170" font-size="13" fill="#334155">tanpa akhir. Timing berbentuk [ Prompt | Generation ]</text>
+  <text x="46" y="190" font-size="13" fill="#334155">tidak terbaca parser.</text>
+  <rect x="490" y="104" width="440" height="96" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="506" y="128" font-size="15" font-weight="bold" fill="#166534">-st + stdin ditutup + parser baru</text>
+  <text x="506" y="150" font-size="13" fill="#334155">Nyata: kode 0, prompt 70.5 t/s, generasi 37.7 t/s</text>
+  <text x="506" y="170" font-size="13" fill="#334155">(Qwen3.5-0.8B, CPU). Skrip palsu yang menunggu</text>
+  <text x="506" y="190" font-size="13" fill="#334155">stdin kini menjadi test.</text>
+
+  <!-- defect 2 -->
+  <rect x="30" y="214" width="440" height="96" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="46" y="238" font-size="15" font-weight="bold" fill="#991b1b">2. gguf inspect: layer KV salah</text>
+  <text x="46" y="260" font-size="13" fill="#334155">Qwen3.8-9B dilaporkan 32 layer ber-KV,</text>
+  <text x="46" y="280" font-size="13" fill="#334155">padahal hanya tiap layer ke-4 memakai KV.</text>
+  <rect x="490" y="214" width="440" height="96" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="506" y="238" font-size="15" font-weight="bold" fill="#166534">block_count // full_attention_interval</text>
+  <text x="506" y="260" font-size="13" fill="#334155">9B: 32 // 4 = 8. 0.8B: 24 // 4 = 6, cocok dengan</text>
+  <text x="506" y="280" font-size="13" fill="#334155">log llama.cpp (KV 6 MiB per sekuens).</text>
+
+  <!-- defect 3 -->
+  <rect x="30" y="324" width="440" height="76" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="46" y="348" font-size="15" font-weight="bold" fill="#991b1b">3. Tidak ada test dengan binary asli</text>
+  <text x="46" y="370" font-size="13" fill="#334155">Semua test memakai skrip palsu, jadi tiga cacat</text>
+  <text x="46" y="388" font-size="13" fill="#334155">di atas lolos tanpa terdeteksi.</text>
+  <rect x="490" y="324" width="440" height="76" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="506" y="348" font-size="15" font-weight="bold" fill="#166534">RealBinaryContract (3 test)</text>
+  <text x="506" y="370" font-size="13" fill="#334155">Dilewati bila LEGACY_LLAMA_BIN_DIR kosong;</text>
+  <text x="506" y="388" font-size="13" fill="#334155">dipaksa CPU agar tidak menyentuh VRAM.</text>
+
+  <!-- new -->
+  <text x="30" y="428" font-size="15" font-weight="bold" fill="#0f172a">Kemampuan baru</text>
+  <rect x="30" y="440" width="170" height="70" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="115" y="462" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">llama compare</text>
+  <text x="115" y="482" font-size="12" text-anchor="middle" fill="#334155">A vs B, dengan</text>
+  <text x="115" y="498" font-size="12" text-anchor="middle" fill="#334155">toleransi dan noise</text>
+  <rect x="215" y="440" width="170" height="70" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="300" y="462" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">bench analyze</text>
+  <text x="300" y="482" font-size="12" text-anchor="middle" fill="#334155">efisiensi terhadap</text>
+  <text x="300" y="498" font-size="12" text-anchor="middle" fill="#334155">batas bandwidth</text>
+  <rect x="400" y="440" width="170" height="70" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="485" y="462" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">quality ppl/kld/</text>
+  <text x="485" y="482" font-size="12" text-anchor="middle" fill="#334155">prompts, terukur di</text>
+  <text x="485" y="498" font-size="12" text-anchor="middle" fill="#334155">llama-perplexity asli</text>
+  <rect x="585" y="440" width="170" height="70" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="670" y="462" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">hw gpu clock</text>
+  <text x="670" y="482" font-size="12" text-anchor="middle" fill="#334155">clock SM + alasan</text>
+  <text x="670" y="498" font-size="12" text-anchor="middle" fill="#334155">throttle di hw sample</text>
+  <rect x="770" y="440" width="160" height="70" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="850" y="462" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e3a8a">hw membw</text>
+  <text x="850" y="482" font-size="12" text-anchor="middle" fill="#334155">multi-thread: 14.15</text>
+  <text x="850" y="498" font-size="12" text-anchor="middle" fill="#334155">GB/s (sebelumnya 11.09)</text>
+
+  <rect x="30" y="528" width="900" height="52" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="46" y="550" font-size="13" fill="#334155">Test: 127 unit lulus (4 dilewati) + 3 kontrak binary asli lulus. Hasil ukur nyata ada di deskripsi PR.</text>
+  <text x="46" y="570" font-size="13" fill="#334155">Belum: 27B, GPU (VRAM penuh oleh server milik pengguna), llama.cpp mainline, quant 27B untuk PPL/KLD.</text>
+</svg>

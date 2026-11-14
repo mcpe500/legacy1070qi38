@@ -80,13 +80,20 @@ def _non_negative(name, value):
 # Bytes per element relative to FP16, from ggml block layouts:
 # q8_0 = 34 bytes / 32 values, q4_0 = 18 bytes / 32 values, FP16 = 64 bytes / 32 values.
 # memory-manager.md says "about half" for q8_0; the exact block ratio is 0.531.
-KV_TYPE_FACTOR = {"f16": 1.0, "q8_0": 34.0 / 64.0, "q4_0": 18.0 / 64.0}
+# iso3 (fork llama-cpp-turboquant, IsoQuant): block of 128 values = 2 (norm) + 32 + 16 = 50 bytes
+# (ggml-common.h block_iso3_0), i.e. 3.125 bits/value.
+KV_TYPE_FACTOR = {"f16": 1.0, "q8_0": 34.0 / 64.0, "q4_0": 18.0 / 64.0, "iso3": 50.0 / 256.0}
 
-# ASSUMPTION: kv_heads * head_dim = 1024 is derived from "64 KiB per token over
-# 16 attention layers" in MASTER.md. Not confirmed by the official model card.
+# State rekuren Gated DeltaNet (ukuran tetap, tidak tumbuh dengan konteks), Qwen3.8-27B:
+# 48 layer x (48 head V x 128 x 128 x 4 B + konv 3 x 10240 x 4 B) = 149.6 MiB.
+# Rumus diverifikasi persis pada Qwen3.5-0.8B (log "RS buffer size = 77.06 MiB" untuk 4 sekuens).
+DEFAULT_RS_GIB = 0.146
+
+# Qwen3.8-27B, kartu resmi Qwen/Qwen3.8-27B: 16 layer Gated Attention, 4 head KV, head dim 256
+# -> 16 x 2 x 4 x 256 x 2 B = 64 KiB per token (FP16).
 DEFAULT_KV_LAYERS = 16
-DEFAULT_KV_HEADS = 8
-DEFAULT_HEAD_DIM = 128
+DEFAULT_KV_HEADS = 4
+DEFAULT_HEAD_DIM = 256
 DEFAULT_TOTAL_LAYERS = 64
 
 RISK_LABEL = {"green": "🟢 Safe", "yellow": "🟡 Tight", "red": "🔴 Likely OOM"}
@@ -118,7 +125,7 @@ def estimate(file_gib, vram_gib=8.0, ram_gib=16.0, ctx=4096,
              kv_layers=DEFAULT_KV_LAYERS, kv_heads=DEFAULT_KV_HEADS,
              head_dim=DEFAULT_HEAD_DIM, kv_type="f16",
              cuda_ctx_gib=0.4, compute_gib=0.5, os_gib=2.5,
-             ram_bw_gbs=20.0, gpu_bw_gbs=256.0):
+             ram_bw_gbs=20.0, gpu_bw_gbs=256.0, rs_gib=DEFAULT_RS_GIB):
     """Memory split and TPS upper bound, using the formula in MASTER.md.
 
     Weights that fit in VRAM are not duplicated in RAM. The TPS figure is a
@@ -132,11 +139,12 @@ def estimate(file_gib, vram_gib=8.0, ram_gib=16.0, ctx=4096,
     _non_negative("cuda_ctx_gib", cuda_ctx_gib)
     _non_negative("compute_gib", compute_gib)
     _non_negative("os_gib", os_gib)
+    _non_negative("rs_gib", rs_gib)
     _positive("ram_bw_gbs", ram_bw_gbs)
     _positive("gpu_bw_gbs", gpu_bw_gbs)
 
     kv_gib = kv_bytes_per_token(kv_layers, kv_heads, head_dim, kv_type) * ctx / GIB
-    fixed = cuda_ctx_gib + kv_gib + compute_gib
+    fixed = cuda_ctx_gib + kv_gib + compute_gib + rs_gib
     capacity = max(0.0, vram_gib - fixed)
     weights_gpu = min(file_gib, capacity)
     weights_ram = file_gib - weights_gpu
@@ -162,6 +170,7 @@ def estimate(file_gib, vram_gib=8.0, ram_gib=16.0, ctx=4096,
             "cuda_context_gib": cuda_ctx_gib,
             "kv_gib": round(kv_gib, 4),
             "compute_buffer_gib": compute_gib,
+            "recurrent_state_gib": rs_gib,
             "weights_capacity_gib": round(capacity, 4),
             "weights_gib": round(weights_gpu, 4),
             "used_gib": round(vram_used, 4),
@@ -178,8 +187,9 @@ def estimate(file_gib, vram_gib=8.0, ram_gib=16.0, ctx=4096,
         "risk_label": RISK_LABEL[risk],
         "assumptions": [
             "ASSUMPTION: compute buffer, CUDA context dan OS/runtime adalah tebakan, belum terukur",
-            "ASSUMPTION: kv_heads x head_dim diturunkan dari 64 KiB/token, belum dikonfirmasi kartu resmi",
-            "ASSUMPTION: KV semua di GPU; state Gated DeltaNet tidak dihitung (besarnya belum diketahui)",
+            "kv_layers/kv_heads/head_dim default = kartu resmi Qwen3.8-27B (16 x 4 x 256)",
+            "ASSUMPTION: KV dan state Gated DeltaNet semua di GPU; state 27B = 0.146 GiB (turunan "
+            "kartu resmi, rumus terverifikasi pada 0.8B; ukur di 27B)",
             "TPS adalah batas atas teoritis berbasis bandwidth, bukan hasil ukur",
         ],
     }
@@ -250,8 +260,9 @@ def compare_measured(est, measured_vram_gib=None, measured_ram_gib=None,
 def run_capture(argv, timeout=15):
     """Run a fixed argv list (never a shell string) and return stdout."""
     try:
-        proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              universal_newlines=True, timeout=timeout, shell=False)
+        proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True, timeout=timeout,
+                              shell=False)
     except FileNotFoundError:
         raise EnvError(f"program tidak ditemukan: {argv[0]}")
     except subprocess.TimeoutExpired:
@@ -271,7 +282,29 @@ def _num(text):
         return None
 
 
-NVIDIA_QUERY = "name,memory.total,memory.used,memory.free,temperature.gpu,power.draw,utilization.gpu"
+NVIDIA_QUERY = ("name,memory.total,memory.used,memory.free,temperature.gpu,power.draw,"
+                "utilization.gpu,clocks.sm,clocks.mem,clocks_throttle_reasons.active")
+
+# Bit topeng dari nvidia-smi (NVML clocksThrottleReason*).
+THROTTLE_BITS = {
+    0x1: "gpu_idle", 0x2: "applications_clocks_setting", 0x4: "sw_power_cap",
+    0x8: "hw_slowdown", 0x10: "sync_boost", 0x20: "sw_thermal_slowdown",
+    0x40: "hw_thermal_slowdown", 0x80: "hw_power_brake_slowdown", 0x100: "display_clock_setting",
+}
+# Hanya alasan ini yang berarti GPU benar-benar ditahan (idle dan setelan aplikasi bukan masalah).
+THROTTLE_LIMITING = 0x4 | 0x8 | 0x20 | 0x40 | 0x80
+
+
+def decode_throttle(value):
+    """Hex/int bitmask -> (daftar nama, apakah ada yang membatasi). None bila tak terbaca."""
+    if value is None:
+        return None, None
+    try:
+        mask = int(str(value).strip(), 16) if isinstance(value, str) else int(value)
+    except ValueError:
+        return None, None
+    names = [n for bit, n in sorted(THROTTLE_BITS.items()) if mask & bit]
+    return names, bool(mask & THROTTLE_LIMITING)
 
 
 def parse_nvidia_csv(text):
@@ -281,7 +314,7 @@ def parse_nvidia_csv(text):
         if not line.strip():
             continue
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) != 7:
+        if len(parts) not in (7, 10):
             raise CliError(f"keluaran nvidia-smi tidak dikenali: {line!r}")
         total, used, free = _num(parts[1]), _num(parts[2]), _num(parts[3])
         gpus.append({
@@ -290,6 +323,11 @@ def parse_nvidia_csv(text):
             "vram_free_gib": None if free is None else round(free / 1024.0, 3),
             "temp_c": _num(parts[4]), "power_w": _num(parts[5]), "util_pct": _num(parts[6]),
         })
+        if len(parts) == 10:
+            names, limiting = decode_throttle(parts[9] if parts[9] not in ("", "N/A", "[N/A]",
+                                                                           "[Not Supported]") else None)
+            gpus[-1].update({"sm_clock_mhz": _num(parts[7]), "mem_clock_mhz": _num(parts[8]),
+                             "throttle_reasons": names, "throttle_limiting": limiting})
     if not gpus:
         raise CliError("nvidia-smi tidak mengembalikan GPU")
     return gpus
@@ -417,8 +455,20 @@ def summarize_samples(samples):
         return max(vals) if vals else None
 
     utils = [s["util_pct"] for s in samples if s.get("util_pct") is not None]
+    busy_clocks = [s["sm_clock_mhz"] for s in samples
+                   if s.get("sm_clock_mhz") is not None and (s.get("util_pct") or 0) >= 50]
+    reasons = sorted({r for s in samples for r in (s.get("throttle_reasons") or [])})
+    avail = [s["ram_available_gib"] for s in samples if s.get("ram_available_gib") is not None]
+    swap = [s["swap_used_gib"] for s in samples if s.get("swap_used_gib") is not None]
+    limited = sum(1 for s in samples if s.get("throttle_limiting"))
     return {
         "samples": len(samples),
+        "min_ram_available_gib": min(avail) if avail else None,
+        "peak_swap_used_gib": max(swap) if swap else None,
+        "peak_sm_clock_mhz": peak("sm_clock_mhz"),
+        "min_sm_clock_mhz_when_busy": min(busy_clocks) if busy_clocks else None,
+        "throttle_reasons_seen": reasons,
+        "samples_throttled": limited,
         "peak_vram_used_mib": peak("vram_used_mib"),
         "peak_temp_c": peak("temp_c"),
         "peak_power_w": peak("power_w"),
@@ -443,27 +493,66 @@ def headroom_check(free_vram_gib, avail_ram_gib, need_vram_gib, need_ram_gib,
     }
 
 
-def measure_membw(size_mib=256, repeats=5):
-    """Single-thread copy bandwidth. A lower bound for real multi-threaded reads.
+def _copy_once(size_bytes, threads, src, dst):
+    """Satu salinan memori dibagi ke `threads` thread. ctypes.memmove melepas GIL."""
+    import ctypes
+    import threading
+    src_addr = ctypes.addressof((ctypes.c_char * size_bytes).from_buffer(src))
+    dst_addr = ctypes.addressof((ctypes.c_char * size_bytes).from_buffer(dst))
+    chunk = size_bytes // threads
+    workers = []
+    for i in range(threads):
+        off = i * chunk
+        n = chunk if i < threads - 1 else size_bytes - off
+        workers.append(threading.Thread(target=ctypes.memmove,
+                                        args=(dst_addr + off, src_addr + off, n)))
+    t0 = time.perf_counter()
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    return time.perf_counter() - t0
 
-    ASSUMPTION: pure-Python memcpy via slicing is a rough indicator only. It does
-    not tell single from dual channel; compare with a dedicated tool for OQ-011.
+
+def measure_membw(size_mib=256, repeats=5, threads=1):
+    """Bandwidth salin memori (memmove) dengan `threads` thread; ambil waktu terbaik.
+
+    Mengukur laju salin satu arah (byte yang dipindah per detik). Lalu lintas memori sebenarnya
+    sekitar dua kali lipat (baca + tulis), jadi angka ini batas bawah konservatif untuk laju baca.
+    Tidak membedakan single/dual channel; bandingkan dengan spesifikasi RAM untuk itu.
     """
     if not 16 <= size_mib <= 2048:
         raise CliError("--size-mib harus antara 16 dan 2048")
     if not 1 <= repeats <= 50:
         raise CliError("--repeats harus antara 1 dan 50")
-    src = bytearray(size_mib * MIB)
-    dst = bytearray(size_mib * MIB)
+    if not 1 <= threads <= 64:
+        raise CliError("--threads harus antara 1 dan 64")
+    size = size_mib * MIB
+    src = bytearray(b"\xa5") * size   # nilai bukan nol: memaksa halaman benar-benar dipetakan
+    dst = bytearray(b"\x5a") * size
     best = None
     for _ in range(repeats):
-        t0 = time.perf_counter()
-        dst[:] = src
-        dt = time.perf_counter() - t0
+        dt = _copy_once(size, threads, src, dst)
         best = dt if best is None else min(best, dt)
-    gbs = (size_mib * MIB) / best / 1e9
-    return {"size_mib": size_mib, "repeats": repeats, "copy_gb_per_s": round(gbs, 2),
-            "note": "ASSUMPTION: satu thread, Python; batas bawah kasar, bukan bandwidth maksimum"}
+    return {"size_mib": size_mib, "repeats": repeats, "threads": threads,
+            "copy_gb_per_s": round(size / best / 1e9, 2),
+            "note": "laju salin satu arah (memmove); lalu lintas memori nyata ~2x; batas bawah laju baca"}
+
+
+def measure_membw_sweep(size_mib=256, repeats=5, max_threads=None):
+    """Ulangi untuk 1,2,4,.. thread; hasil terbaik dilaporkan sebagai perkiraan bandwidth."""
+    cap = max(1, min(max_threads or (os.cpu_count() or 1), 16))
+    counts, n = [], 1
+    while n < cap:
+        counts.append(n)
+        n *= 2
+    counts.append(cap)
+    runs = [measure_membw(size_mib, repeats, t) for t in sorted(set(counts))]
+    best = max(runs, key=lambda r: r["copy_gb_per_s"])
+    return {"size_mib": size_mib, "repeats": repeats,
+            "by_threads": {str(r["threads"]): r["copy_gb_per_s"] for r in runs},
+            "best_threads": best["threads"], "copy_gb_per_s": best["copy_gb_per_s"],
+            "note": best["note"]}
 
 
 # --------------------------------------------------------------------------
@@ -599,10 +688,18 @@ def summarize_gguf(g):
     kv_heads = a("attention.head_count_kv")
     block_count = a("block_count")
     kv_layers = None
+    kv_source = None
+    interval = a("full_attention_interval")
     if isinstance(kv_heads, list):
         kv_layers = sum(1 for h in kv_heads if h)
+        kv_source = "head_count_kv array"
+    elif isinstance(interval, int) and interval > 0 and isinstance(block_count, int):
+        # Hibrida (Gated DeltaNet): hanya tiap layer ke-`interval` memakai full attention + KV cache.
+        kv_layers = block_count // interval
+        kv_source = "block_count // full_attention_interval"
     elif isinstance(block_count, int):
         kv_layers = block_count
+        kv_source = "block_count"
     total = sum(t["nbytes"] for t in g["tensors"] if t["nbytes"] is not None)
     return {
         "gguf_version": g["version"],
@@ -617,13 +714,16 @@ def summarize_gguf(g):
         "key_length": a("attention.key_length"),
         "value_length": a("attention.value_length"),
         "kv_layers_estimate": kv_layers,
+        "kv_layers_source": kv_source,
+        "full_attention_interval": interval,
         "tensor_count": g["tensor_count"],
         "metadata_keys": len(md),
         "tensor_bytes_gib": round(total / GIB, 4),
         "file_size_gib": round(g["file_size"] / GIB, 4),
         "notes": [
-            "ASSUMPTION: kv_layers_estimate menghitung entri head_count_kv > 0 bila berupa array, "
-            "selain itu memakai block_count. Nama kunci arsitektur hibrida belum diverifikasi.",
+            "kv_layers_estimate: entri head_count_kv > 0 bila array; bila ada "
+            "<arch>.full_attention_interval maka block_count // interval (terverifikasi pada "
+            "Qwen3.8-9B arsitektur qwen35: 32 // 4 = 8); selain itu block_count.",
         ],
     }
 
@@ -664,7 +764,7 @@ def summarize_tensors(g):
 # C2. llama  (argv lists only, binary allowlist, one inference at a time)
 # --------------------------------------------------------------------------
 
-ALLOWED_BINS = ("llama-cli", "llama-bench", "llama-server")
+ALLOWED_BINS = ("llama-cli", "llama-bench", "llama-server", "llama-perplexity")
 DEFAULT_LOCK = os.path.join(tempfile.gettempdir(), "legacy1070qi38.lock")
 
 
@@ -733,8 +833,12 @@ def check_model(path):
 
 
 def build_run_argv(bin_path, model, ctx=4096, ngl=None, prompt="", n_predict=64,
-                   kv_type=None, no_cnv=False):
-    """argv for llama-cli. ngl=None leaves offload to llama.cpp auto-fit (OQ-014)."""
+                   kv_type=None, single_turn=True):
+    """argv for llama-cli. ngl=None leaves offload to llama.cpp auto-fit (OQ-014).
+
+    single_turn menambah -st. Terbukti di build fork 08e025c: -no-cnv diabaikan dan llama-cli
+    masuk mode percakapan tanpa akhir; -st keluar dengan kode 0 setelah satu jawaban.
+    """
     _positive("ctx", ctx)
     _positive("n_predict", n_predict)
     argv = [bin_path, "-m", model, "-c", str(int(ctx)), "-n", str(int(n_predict)), "-p", prompt]
@@ -745,9 +849,8 @@ def build_run_argv(bin_path, model, ctx=4096, ngl=None, prompt="", n_predict=64,
         if kv_type not in KV_TYPE_FACTOR:
             raise CliError(f"kv_type tidak dikenal: {kv_type}")
         argv += ["-ctk", kv_type, "-ctv", kv_type]
-    if no_cnv:
-        # ASSUMPTION: -no-cnv exists in recent llama-cli builds; not verified here.
-        argv.append("-no-cnv")
+    if single_turn:
+        argv.append("-st")
     return argv
 
 
@@ -763,25 +866,42 @@ def build_bench_argv(bin_path, model, ngl=None, prompt_tokens=512, gen_tokens=12
     return argv
 
 
-def build_cmake_argv(src, build_dir="build", backend="cuda", jobs=None):
+def build_cmake_argv(src, build_dir="build", backend="cuda", jobs=None, targets=None):
     """Configure and build commands. CUDA arch 61 is Pascal (GTX 1070 Ti)."""
     flag = {"cuda": ["-DGGML_CUDA=ON", "-DCMAKE_CUDA_ARCHITECTURES=61"],
-            "vulkan": ["-DGGML_VULKAN=ON"]}.get(backend)
+            "vulkan": ["-DGGML_VULKAN=ON"],
+            "cpu": ["-DGGML_CUDA=OFF", "-DGGML_VULKAN=OFF"]}.get(backend)
     if flag is None:
-        raise CliError("backend harus cuda atau vulkan")
+        raise CliError("backend harus cuda, vulkan, atau cpu")
     jobs = jobs or os.cpu_count() or 1
     _positive("jobs", jobs)
     configure = ["cmake", "-B", build_dir] + flag + ["-DCMAKE_BUILD_TYPE=Release"]
     build = ["cmake", "--build", build_dir, "--config", "Release", "-j", str(int(jobs))]
+    if targets:
+        for t in targets:
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", t):
+                raise CliError(f"nama target tidak valid: {t!r}")
+        build += ["--target"] + list(targets)
     return [configure, build]
 
 
 _RE_EVAL = re.compile(r"^(?P<label>.*?eval time)\s*=.*?([\d.]+)\s+tokens per second", re.M)
 
 
+_RE_BRACKET = re.compile(r"\[\s*Prompt:\s*([\d.]+)\s*t/s\s*\|\s*Generation:\s*([\d.]+)\s*t/s\s*\]")
+
+
 def parse_llama_timing(text):
-    """Pull tokens/s from llama.cpp timing lines. The format varies by version."""
+    """Pull tokens/s from llama.cpp timing output. The format varies by version.
+
+    Dua bentuk dikenali: baris `... eval time = ... tokens per second` (llama_perf) dan
+    `[ Prompt: X t/s | Generation: Y t/s ]` (llama-cli -st di build fork, terukur).
+    """
     out = {"prompt_tps": None, "gen_tps": None}
+    brackets = _RE_BRACKET.findall(text)
+    if brackets:
+        out["prompt_tps"], out["gen_tps"] = float(brackets[-1][0]), float(brackets[-1][1])
+        return out
     for m in _RE_EVAL.finditer(text):
         label = m.group("label")
         value = float(m.group(2))
@@ -828,20 +948,238 @@ def parse_placement(text):
         "layers_on_gpu": int(offload.group(1)) if offload else None,
         "layers_total_reported": int(offload.group(2)) if offload else None,
         "buffers_mib": {k: round(v, 2) for k, v in buffers.items()},
-        "note": "ASSUMPTION: pola baris log berdasarkan keluaran llama.cpp yang umum; "
-                "total yang dilaporkan bisa menghitung output layer",
+        "note": "pola dicocokkan dengan string di src/llama-model.cpp fork 08e025c ('offloaded %d/%d layers "
+                "to GPU', 'model buffer size') dan log CPU asli; log GPU asli belum diuji. "
+                "Total yang dilaporkan bisa menghitung output layer",
     }
 
 
 def _run_logged(argv, timeout, cwd=None):
     try:
-        proc = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              universal_newlines=True, timeout=timeout, shell=False, cwd=cwd)
+        # stdin ditutup: llama-cli tanpa -st menunggu input selamanya (terbukti di build fork).
+        proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True, timeout=timeout,
+                              shell=False, cwd=cwd)
     except subprocess.TimeoutExpired:
         raise CliError(f"proses melewati batas waktu {timeout}s dan dihentikan")
     except OSError as exc:
         raise EnvError(f"gagal menjalankan {argv[0]}: {exc}")
     return proc
+
+
+# --------------------------------------------------------------------------
+# C3. bench analyze / llama compare  (murni: hanya membaca hasil yang sudah ada)
+# --------------------------------------------------------------------------
+
+GTX_1070TI_BW_GBS = 256.0   # spesifikasi pabrik, bukan hasil ukur
+
+
+def load_bench_rows(path):
+    """Baca keluaran `llama bench --json` (dict dengan results) atau list mentah llama-bench."""
+    if not os.path.isfile(path):
+        raise EnvError(f"berkas tidak ditemukan: {path}")
+    if os.path.getsize(path) > 10 * MIB:
+        raise CliError(f"{path} lebih dari 10 MiB")
+    with open(path, "r", encoding="utf-8") as fh:
+        try:
+            data = json.load(fh)
+        except ValueError:
+            raise CliError(f"{path} bukan JSON valid")
+    rows = data.get("results") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        raise CliError(f"{path}: tidak ada daftar hasil (results)")
+    return [r for r in rows if isinstance(r, dict) and isinstance(r.get("avg_ts"), (int, float))]
+
+
+def decode_rows(rows):
+    """Pilih tokens/s generasi dan prompt dari baris llama-bench."""
+    gen = [r for r in rows if (r.get("n_gen") or 0) > 0 and not r.get("n_prompt")]
+    prompt = [r for r in rows if (r.get("n_prompt") or 0) > 0 and not r.get("n_gen")]
+    return {"gen_tps": gen[0]["avg_ts"] if gen else None,
+            "prompt_tps": prompt[0]["avg_ts"] if prompt else None,
+            "model_size_bytes": next((r["model_size"] for r in rows if r.get("model_size")), None),
+            "n_gpu_layers": next((r["n_gpu_layers"] for r in rows
+                                  if r.get("n_gpu_layers") is not None), None)}
+
+
+def weights_read_per_token(g):
+    """Byte bobot yang dibaca per token decode. token_embd hanya dibaca satu baris per token,
+    jadi dikeluarkan bila model punya output.weight terpisah (bila di-tie, dipakai sebagai output)."""
+    total = sum(t["nbytes"] for t in g["tensors"] if t["nbytes"] is not None)
+    names = {t["name"]: t["nbytes"] for t in g["tensors"] if t["nbytes"] is not None}
+    if "output.weight" in names and "token_embd.weight" in names:
+        return total - names["token_embd.weight"], "total - token_embd (output.weight terpisah)"
+    return total, "total (token_embd di-tie sebagai output)"
+
+
+def analyze_bandwidth(gen_tps, read_bytes, gpu_fraction=1.0, gpu_bw_gbs=GTX_1070TI_BW_GBS,
+                      ram_bw_gbs=None):
+    """Bandingkan TPS terukur dengan batas atas dari bandwidth.
+
+    Model: waktu per token = byte_GPU/bw_GPU + byte_CPU/bw_RAM (sisi GPU dan CPU berjalan
+    berurutan per token pada layer yang berbeda). Itu batas atas; efisiensi = terukur / batas.
+    """
+    if not isinstance(gen_tps, (int, float)) or gen_tps <= 0:
+        raise CliError("gen_tps harus > 0")
+    if not read_bytes or read_bytes <= 0:
+        raise CliError("jumlah byte bobot harus > 0")
+    if not 0.0 <= gpu_fraction <= 1.0:
+        raise CliError("--gpu-fraction harus 0..1")
+    _positive("gpu_bw_gbs", gpu_bw_gbs)
+    gpu_bytes, cpu_bytes = read_bytes * gpu_fraction, read_bytes * (1 - gpu_fraction)
+    if cpu_bytes > 0 and not ram_bw_gbs:
+        raise CliError("ada bobot di CPU: beri --ram-bw-gbs (ukur dengan `hw membw`)")
+    t_token = gpu_bytes / (gpu_bw_gbs * 1e9) + (cpu_bytes / (ram_bw_gbs * 1e9) if cpu_bytes else 0.0)
+    ceiling = 1.0 / t_token
+    eff = gen_tps / ceiling
+    if eff > 1.05:
+        verdict = ("lewat batas yang diasumsikan: bandwidth yang diberikan terlalu rendah "
+                   f"(bandwidth efektif minimal {read_bytes * gen_tps / 1e9:.1f} GB/s); "
+                   "ukur ulang atau naikkan asumsi")
+    elif eff >= 0.7:
+        verdict = "dekat batas bandwidth: kurangi byte yang dibaca per token (quant lebih kecil, MTP)"
+    elif eff >= 0.4:
+        verdict = "sedang: ada ruang, tetapi bukan sekadar bandwidth; cek kernel dan transfer"
+    else:
+        verdict = ("jauh di bawah batas: kernel (dequant/DeltaNet), transfer PCIe, sinkronisasi, "
+                   "throttle, atau KV/konteks besar menahan")
+    return {
+        "read_gib_per_token": round(read_bytes / GIB, 4),
+        "gpu_fraction": gpu_fraction,
+        "measured_gen_tps": gen_tps,
+        "effective_bandwidth_gb_per_s": round(read_bytes * gen_tps / 1e9, 2),
+        "ceiling_gen_tps": round(ceiling, 2),
+        "efficiency": round(eff, 3),
+        "gpu_bw_gb_per_s_assumed": gpu_bw_gbs,
+        "ram_bw_gb_per_s_assumed": ram_bw_gbs,
+        "verdict": verdict,
+        "note": "efisiensi > 1 berarti asumsi bandwidth terlalu rendah atau bobot di-cache "
+                "(L2/cache CPU); cek input sebelum percaya",
+    }
+
+
+def compare_bench(base_rows, cand_rows, tolerance_pct=5.0):
+    """Cocokkan baris menurut (n_prompt, n_gen); beri rasio dan putusan dengan memperhitungkan stddev."""
+    if tolerance_pct < 0:
+        raise CliError("--tolerance-pct tidak boleh negatif")
+    key = lambda r: (r.get("n_prompt") or 0, r.get("n_gen") or 0)  # noqa: E731
+    base = {key(r): r for r in base_rows}
+    out = []
+    for r in cand_rows:
+        k = key(r)
+        if k not in base:
+            continue
+        b, c = base[k], r
+        ratio = c["avg_ts"] / b["avg_ts"] if b["avg_ts"] else None
+        noise = ((b.get("stddev_ts") or 0) ** 2 + (c.get("stddev_ts") or 0) ** 2) ** 0.5
+        delta = c["avg_ts"] - b["avg_ts"]
+        pct = (ratio - 1) * 100 if ratio is not None else None
+        if pct is None or (abs(pct) <= tolerance_pct) or abs(delta) <= noise:
+            verdict = "sama (dalam toleransi/noise)"
+        else:
+            verdict = "lebih cepat" if delta > 0 else "lebih lambat"
+        out.append({"n_prompt": k[0], "n_gen": k[1], "base_tps": b["avg_ts"], "cand_tps": c["avg_ts"],
+                    "ratio": None if ratio is None else round(ratio, 3),
+                    "change_pct": None if pct is None else round(pct, 1), "verdict": verdict})
+    if not out:
+        raise CliError("tidak ada baris (n_prompt, n_gen) yang sama di kedua berkas")
+    return out
+
+
+# --------------------------------------------------------------------------
+# C4. quality  (membungkus llama-perplexity dan llama-cli; protokol dicatat di keluaran)
+# --------------------------------------------------------------------------
+
+_PM = r"(?:\+/-|±)"   # llama-perplexity memakai "+/-" untuk PPL dan "±" untuk KLD (terukur di fork)
+_RE_PPL = re.compile(r"Final estimate:\s*PPL\s*=\s*([\d.]+)\s*" + _PM + r"\s*([\d.]+)")
+_RE_KLD = re.compile(r"Mean\s+KLD:\s*(-?[\d.]+)\s*" + _PM + r"\s*([\d.]+)")
+_RE_KLD99 = re.compile(r"^99\.0%\s+KLD:\s*(-?[\d.]+)", re.M)
+_RE_SAMETOP = re.compile(r"Same top p:\s*([\d.]+)\s*" + _PM + r"\s*([\d.]+)\s*%")
+
+
+def parse_ppl(text):
+    m = _RE_PPL.search(text)
+    if not m:
+        raise CliError("baris 'Final estimate: PPL = ...' tidak ditemukan di keluaran llama-perplexity")
+    return {"ppl": float(m.group(1)), "ppl_stderr": float(m.group(2))}
+
+
+def parse_kld(text):
+    m = _RE_KLD.search(text)
+    if not m:
+        raise CliError("baris 'Mean KLD' tidak ditemukan di keluaran llama-perplexity")
+    out = {"mean_kld": float(m.group(1)), "mean_kld_stderr": float(m.group(2))}
+    t = _RE_SAMETOP.search(text)
+    out["same_top_p_pct"] = float(t.group(1)) if t else None
+    out["same_top_p_stderr"] = float(t.group(2)) if t else None
+    q = _RE_KLD99.search(text)
+    out["kld_p99"] = float(q.group(1)) if q else None
+    return out
+
+
+def build_ppl_argv(bin_path, model, text_file, ctx=512, chunks=None, ngl=None, threads=None,
+                   extra=None, kv_type=None):
+    _positive("ctx", ctx)
+    argv = [bin_path, "-m", model, "-f", text_file, "-c", str(int(ctx))]
+    if chunks is not None:
+        _positive("chunks", chunks)
+        argv += ["--chunks", str(int(chunks))]
+    if ngl is not None:
+        _non_negative("ngl", ngl)
+        argv += ["-ngl", str(int(ngl))]
+    if threads is not None:
+        _positive("threads", threads)
+        argv += ["-t", str(int(threads))]
+    if kv_type:
+        if kv_type not in KV_TYPE_FACTOR:
+            raise CliError(f"kv_type tidak dikenal: {kv_type}")
+        argv += ["-ctk", kv_type, "-ctv", kv_type]
+    return argv + list(extra or [])
+
+
+def text_similarity(a, b):
+    import difflib
+    return round(difflib.SequenceMatcher(None, a, b).ratio(), 4)
+
+
+def compare_prompt_runs(base, cand):
+    """base/cand: hasil `quality prompts`. Cocokkan menurut teks prompt."""
+    cmap = {r["prompt"]: r for r in cand.get("results", [])}
+    rows = []
+    for r in base.get("results", []):
+        c = cmap.get(r["prompt"])
+        if c is None:
+            continue
+        rows.append({"prompt": r["prompt"][:60], "identical": r["output"] == c["output"],
+                     "similarity": text_similarity(r["output"], c["output"])})
+    if not rows:
+        raise CliError("tidak ada prompt yang sama di kedua berkas")
+    return {"prompts": len(rows), "identical": sum(1 for x in rows if x["identical"]),
+            "mean_similarity": round(sum(x["similarity"] for x in rows) / len(rows), 4), "rows": rows}
+
+
+def load_prompts(path):
+    if not os.path.isfile(path):
+        raise EnvError(f"berkas prompt tidak ditemukan: {path}")
+    with open(path, "r", encoding="utf-8") as fh:
+        prompts = [ln.rstrip("\n") for ln in fh if ln.strip() and not ln.startswith("#")]
+    if not prompts:
+        raise CliError("berkas prompt kosong")
+    if len(prompts) > 200:
+        raise CliError("maksimum 200 prompt")
+    return prompts
+
+
+def strip_cli_noise(stdout):
+    """Ambil jawaban dari keluaran llama-cli -st: buang banner, echo prompt, dan baris timing."""
+    text = re.sub(r".\x08", "", stdout)       # animasi spinner llama-cli: "|\b-\b\\\b"
+    text = text.replace("\x08", "")
+    text = _RE_BRACKET.sub("", text)
+    text = text.replace("Exiting...", "")
+    if "\n> " in text:
+        text = text.split("\n> ", 1)[1]
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+    return text.strip()
 
 
 # --------------------------------------------------------------------------
@@ -1087,7 +1425,7 @@ def _budget_kwargs(a):
     return dict(vram_gib=a.vram_gib, ram_gib=a.ram_gib, ctx=a.ctx, kv_layers=a.kv_layers,
                 kv_heads=a.kv_heads, head_dim=a.head_dim, kv_type=a.kv_type,
                 cuda_ctx_gib=a.cuda_ctx_gib, compute_gib=a.compute_gib, os_gib=a.os_gib,
-                ram_bw_gbs=a.ram_bw_gbs, gpu_bw_gbs=a.gpu_bw_gbs)
+                ram_bw_gbs=a.ram_bw_gbs, gpu_bw_gbs=a.gpu_bw_gbs, rs_gib=a.rs_gib)
 
 
 def cmd_budget_estimate(a):
@@ -1117,7 +1455,9 @@ def cmd_hw_cpu(a):
 
 
 def cmd_hw_membw(a):
-    return measure_membw(a.size_mib, a.repeats), EXIT_OK
+    if a.threads == 0:
+        return measure_membw_sweep(a.size_mib, a.repeats), EXIT_OK
+    return measure_membw(a.size_mib, a.repeats, a.threads), EXIT_OK
 
 
 def cmd_hw_faults(a):
@@ -1137,8 +1477,13 @@ def cmd_hw_sample(a):
     samples = []
     for i in range(a.count):
         g = read_gpu()[0]
-        samples.append({"vram_used_mib": g["vram_used_mib"], "temp_c": g["temp_c"],
-                        "power_w": g["power_w"], "util_pct": g["util_pct"]})
+        samples.append({k: g.get(k) for k in ("vram_used_mib", "temp_c", "power_w", "util_pct",
+                                              "sm_clock_mhz", "throttle_reasons",
+                                              "throttle_limiting")})
+        if not a.no_ram:
+            ram = read_ram()
+            samples[-1]["ram_available_gib"] = ram["available_gib"]
+            samples[-1]["swap_used_gib"] = ram["swap_used_gib"]
         if i + 1 < a.count:
             time.sleep(a.interval)
     res = summarize_samples(samples)
@@ -1176,7 +1521,7 @@ def cmd_llama_build(a):
     src = os.path.abspath(a.src)
     if not os.path.isfile(os.path.join(src, "CMakeLists.txt")):
         raise EnvError(f"CMakeLists.txt tidak ada di {src}")
-    cmds = build_cmake_argv(src, a.build_dir, a.backend, a.jobs)
+    cmds = build_cmake_argv(src, a.build_dir, a.backend, a.jobs, a.target)
     if a.dry_run:
         return {"dry_run": True, "cwd": src, "commands": cmds}, EXIT_OK
     for argv in cmds:
@@ -1191,7 +1536,7 @@ def cmd_llama_run(a):
     model = check_model(a.model)
     argv = build_run_argv(resolve_bin(a.bin_dir, "llama-cli") if not a.dry_run else
                           os.path.join(a.bin_dir, "llama-cli"),
-                          model, a.ctx, a.ngl, a.prompt, a.n_predict, a.kv_type, a.no_cnv)
+                          model, a.ctx, a.ngl, a.prompt, a.n_predict, a.kv_type, not a.conversation)
     if a.dry_run:
         return {"dry_run": True, "argv": argv}, EXIT_OK
     with InferenceLock(a.lock_file):
@@ -1217,6 +1562,131 @@ def cmd_llama_bench(a):
     if proc.returncode != 0:
         return {"returncode": proc.returncode, "stderr_tail": proc.stderr[-1500:]}, EXIT_CHECK_FAILED
     return {"argv": argv, "results": parse_bench_json(proc.stdout)}, EXIT_OK
+
+
+def cmd_llama_compare(a):
+    base = load_bench_rows(a.base)
+    cand = load_bench_rows(a.cand)
+    return {"base": a.base, "cand": a.cand, "tolerance_pct": a.tolerance_pct,
+            "rows": compare_bench(base, cand, a.tolerance_pct)}, EXIT_OK
+
+
+def cmd_bench_analyze(a):
+    rows = decode_rows(load_bench_rows(a.bench_json)) if a.bench_json else {}
+    gen_tps = a.gen_tps if a.gen_tps is not None else rows.get("gen_tps")
+    if gen_tps is None:
+        raise CliError("beri --bench-json yang berisi baris generasi atau --gen-tps")
+    if a.gguf:
+        g = parse_gguf(a.gguf)
+        read_bytes, how = weights_read_per_token(g)
+    elif a.weights_gib:
+        read_bytes, how = a.weights_gib * GIB, "diberikan lewat --weights-gib"
+    elif rows.get("model_size_bytes"):
+        read_bytes, how = rows["model_size_bytes"], "model_size dari llama-bench"
+    else:
+        raise CliError("beri --gguf, --weights-gib, atau bench-json yang memuat model_size")
+    res = analyze_bandwidth(gen_tps, read_bytes, a.gpu_fraction, a.gpu_bw_gbs, a.ram_bw_gbs)
+    res["bytes_source"] = how
+    if a.sample_json:
+        with open(a.sample_json, "r", encoding="utf-8") as fh:
+            smp = json.load(fh)
+        res["gpu_throttle"] = {"reasons_seen": smp.get("throttle_reasons_seen"),
+                               "samples_throttled": smp.get("samples_throttled"),
+                               "min_sm_clock_mhz_when_busy": smp.get("min_sm_clock_mhz_when_busy")}
+        if smp.get("samples_throttled"):
+            res["verdict"] += "; GPU di-throttle selama sampel, perbaiki itu dulu"
+    return res, EXIT_OK
+
+
+def _quality_bin(a, name):
+    return os.path.join(a.bin_dir, name) if a.dry_run else resolve_bin(a.bin_dir, name)
+
+
+def cmd_quality_ppl(a):
+    model = check_model(a.model)
+    if not os.path.isfile(a.file):
+        raise EnvError(f"berkas teks tidak ditemukan: {a.file}")
+    argv = build_ppl_argv(_quality_bin(a, "llama-perplexity"), model, os.path.abspath(a.file),
+                          a.ctx, a.chunks, a.ngl, a.threads, kv_type=a.kv_type)
+    protocol = {"file": os.path.abspath(a.file), "ctx": a.ctx, "chunks": a.chunks, "ngl": a.ngl,
+                "kv_type": a.kv_type}
+    if a.dry_run:
+        return {"dry_run": True, "argv": argv, "protocol": protocol}, EXIT_OK
+    with InferenceLock(a.lock_file):
+        proc = _run_logged(argv, a.timeout)
+    combined = proc.stdout + "\n" + proc.stderr
+    if proc.returncode != 0:
+        return {"returncode": proc.returncode, "stderr_tail": proc.stderr[-1500:]}, EXIT_CHECK_FAILED
+    return {"model": model, "protocol": protocol, **parse_ppl(combined)}, EXIT_OK
+
+
+def cmd_quality_kld(a):
+    base = check_model(a.base_model)
+    cand = check_model(a.model)
+    if not os.path.isfile(a.file):
+        raise EnvError(f"berkas teks tidak ditemukan: {a.file}")
+    binp = _quality_bin(a, "llama-perplexity")
+    text = os.path.abspath(a.file)
+    # --base-kv-type: KV cache model referensi; --kv-type: KV cache kandidat (mengukur dampak KV quant).
+    step1 = build_ppl_argv(binp, base, text, a.ctx, a.chunks, a.ngl, a.threads,
+                           ["--kl-divergence-base", a.kld_file], kv_type=a.base_kv_type)
+    step2 = build_ppl_argv(binp, cand, text, a.ctx, a.chunks, a.ngl, a.threads,
+                           ["--kl-divergence", "--kl-divergence-base", a.kld_file], kv_type=a.kv_type)
+    protocol = {"file": text, "ctx": a.ctx, "chunks": a.chunks, "ngl": a.ngl, "kld_file": a.kld_file,
+                "base_kv_type": a.base_kv_type, "kv_type": a.kv_type}
+    if a.dry_run:
+        return {"dry_run": True, "argv": [step1, step2], "protocol": protocol}, EXIT_OK
+    with InferenceLock(a.lock_file):
+        if not (a.reuse_base and os.path.isfile(a.kld_file)):
+            p1 = _run_logged(step1, a.timeout)
+            if p1.returncode != 0:
+                return {"step": "base", "returncode": p1.returncode,
+                        "stderr_tail": p1.stderr[-1500:]}, EXIT_CHECK_FAILED
+        p2 = _run_logged(step2, a.timeout)
+    if p2.returncode != 0:
+        return {"step": "candidate", "returncode": p2.returncode,
+                "stderr_tail": p2.stderr[-1500:]}, EXIT_CHECK_FAILED
+    res = parse_kld(p2.stdout + "\n" + p2.stderr)
+    with contextlib.suppress(CliError):
+        res.update(parse_ppl(p2.stdout + "\n" + p2.stderr))
+    kld_gib = round(os.path.getsize(a.kld_file) / GIB, 3) if os.path.isfile(a.kld_file) else None
+    return {"base_model": base, "model": cand, "protocol": protocol, "kld_file_gib": kld_gib,
+            **res}, EXIT_OK
+
+
+def cmd_quality_prompts(a):
+    if a.compare:
+        loaded = []
+        for path in a.compare:
+            if not os.path.isfile(path):
+                raise EnvError(f"berkas tidak ditemukan: {path}")
+            with open(path, "r", encoding="utf-8") as fh:
+                loaded.append(json.load(fh))
+        return compare_prompt_runs(loaded[0], loaded[1]), EXIT_OK
+    if not (a.model and a.prompts and a.out):
+        raise CliError("jalankan dengan --model, --prompts, --out; atau --compare A.json B.json")
+    model = check_model(a.model)
+    prompts = load_prompts(a.prompts)
+    binp = _quality_bin(a, "llama-cli")
+    fixed = ["--temp", "0", "--seed", "1"]
+    argvs = [build_run_argv(binp, model, a.ctx, a.ngl, p, a.n_predict) + fixed for p in prompts]
+    if a.dry_run:
+        return {"dry_run": True, "prompts": len(prompts), "argv_first": argvs[0]}, EXIT_OK
+    results = []
+    with InferenceLock(a.lock_file):
+        for p, argv in zip(prompts, argvs):
+            proc = _run_logged(argv, a.timeout)
+            if proc.returncode != 0:
+                return {"prompt": p[:60], "returncode": proc.returncode,
+                        "stderr_tail": proc.stderr[-800:]}, EXIT_CHECK_FAILED
+            results.append({"prompt": p, "output": strip_cli_noise(proc.stdout),
+                            **parse_llama_timing(proc.stdout + proc.stderr)})
+    doc = {"model": model, "protocol": {"temp": 0, "seed": 1, "ctx": a.ctx, "n_predict": a.n_predict,
+                                         "ngl": a.ngl}, "results": results}
+    out = os.path.abspath(a.out)
+    with open(out, "x", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2, ensure_ascii=False)
+    return {"saved": out, "prompts": len(results)}, EXIT_OK
 
 
 def cmd_llama_placement(a):
@@ -1268,6 +1738,8 @@ def _add_budget_args(p):
     p.add_argument("--cuda-ctx-gib", type=float, default=0.4)
     p.add_argument("--compute-gib", type=float, default=0.5)
     p.add_argument("--os-gib", type=float, default=2.5)
+    p.add_argument("--rs-gib", type=float, default=DEFAULT_RS_GIB,
+                   help="state rekuren Gated DeltaNet (0 untuk model non-hibrida)")
     p.add_argument("--ram-bw-gbs", type=float, default=20.0, help="bandwidth RAM; ukur dengan hw membw")
     p.add_argument("--gpu-bw-gbs", type=float, default=256.0)
 
@@ -1315,11 +1787,13 @@ def build_parser():
     p = leaf(g, "membw", cmd_hw_membw, "bandwidth RAM kasar")
     p.add_argument("--size-mib", type=int, default=256)
     p.add_argument("--repeats", type=int, default=5)
+    p.add_argument("--threads", type=int, default=0, help="0 = coba 1,2,4,.. thread dan ambil terbaik")
     p = leaf(g, "faults", cmd_hw_faults, "page fault berat dan swap")
     p.add_argument("--seconds", type=float, default=5.0)
-    p = leaf(g, "sample", cmd_hw_sample, "sampling puncak VRAM/suhu/power")
+    p = leaf(g, "sample", cmd_hw_sample, "sampling puncak VRAM/suhu/power/clock + RAM terendah dan swap")
     p.add_argument("--count", type=int, default=10)
     p.add_argument("--interval", type=float, default=1.0)
+    p.add_argument("--no-ram", action="store_true", help="jangan catat RAM tersedia dan swap")
     p = leaf(g, "headroom", cmd_hw_headroom, "go/no-go (exit 1 bila tidak cukup)")
     p.add_argument("--file-gib", type=float)
     p.add_argument("--ctx", type=int, default=4096)
@@ -1337,7 +1811,8 @@ def build_parser():
     p = leaf(g, "build", cmd_llama_build, "build llama.cpp (CUDA SM 61)")
     p.add_argument("--src", required=True)
     p.add_argument("--build-dir", default="build")
-    p.add_argument("--backend", choices=("cuda", "vulkan"), default="cuda")
+    p.add_argument("--backend", choices=("cuda", "vulkan", "cpu"), default="cuda")
+    p.add_argument("--target", action="append", help="target cmake (boleh diulang), mis. llama-perplexity")
     p.add_argument("--jobs", type=int)
     p.add_argument("--timeout", type=int, default=3600)
     p.add_argument("--dry-run", action="store_true")
@@ -1347,13 +1822,68 @@ def build_parser():
     p.add_argument("--prompt", required=True)
     p.add_argument("--n-predict", type=int, default=64)
     p.add_argument("--kv-type", choices=sorted(KV_TYPE_FACTOR))
-    p.add_argument("--no-cnv", action="store_true", help="tambah -no-cnv (belum diverifikasi di build kita)")
+    p.add_argument("--conversation", action="store_true",
+                   help="jangan tambah -st (hanya untuk build llama-cli lama yang tidak punya -st)")
     p = leaf(g, "bench", cmd_llama_bench, "llama-bench dengan beberapa ulangan")
     _add_llama_common(p)
     p.add_argument("--prompt-tokens", type=int, default=512)
     p.add_argument("--gen-tokens", type=int, default=128)
     p.add_argument("--runs", type=int, default=3)
     leaf(g, "placement", cmd_llama_placement, "baca log: layer di GPU/CPU").add_argument("--log", required=True)
+    p = leaf(g, "compare", cmd_llama_compare, "bandingkan dua hasil `llama bench --json`")
+    p.add_argument("base")
+    p.add_argument("cand")
+    p.add_argument("--tolerance-pct", type=float, default=5.0)
+
+    g = groups.add_parser("bench", help="analisis hasil benchmark").add_subparsers(dest="cmd", required=True)
+    p = leaf(g, "analyze", cmd_bench_analyze, "efisiensi bandwidth: GPU, CPU, atau lainnya yang menahan")
+    p.add_argument("--bench-json", help="keluaran `llama bench --json` (berisi baris generasi)")
+    p.add_argument("--gen-tps", type=float, help="TPS generasi terukur, bila tanpa bench-json")
+    p.add_argument("--gguf", help="hitung byte bobot per token dari header GGUF")
+    p.add_argument("--weights-gib", type=float)
+    p.add_argument("--gpu-fraction", type=float, default=1.0, help="bagian bobot di GPU, 0..1")
+    p.add_argument("--gpu-bw-gbs", type=float, default=GTX_1070TI_BW_GBS)
+    p.add_argument("--ram-bw-gbs", type=float, help="dari `hw membw` (wajib bila ada bobot di CPU)")
+    p.add_argument("--sample-json", help="keluaran `hw sample --json` untuk cek throttle")
+
+    g = groups.add_parser("quality", help="ukur kualitas, bukan hanya kecepatan").add_subparsers(
+        dest="cmd", required=True)
+
+    def _quality_common(p):
+        p.add_argument("--bin-dir", default=os.path.join("build", "bin"))
+        p.add_argument("--ngl", type=int, default=None)
+        p.add_argument("--ctx", type=int, default=512)
+        p.add_argument("--timeout", type=int, default=3600)
+        p.add_argument("--lock-file", default=DEFAULT_LOCK)
+        p.add_argument("--dry-run", action="store_true")
+
+    p = leaf(g, "ppl", cmd_quality_ppl, "perplexity pada teks tetap (llama-perplexity)")
+    _quality_common(p)
+    p.add_argument("--model", required=True)
+    p.add_argument("--file", required=True, help="teks evaluasi, mis. wikitext-2 raw test")
+    p.add_argument("--chunks", type=int, default=None, help="batasi jumlah chunk agar cepat")
+    p.add_argument("--threads", type=int, default=None)
+    p.add_argument("--kv-type", choices=sorted(KV_TYPE_FACTOR), default=None, help="tipe KV cache (-ctk/-ctv)")
+    p = leaf(g, "kld", cmd_quality_kld, "KL divergence kandidat terhadap model referensi")
+    _quality_common(p)
+    p.add_argument("--base-model", required=True, help="quant referensi (tertinggi yang muat)")
+    p.add_argument("--model", required=True, help="quant yang diuji")
+    p.add_argument("--file", required=True)
+    p.add_argument("--chunks", type=int, default=None)
+    p.add_argument("--threads", type=int, default=None)
+    p.add_argument("--kv-type", choices=sorted(KV_TYPE_FACTOR), default=None,
+                   help="tipe KV cache kandidat (-ctk/-ctv)")
+    p.add_argument("--base-kv-type", choices=sorted(KV_TYPE_FACTOR), default=None,
+                   help="tipe KV cache referensi")
+    p.add_argument("--kld-file", required=True, help="berkas logit referensi (BESAR; lihat docs)")
+    p.add_argument("--reuse-base", action="store_true", help="pakai ulang --kld-file yang sudah ada")
+    p = leaf(g, "prompts", cmd_quality_prompts, "jalankan set prompt tetap, simpan/bandingkan jawaban")
+    _quality_common(p)
+    p.add_argument("--model")
+    p.add_argument("--prompts", help="satu prompt per baris; # = komentar")
+    p.add_argument("--out", help="berkas JSON hasil (tidak menimpa)")
+    p.add_argument("--n-predict", type=int, default=128)
+    p.add_argument("--compare", nargs=2, metavar=("A.json", "B.json"))
 
     g = groups.add_parser("spec", help="rawat dokumen spec").add_subparsers(dest="cmd", required=True)
     p = leaf(g, "new", cmd_spec_new, "scaffold SPEC-NNN dari template", (spec_common,))
