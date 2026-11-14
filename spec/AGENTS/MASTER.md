@@ -209,6 +209,32 @@ spec/
 
 ---
 
+## Aturan Pull Request
+
+| Aturan | Isi |
+|---|---|
+| Satu tugas, satu PR | Pekerjaan untuk satu issue atau permintaan masuk ke **satu** PR. Perintah lanjutan pada issue yang sama menambah ke PR itu, bukan membuka PR baru |
+| Deskripsi: teks + visual | Deskripsi PR memang teks, tapi **visualkan sebisa mungkin dengan SVG**: alur, struktur, perbandingan, hasil ukur. Perubahan lebih dari satu berkas atau fitur baru wajib punya minimal satu SVG |
+| Bukti test | Tulis test apa yang dijalankan, hasilnya, dan di mana. Jangan mengklaim lulus bila tidak dijalankan |
+| Yang belum | Tulis eksplisit apa yang belum dikerjakan atau diuji, dan asumsi yang dipakai |
+| Merge | Hanya oleh manusia. `main` dilindungi |
+
+### Aturan SVG
+
+| Aturan | Alasan |
+|---|---|
+| Simpan di `spec/specs/assets/` | Lokasi tetap, mudah ditemukan |
+| XML valid, tanpa `<script>`, event handler, atau `foreignObject` | Keamanan; pemeriksa otomatis menolaknya |
+| Huruf minimal 12 px | Terbaca di tampilan PR |
+| Teks harus muat di kotaknya (perkiraan lebar: 0,55 × ukuran huruf per karakter) | Teks yang meluap tidak terbaca |
+| Satu gagasan per gambar, ada judul dan legenda | Mudah dipahami orang yang baru melihatnya |
+| Sematkan dengan tautan permanen (SHA commit), bukan nama branch | Branch dihapus setelah merge, tautan ke branch akan putus |
+
+Pada PR dari agen `/kiro`, skrip menyematkan SVG otomatis di deskripsi dan memberi peringatan bila PR berisi banyak berkas tanpa SVG.
+Pemeriksaan tata letak hanya perkiraan (tanpa renderer). Lihat gambarnya langsung di PR sebelum merge.
+
+---
+
 ## Success Criteria Proyek
 
 1. Qwen3.8-27B berjalan di GTX 1070 Ti + 16 GB RAM dan menghasilkan output koheren.

@@ -1,3 +1,5 @@
+import pathlib
+import tempfile
 import unittest
 
 import kiro_gh_agent as a
@@ -118,6 +120,108 @@ class Normalize(unittest.TestCase):
         c = {"id": 5, "issue_url": "https://x/issues/1", "user": None, "body": "/kiro x",
              "created_at": "t", "updated_at": "t", "html_url": "h"}
         self.assertEqual(a.classify(a.norm_comment(c), CFG)[0], "skip")
+
+
+def pr(number, ref, repo="mcpe500/legacy1070qi38"):
+    return {"number": number, "head": {"ref": ref, "repo": {"full_name": repo}}}
+
+
+class SinglePr(unittest.TestCase):
+    R = "mcpe500/legacy1070qi38"
+
+    def test_follow_up_extends_existing_pr(self):
+        prs = [pr(18, "kiro/issue-1-c6875260454")]
+        self.assertEqual(a.pick_reusable_pr(prs, 1, self.R), {"number": 18, "ref": "kiro/issue-1-c6875260454"})
+
+    def test_no_pr_returns_none(self):
+        self.assertIsNone(a.pick_reusable_pr([], 1, self.R))
+
+    def test_issue_1_does_not_take_issue_12(self):
+        self.assertIsNone(a.pick_reusable_pr([pr(30, "kiro/issue-12-c1"), pr(31, "kiro/issue-100")], 1, self.R))
+
+    def test_exact_branch_name_matches(self):
+        self.assertEqual(a.pick_reusable_pr([pr(5, "kiro/issue-7")], 7, self.R)["number"], 5)
+
+    def test_fork_pr_never_reused(self):
+        self.assertIsNone(a.pick_reusable_pr([pr(9, "kiro/issue-1-x", repo="evil/fork")], 1, self.R))
+
+    def test_deleted_fork_repo_never_reused(self):
+        self.assertIsNone(a.pick_reusable_pr([{"number": 9, "head": {"ref": "kiro/issue-1-x", "repo": None}}], 1, self.R))
+
+    def test_non_kiro_branch_ignored(self):
+        self.assertIsNone(a.pick_reusable_pr([pr(9, "feature/issue-1")], 1, self.R))
+
+    def test_newest_wins(self):
+        prs = [pr(18, "kiro/issue-1-a"), pr(25, "kiro/issue-1-b")]
+        self.assertEqual(a.pick_reusable_pr(prs, 1, self.R)["number"], 25)
+
+
+class Visuals(unittest.TestCase):
+    def test_no_svg_no_section(self):
+        self.assertEqual(a.visual_section("o/r", "abc123", []), "")
+
+    def test_permalink_uses_sha_and_raw(self):
+        out = a.visual_section("o/r", "abc123", ["spec/specs/assets/a b.svg"])
+        self.assertIn("/blob/abc123/spec/specs/assets/a%20b.svg?raw=true", out)
+        self.assertIn("![a b]", out)
+        self.assertTrue(out.startswith("## Gambaran visual"))
+
+    def test_each_svg_embedded(self):
+        out = a.visual_section("o/r", "s", ["a.svg", "b.svg"])
+        self.assertEqual(out.count("?raw=true"), 2)
+
+
+class SvgChecks(unittest.TestCase):
+    def write(self, text, name="x.svg"):
+        d = tempfile.mkdtemp()
+        p = pathlib.Path(d) / name
+        p.write_text(text, encoding="utf-8")
+        return p
+
+    GOOD = ('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100" viewBox="0 0 400 100">'
+            '<rect x="10" y="10" width="380" height="80"/><text x="20" y="40" font-size="14">halo</text></svg>')
+
+    def test_good_svg(self):
+        self.assertIsNone(a.svg_error(self.write(self.GOOD)))
+
+    def test_broken_xml(self):
+        self.assertIn("XML", a.svg_error(self.write("<svg><text></svg>")))
+
+    def test_script_rejected(self):
+        bad = self.GOOD.replace("</svg>", "<script>alert(1)</script></svg>")
+        self.assertIn("script", a.svg_error(self.write(bad)))
+
+    def test_event_handler_rejected(self):
+        bad = self.GOOD.replace("<rect ", '<rect onload="x()" ')
+        self.assertIsNotNone(a.svg_error(self.write(bad)))
+
+    def test_entity_rejected(self):
+        bad = '<!DOCTYPE svg [<!ENTITY a "b">]>' + self.GOOD
+        self.assertIsNotNone(a.svg_error(self.write(bad)))
+
+    def test_not_svg_root(self):
+        self.assertIn("bukan <svg>", a.svg_error(self.write("<html/>")))
+
+    def test_missing_file(self):
+        self.assertIsNotNone(a.svg_error("/nonexistent/x.svg"))
+
+    def test_too_big(self):
+        self.assertIn("500 KB", a.svg_error(self.write(self.GOOD + " " * 600_000)))
+
+    def test_layout_ok(self):
+        self.assertEqual(a.svg_layout_warnings(self.write(self.GOOD)), [])
+
+    def test_layout_text_leaves_box(self):
+        bad = self.GOOD.replace(">halo<", ">" + "x" * 80 + "<")
+        self.assertTrue(any("kotak" in w or "kanvas" in w for w in a.svg_layout_warnings(self.write(bad))))
+
+    def test_layout_tiny_font(self):
+        bad = self.GOOD.replace('font-size="14"', 'font-size="8"')
+        self.assertTrue(any("huruf kecil" in w for w in a.svg_layout_warnings(self.write(bad))))
+
+    def test_layout_text_outside_canvas(self):
+        bad = self.GOOD.replace('x="20" y="40"', 'x="390" y="40"').replace(">halo<", ">panjang sekali<")
+        self.assertTrue(any("kanvas" in w for w in a.svg_layout_warnings(self.write(bad))))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="440" viewBox="0 0 960 440" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="960" height="440" fill="#ffffff"/>
+  <text x="30" y="34" font-size="20" font-weight="bold" fill="#0f172a">Perintah /kiro lanjutan pada issue yang sama</text>
+  <text x="30" y="54" font-size="13" fill="#64748b">Dulu membuka PR baru. Sekarang menambah ke PR yang sudah terbuka.</text>
+
+  <!-- ============ SEBELUM ============ -->
+  <rect x="30" y="70" width="435" height="320" rx="12" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="46" y="100" font-size="16" font-weight="bold" fill="#991b1b">Sebelum: dua PR terpisah</text>
+
+  <rect x="46" y="124" width="170" height="64" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="131" y="150" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">Komentar 1</text>
+  <text x="131" y="170" font-size="12" fill="#334155" text-anchor="middle">/kiro buat CLI</text>
+  <path d="M216 156 L266 156" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="266" y="124" width="180" height="64" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="356" y="150" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">PR #18</text>
+  <text x="356" y="170" font-size="12" fill="#334155" text-anchor="middle">kode CLI</text>
+
+  <rect x="46" y="224" width="170" height="64" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="131" y="250" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">Komentar 2</text>
+  <text x="131" y="270" font-size="12" fill="#334155" text-anchor="middle">/kiro tambah SVG</text>
+  <path d="M216 256 L266 256" stroke="#dc2626" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="266" y="224" width="180" height="64" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="2"/>
+  <text x="356" y="250" font-size="13" font-weight="bold" fill="#991b1b" text-anchor="middle">PR #19 (salah)</text>
+  <text x="356" y="270" font-size="12" fill="#991b1b" text-anchor="middle">hanya SVG, terpisah</text>
+
+  <text x="46" y="330" font-size="13" font-weight="bold" fill="#991b1b">Penyebab</text>
+  <text x="46" y="350" font-size="12.5" fill="#334155">Setiap perintah di issue membuat branch baru</text>
+  <text x="46" y="368" font-size="12.5" fill="#334155">dari main, tanpa melihat PR yang sudah ada.</text>
+
+  <!-- ============ SESUDAH ============ -->
+  <rect x="495" y="70" width="435" height="320" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="511" y="100" font-size="16" font-weight="bold" fill="#166534">Sesudah: satu PR</text>
+
+  <rect x="511" y="124" width="170" height="64" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="596" y="150" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">Komentar 1</text>
+  <text x="596" y="170" font-size="12" fill="#334155" text-anchor="middle">/kiro buat CLI</text>
+  <rect x="511" y="224" width="170" height="64" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="596" y="250" font-size="13" font-weight="bold" fill="#0f172a" text-anchor="middle">Komentar 2</text>
+  <text x="596" y="270" font-size="12" fill="#334155" text-anchor="middle">/kiro tambah SVG</text>
+
+  <path d="M681 156 L731 156" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M681 256 L731 256" stroke="#16a34a" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="731" y="124" width="180" height="164" rx="8" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="821" y="160" font-size="13" font-weight="bold" fill="#166534" text-anchor="middle">PR #18 (satu-satunya)</text>
+  <text x="821" y="188" font-size="12" fill="#334155" text-anchor="middle">commit 1: kode CLI</text>
+  <text x="821" y="208" font-size="12" fill="#334155" text-anchor="middle">commit 2: SVG</text>
+  <text x="821" y="246" font-size="12" font-weight="bold" fill="#166534" text-anchor="middle">SVG tampil di</text>
+  <text x="821" y="264" font-size="12" font-weight="bold" fill="#166534" text-anchor="middle">deskripsi PR</text>
+
+  <text x="511" y="330" font-size="13" font-weight="bold" fill="#166534">Cara kerja</text>
+  <text x="511" y="350" font-size="12.5" fill="#334155">Skrip mencari PR terbuka milik issue itu dan</text>
+  <text x="511" y="368" font-size="12.5" fill="#334155">menambahkan commit ke branch-nya.</text>
+
+  <text x="30" y="418" font-size="12" fill="#64748b">SVG disematkan otomatis lewat tautan SHA commit, jadi tidak putus setelah branch dihapus. Merge tetap oleh manusia.</text>
+</svg>
