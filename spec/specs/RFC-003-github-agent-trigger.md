@@ -56,6 +56,22 @@ Skrip selalu membuat branch baru dari `main` untuk perintah di issue, sehingga p
 
 Diuji nyata: satu issue, dua perintah `/kiro` berurutan menghasilkan satu PR dengan tiga berkas dan SVG tampil di deskripsi (issue dan PR uji sudah ditutup).
 
+## Revisi 2: perilaku menurut tempat komentar
+
+![Perilaku /kiro menurut tempat komentar ditulis](assets/rfc-003-intent-by-location.svg)
+
+| Tempat `/kiro` ditulis | Perilaku |
+|---|---|
+| Di dalam PR | Dibahas dan dikerjakan di PR itu. Perubahan di-commit ke branch PR itu. Tidak pernah membuka PR baru |
+| Di issue yang belum punya PR | Agent **analisis dulu** apakah perlu mengubah file. Pertanyaan, status, atau diskusi dijawab saja, **tanpa PR**. PR dibuat hanya bila instruksi jelas meminta perubahan file |
+| Di issue yang sudah punya PR | Perubahan ditambahkan ke PR itu, bukan PR baru |
+
+Pesan awal tiap komentar kini menyebut situasinya. Sebelumnya semua pesan menulis "membuat PR baru bila ada perubahan", termasuk saat komentar ada di dalam PR.
+
+Pengaman: bila agent menulis "Keputusan: tidak perlu PR" tetapi meninggalkan perubahan file, perubahan itu tidak di-commit dan tidak ada PR yang dibuat.
+
+Diuji nyata (artefak sudah ditutup): pertanyaan di issue menghasilkan balasan tanpa PR; permintaan perubahan di issue menghasilkan satu PR; di dalam PR, satu pertanyaan dijawab tanpa ubah file dan satu permintaan perubahan masuk ke branch PR yang sama.
+
 ## Yang belum terjamin
 
 - **Prompt injection lewat web**: agent boleh `web_fetch`. Halaman web berbahaya bisa membujuknya menulis isi tertentu ke file atau balasan. Mitigasi: tanpa shell, PR perlu review, repo ini publik.
