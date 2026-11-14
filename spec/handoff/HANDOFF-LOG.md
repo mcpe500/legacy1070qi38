@@ -270,3 +270,12 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [CORRECTION] Tiga cacat CLI ditemukan saat uji binary asli: llama run macet (-no-cnv diabaikan, stdin), kv_layers_estimate salah pada hibrida,
     tidak ada test kontrak. Diperbaiki di PR #29
 ```
+
+### Penghentian server 9B (izin pemilik mesin, 2026-11-13)
+
+```
+[Post-bootstrap] [DECISION] Server 9B (PID 22885) dihentikan dengan SIGTERM untuk uji 27B (#31-#36), atas izin pemilik mesin
+  → Perintah start lama (dari /proc/22885/cmdline, jalankan dari ~):
+    $HOME/llama-cpp-turboquant/build/bin/llama-server -m $HOME/models/Qwen3.8-9B-Q4_K_M.gguf -ngl 99 -c 114688 -ub 256 -b 512 --port 8080 --host 0.0.0.0 --metrics --slots -fa auto --cache-type-k iso3 --cache-type-v iso3 --reasoning-budget 0
+  → Fork dipindah ke ~/archive/llama-cpp-turboquant-08e025c; ganti path binary saat menghidupkan lagi
+```
