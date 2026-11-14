@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" font-family="Helvetica, Arial, sans-serif">
+  <title>Panduan visual tools/legacy.py: alur satu perintah dan contoh hitungan budget</title>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <rect width="960" height="600" fill="#ffffff"/>
+  <text x="30" y="32" font-size="21" font-weight="bold" fill="#0f172a">Cara kerja tools/legacy.py, dalam dua gambar</text>
+
+  <!-- ===== Bagian 1: alur satu perintah ===== -->
+  <text x="30" y="68" font-size="15" font-weight="bold" fill="#0f172a">1. Apa yang terjadi saat satu perintah dijalankan</text>
+
+  <path d="M222 130 L262 130" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M452 130 L492 130" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M692 130 L732 130" stroke="#475569" stroke-width="2" marker-end="url(#arr)"/>
+
+  <rect x="30" y="86" width="192" height="88" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="2"/>
+  <text x="126" y="112" font-size="14" font-weight="bold" fill="#0f172a" text-anchor="middle">Pemanggil</text>
+  <text x="126" y="134" font-size="12.5" fill="#334155" text-anchor="middle">agent (lewat bash)</text>
+  <text x="126" y="152" font-size="12.5" fill="#334155" text-anchor="middle">atau manusia (terminal)</text>
+
+  <rect x="262" y="86" width="190" height="88" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="2"/>
+  <text x="357" y="112" font-size="14" font-weight="bold" fill="#0f172a" text-anchor="middle">Lapisan argparse</text>
+  <text x="357" y="134" font-size="12.5" fill="#334155" text-anchor="middle">hanya membaca argumen,</text>
+  <text x="357" y="152" font-size="12.5" fill="#334155" text-anchor="middle">tanpa logika hitung</text>
+
+  <rect x="492" y="86" width="200" height="88" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <text x="592" y="112" font-size="14" font-weight="bold" fill="#0f172a" text-anchor="middle">Fungsi murni</text>
+  <text x="592" y="134" font-size="12.5" fill="#334155" text-anchor="middle">estimate, parse_*,</text>
+  <text x="592" y="152" font-size="12.5" fill="#334155" text-anchor="middle">build_*_argv</text>
+
+  <rect x="732" y="86" width="198" height="88" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
+  <text x="831" y="112" font-size="14" font-weight="bold" fill="#0f172a" text-anchor="middle">Keluaran</text>
+  <text x="831" y="134" font-size="12.5" fill="#334155" text-anchor="middle">teks untuk manusia,</text>
+  <text x="831" y="152" font-size="12.5" fill="#334155" text-anchor="middle">JSON bila ada --json</text>
+
+  <text x="30" y="204" font-size="12.5" fill="#334155">Contoh: <tspan font-family="monospace" fill="#0f172a">python tools/legacy.py budget estimate ... --json</tspan></text>
+  <text x="30" y="224" font-size="12.5" fill="#334155">Fungsi murni tidak menyentuh disk, GPU, atau jaringan, jadi bisa diuji tanpa perangkat keras dan bisa dibungkus MCP nanti.</text>
+
+  <!-- ===== Bagian 2: contoh hitungan budget ===== -->
+  <text x="30" y="272" font-size="15" font-weight="bold" fill="#0f172a">2. Contoh hitungan budget: Qwen3.8-27B Q4_K_M (16,53 GiB) dibagi ke VRAM dan RAM</text>
+
+  <!-- skala: 1 GiB = 48,4 px; mulai x=80 -->
+  <rect x="80" y="300" width="315" height="64" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
+  <rect x="395" y="300" width="485" height="64" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
+  <text x="237" y="326" font-size="14" font-weight="bold" fill="#166534" text-anchor="middle">Di VRAM (GPU)</text>
+  <text x="237" y="347" font-size="13" fill="#166534" text-anchor="middle">sekitar 6,5 GiB</text>
+  <text x="637" y="326" font-size="14" font-weight="bold" fill="#92400e" text-anchor="middle">Di RAM (CPU)</text>
+  <text x="637" y="347" font-size="13" fill="#92400e" text-anchor="middle">sekitar 10,0 GiB</text>
+
+  <path d="M80 380 L880 380" stroke="#475569" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="480" y="400" font-size="12.5" fill="#334155" text-anchor="middle">Panjang batang sebanding dengan ukuran file model (16,53 GiB)</text>
+
+  <!-- rumus VRAM -->
+  <rect x="30" y="420" width="440" height="120" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="46" y="444" font-size="13.5" font-weight="bold" fill="#166534">Berapa bobot yang muat di VRAM</text>
+  <text x="46" y="466" font-size="12.5" fill="#334155">8,0 GiB  total VRAM</text>
+  <text x="46" y="484" font-size="12.5" fill="#334155">− 0,4  CUDA context</text>
+  <text x="46" y="502" font-size="12.5" fill="#334155">− 0,25  KV cache (konteks 4096)</text>
+  <text x="46" y="520" font-size="12.5" fill="#334155">− ~0,5  compute buffer (tebakan)  =  sekitar 6,5 GiB</text>
+
+  <!-- rumus RAM -->
+  <rect x="490" y="420" width="440" height="120" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="506" y="444" font-size="13.5" font-weight="bold" fill="#92400e">Sisanya di RAM, dan batas kecepatan</text>
+  <text x="506" y="466" font-size="12.5" fill="#334155">Bobot di RAM = 16,53 − 6,5 = sekitar 10,0 GiB</text>
+  <text x="506" y="484" font-size="12.5" fill="#334155">RAM total = 10,0 + sekitar 2,5 (OS, runtime) = sekitar 12,5 GiB</text>
+  <text x="506" y="502" font-size="12.5" fill="#334155">Batas atas TPS = bandwidth RAM ÷ bobot di RAM</text>
+  <text x="506" y="520" font-size="12.5" fill="#334155">20 GB/s ÷ 10,0 GiB = sekitar 1,9 tok/s (40 GB/s: sekitar 3,7)</text>
+
+  <text x="30" y="566" font-size="12" fill="#64748b">Sumber angka: tabel Memory Budget di spec/AGENTS/MASTER.md. Semuanya estimasi, belum diukur di GTX 1070 Ti. Bandwidth RAM 20 atau 40 GB/s</text>
+  <text x="30" y="583" font-size="12" fill="#64748b">adalah asumsi (single atau dual channel). Hasil CLI memakai rumus tepat, jadi bisa sedikit beda (mis. RAM total 12,18 GiB). Gambar belum dilihat di renderer.</text>
+</svg>
