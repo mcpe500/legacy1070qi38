@@ -90,6 +90,9 @@ yang memakai arsitektur `qwen35` (lihat C-20), tetapi itu bukan Qwen3.8-27B dan 
 | C-47 | Dampak KV quant pada model `qwen35` 0.8B (IQ4_XS, wikitext-2 test, 4 chunk, ctx 512, KLD terhadap KV f16): q8_0 mean KLD 0.0038 (same-top-p 96.9%); q4_0 0.0200 (91.5%) | `quality kld --kv-type`, PR #29 | Terukur | ⚠ Model kecil, 6 layer attention, konteks pendek; **tidak berlaku otomatis untuk 27B** (OQ-004) |
 | C-48 | KLD kuantisasi bobot sebagai pembanding skala: IQ4_XS -> Q3_K_S (requant, hanya uji pipeline) mean KLD 0.348, same-top-p 70.0% | `quality kld`, PR #29 | Terukur | ⚠ Requant dari quant lain; **bukan** klaim kualitas Q3_K_S |
 | C-49 | Format log pemuatan: `offloaded %d/%d layers to GPU` dan `<buffer> model buffer size = X MiB` | `src/llama-model.cpp:7752` dan `:7758` (fork `08e025c`); log CPU asli dari `llama-perplexity` | Kode + Terukur | ⚠ Log dengan layer di GPU belum diuji (VRAM penuh); regex cocok dengan string sumber |
+| C-50 | Qwen3.8-27B UD-IQ4_XS (unsloth) hybrid `-ngl 36` di 1070 Ti: tg32 2.29 tok/s, pp128 16.7 tok/s; UD-IQ3_XXS `-ngl 45`: tg32 1.15 tok/s. llama.cpp utama `3549c27` | `reports/2026-11-14-27b-run-001.md` | Terukur | ✅ untuk ctx kecil, KV f16 |
+| C-51 | MTP (`--spec-type draft-mtp`) pada 27B IQ4_XS hybrid `-ngl 32`: 1.06x (depth 1, terima 93.8%), 1.00x (depth 2), 0.97x (depth 3); keluaran `/completion` identik di temp 0 | `reports/2026-11-14-27b-run-001.md` | Terukur | ✅ satu prompt, 128 token |
+| C-52 | GGUF 27B unsloth: `block_count=65` = 64 layer + 1 layer MTP (`nextn_predict_layers=1`) | `gguf-py` pada file lokal | Terukur | ✅ |
 | C-45 | `llama-perplexity` menjalankan 4 sekuens paralel pada ctx 512 (KV 24 MiB = 4 x 6 MiB) | log nyata | Terukur | ✅ |
 
 ## Cara memakai
