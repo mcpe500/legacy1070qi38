@@ -224,5 +224,75 @@ class SvgChecks(unittest.TestCase):
         self.assertTrue(any("kanvas" in w for w in a.svg_layout_warnings(self.write(bad))))
 
 
+class Intent(unittest.TestCase):
+    def test_kind(self):
+        self.assertEqual(a.work_kind(True, 18), "pr")
+        self.assertEqual(a.work_kind(False, 18), "issue_with_pr")
+        self.assertEqual(a.work_kind(False, None), "issue_new")
+
+    def test_comment_in_pr_never_says_new_pr(self):
+        msg = a.start_message("mcpe500", "pr", "tanpa shell", 18)
+        self.assertNotIn("membuat PR baru", msg)
+        self.assertIn("PR ini (#18)", msg)
+        self.assertIn("branch PR ini", msg)
+
+    def test_issue_new_says_analyze_first_and_no_pr_if_unneeded(self):
+        msg = a.start_message("mcpe500", "issue_new", "tanpa shell")
+        self.assertIn("analisis dulu", msg)
+        self.assertIn("tanpa membuat PR", msg)
+        self.assertNotIn("membuat PR baru bila ada perubahan", msg)
+
+    def test_issue_with_pr_points_to_existing_pr(self):
+        msg = a.start_message("mcpe500", "issue_with_pr", "tanpa shell", 21)
+        self.assertIn("PR #21", msg)
+        self.assertIn("bukan PR baru", msg)
+
+    def test_no_message_promises_a_pr_unconditionally(self):
+        for kind, n in (("pr", 5), ("issue_with_pr", 5), ("issue_new", None)):
+            self.assertNotIn("bila ada perubahan)", a.start_message("x", kind, "m", n))
+
+    def test_login_in_message(self):
+        self.assertIn("@ibrahimmuh26", a.start_message("ibrahimmuh26", "issue_new", "m"))
+
+    def test_decision_conflict_blocks_pr(self):
+        s = "Keputusan: tidak perlu PR. Hanya menjawab.\nTapi saya mengubah berkas."
+        self.assertTrue(a.decision_conflict("issue_new", s, ["spec/a.md"]))
+
+    def test_decision_ok_when_no_changes(self):
+        self.assertFalse(a.decision_conflict("issue_new", "Keputusan: tidak perlu PR.", []))
+
+    def test_need_pr_decision_is_not_a_conflict(self):
+        self.assertFalse(a.decision_conflict("issue_new", "Keputusan: perlu PR. Menulis berkas.", ["a.md"]))
+
+    def test_decision_phrase_variants(self):
+        for s in ("KEPUTUSAN:  TIDAK   PERLU PR", "keputusan: tidak perlu pr"):
+            self.assertTrue(a.decision_conflict("issue_new", s, ["a"]))
+
+    def test_conflict_only_applies_to_fresh_issue(self):
+        s = "Keputusan: tidak perlu PR"
+        self.assertFalse(a.decision_conflict("pr", s, ["a"]))
+        self.assertFalse(a.decision_conflict("issue_with_pr", s, ["a"]))
+
+    def test_none_summary_safe(self):
+        self.assertFalse(a.decision_conflict("issue_new", None, ["a"]))
+
+    def test_prompt_rules_per_kind(self):
+        self.assertIn("analisis dulu", a.scope_rules("issue_new"))
+        self.assertIn("JANGAN mengubah file", a.scope_rules("issue_new"))
+        self.assertIn("Keputusan: perlu PR", a.scope_rules("issue_new"))
+        self.assertIn("PR #18", a.scope_rules("pr", 18))
+        self.assertIn("Jangan menyarankan PR baru", a.scope_rules("pr", 18))
+        self.assertIn("PR #21", a.scope_rules("issue_with_pr", 21))
+        self.assertNotIn("Keputusan:", a.scope_rules("pr", 18))
+
+    def test_build_prompt_contains_scope_for_each_kind(self):
+        info = {"title": "t", "body": "b", "author": {"id": 68177813, "login": "mcpe500", "type": "User"}}
+        e = ev()
+        for kind, n, needle in (("pr", 18, "di dalam PR #18"), ("issue_new", None, "belum punya PR")):
+            p = a.build_prompt(CFG, e, "tanya saja", info, "x", False, kind, n)
+            self.assertIn(needle, p)
+            self.assertIn("=== INSTRUKSI (dari @mcpe500) ===", p)
+
+
 if __name__ == "__main__":
     unittest.main()
