@@ -1,5 +1,9 @@
 # SESSION-001: Bootstrap — Spec System Setup
 
+> ⚠️ **Koreksi (setelah sesi ini):** keputusan dan angka di dokumen ini memakai model yang salah (Qwen3-8B dan
+> Qwen3-27B transformer biasa). Target sebenarnya Qwen3.8-27B (hibrida, 64 layer). Dokumen ini dibiarkan sebagai
+> catatan historis. Versi benar ada di `MASTER.md`, `RFC-001`, dan entri `[CORRECTION]` di `HANDOFF-LOG.md`.
+
 > Tanggal: Bootstrap session (awal proyek)
 > Status: **Complete**
 > Agent: Planning + Execution (Kiro)

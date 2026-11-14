@@ -133,3 +133,39 @@ Daftar open questions yang belum terjawab (update saat resolved):
   → Entri OPEN di atas yang menyebut 4 MCP server digantikan oleh entri ini
   → Status: masih PROPOSED; diskusi di GitHub issues #1..#5
 ```
+
+### Koreksi model — Qwen3.8-27B
+
+```
+[Post-bootstrap] [CORRECTION] Target model dikoreksi: BUKAN "Qwen3-8B dan Qwen3-27B", melainkan Qwen3.8-27B saja
+  → Entri bootstrap di atas yang menyebut Qwen3-8B/Qwen3-27B, 52/36 layer, Q5_K_M untuk 8B, dan
+    "Q4_K_M tidak muat di 16 GB RAM" digantikan oleh entri ini (log append-only, entri lama tidak diubah)
+  → Sebab: riset awal memakai pengetahuan model tanpa sumber. Goal user adalah "qwen 3.8 27B"
+  → Sumber koreksi: model card komunitas (6block, guideboardlabs). Belum kartu resmi Qwen
+  → Dokumen yang diperbarui: MASTER, RFC-001, SPEC-000, SPEC-002, SPEC-004 (design), SPEC-005, roles/*
+```
+
+```
+[Post-bootstrap] [FINDING] Qwen3.8-27B: dense, hibrida. 64 layer = 16 full attention (GQA) + 48 Gated DeltaNet
+  → KV cache ≈ 64 KiB/token (hanya 16 layer). State DeltaNet ukuran tetap, besarnya belum diketahui
+  → Vocab 248,320, embedding dan output tidak di-tie. MTP head tersedia. mmproj terpisah dan opsional
+  → Ukuran file (GiB): Q5_K_M 18.70, Q4_K_M 16.53, IQ4_XS 15.28, Q3_K_M 13.23, IQ3_M 12.56, IQ3_XXS 11.60
+  → Ada quant ~7.68 GiB yang dilaporkan muat penuh di GPU 8 GB (RX 5700 XT, Vulkan) dengan 24.48 tok/s
+```
+
+```
+[Post-bootstrap] [FINDING] Koreksi perhitungan memori: bobot di VRAM tidak perlu ada di RAM
+  → Q4_K_M diperkirakan butuh ~12.5 GiB RAM (bukan "tidak muat"). Semua masih estimasi
+```
+
+```
+[Post-bootstrap] [OPEN] OQ-009 Apakah kernel Gated DeltaNet di llama.cpp CUDA jalan di SM 6.1?  → SPEC-002 Task 5 (risiko terbesar)
+[Post-bootstrap] [OPEN] OQ-010 Kartu resmi Qwen/Qwen3.8-27B: layer, KV heads, head dim, ukuran state DeltaNet?  → SPEC-002 Task 4
+[Post-bootstrap] [OPEN] OQ-011 Bandwidth RAM aktual; single atau dual channel; model CPU?  → SPEC-002 Task 1
+[Post-bootstrap] [OPEN] OQ-012 Apakah MTP speculative decoding jalan di build kita dan berapa percepatannya?  → SPEC-005 Task 6
+[Post-bootstrap] [OPEN] OQ-013 Apakah strategi B (muat penuh ~7.7 GiB) cukup ruang di 1070 Ti dan berapa turun kualitasnya?  → SPEC-005 Task 5
+[Post-bootstrap] [OPEN] OQ-014 Auto-fit layer vs -ngl manual: mana lebih baik?  → SPEC-005 Task 3
+[Post-bootstrap] [OPEN] OQ-015 Apakah IQ-quant cukup cepat di Pascal?  → SPEC-005 Task 4
+[Post-bootstrap] [OPEN] OQ-016 Selisih TPS Vulkan vs CUDA di Pascal?  → SPEC-005 Task 6
+[Post-bootstrap] [RESOLVED] OQ-001, OQ-002, OQ-003 digantikan oleh OQ-010. OQ-004 (KV q4_0) kini rendah prioritas karena KV kecil
+```

@@ -1,35 +1,45 @@
-# Design — SPEC-005: CPU-GPU Offload Strategy
+# Design — SPEC-005: CPU-GPU Offload untuk Qwen3.8-27B
 
-> Spec: SPEC-005 | Status: **Skeleton**
+> Spec: SPEC-005 | Status: **Skeleton (direvisi)**
 
 ---
 
-## Known Architecture (dari RFC-001 dan MASTER.md)
+## Yang Diketahui
 
-### Qwen3-27B Layer Distribution
+Perhitungan lengkap ada di `MASTER.md` (Memory Budget). Ringkas:
 
-| Quant | Total Size | Layer Size | GPU Layers | CPU Layers | Tok/s est. |
-|---|---|---|---|---|---|
-| Q4_K_M | 16.4 GB | ~315 MB | ~22 | ~30 | 2–4 ❌ RAM OOM |
-| Q3_K_M | 13.5 GB | ~260 MB | ~27 | ~25 | 3–6 ⚠️ Viable |
-| Q2_K | 10.4 GB | ~200 MB | ~35 | ~17 | 6–10 ✅ |
+| Quant | Ukuran | Bobot di RAM (est.) | Batas atas TPS, RAM 20 / 40 GB/s |
+|---|---|---|---|
+| Q4_K_M | 16.53 GiB | ~10.0 GiB | ~1.9 / ~3.7 |
+| IQ3_M | 12.56 GiB | ~6.1 GiB | ~3.1 / ~6.1 |
+| IQ3_XXS | 11.60 GiB | ~5.1 GiB | ~3.6 / ~7.3 |
 
-> ⚠️ ASSUMPTION: Layer count Qwen3-27B = 52. Harus diverifikasi dari model card.
-> ⚠️ ASSUMPTION: Layer size estimasi dari total_size/num_layers (uniform). Aktual mungkin bervariasi.
+Bottleneck yang diperkirakan: bandwidth RAM untuk layer di CPU. PCIe tidak menjadi masalah untuk decode
+satu token, karena hanya aktivasi yang melintas.
 
-### Bottleneck Analysis
+> ⚠️ ASSUMPTION: bobot per layer seragam. Layer full attention dan Gated DeltaNet kemungkinan berbeda
+> ukuran, dan embedding/output masing-masing ~4.7% dari backbone. Pakai `gguf tensors` untuk angka nyata.
 
-```
-Decode bottleneck untuk hybrid mode:
-- GPU layers: dibatasi GDDR5 bandwidth (256 GB/s)
-- CPU layers: dibatasi DDR4 bandwidth (~40 GB/s)
-- PCIe transfer (activation per boundary): ~10 KB × 2 = 20 KB per token → negligible
-- BOTTLENECK UTAMA: DDR4 bandwidth untuk CPU layers
-```
+---
+
+## Hal yang Dibandingkan
+
+| Variabel | Pilihan |
+|---|---|
+| Quant | Q4_K_M, IQ4_XS, IQ3_M, Q3_K_M, IQ3_XXS |
+| Offload | auto-fit vs `-ngl` manual |
+| Backend | CUDA vs Vulkan |
+| Speculative | tanpa vs MTP |
+| Memory loading | mmap vs `--no-mmap` |
+
+Gunakan `llama placement` untuk melihat layer mana di GPU atau CPU, dan `bench analyze` untuk melihat
+apakah yang menahan itu bandwidth GPU, CPU, atau PCIe.
+
+---
 
 ## Open Questions
 
-- [ ] Berapa layer count Qwen3-27B yang sebenarnya? → Verifikasi model card
-- [ ] Berapa RAM peak usage aktual untuk Q3_K_M? → Ukur empiris
-- [ ] Apakah `--no-mmap` memberikan speedup yang signifikan vs default mmap?
-- [ ] Apakah ada nilai -ngl optimal selain 27? (mungkin 24 atau 30 lebih baik?)
+- [ ] Apakah kernel Gated DeltaNet berjalan di SM 6.1 (diputuskan di SPEC-002)?
+- [ ] Berapa RAM puncak aktual per quant?
+- [ ] Apakah `--no-mmap` mempercepat dibanding mmap pada RAM 16 GB?
+- [ ] Apakah MTP memberi percepatan nyata saat layer CPU menjadi penahan?

@@ -77,10 +77,10 @@ Setiap spec yang selesai diimplementasikan HARUS bisa di-demo:
 ```bash
 # Minimal demo command yang bisa dijalankan user
 # Contoh untuk SPEC-002:
-./legacy1070qi38 run \
-  --model qwen3-8b-q5_k_m.gguf \
+python tools/legacy.py llama run \
+  --model models/Qwen3.8-27B-Q4_K_M.gguf \
   --prompt "What is a large language model?" \
-  --gpu-layers 99
+  --ctx 2048
 ```
 
 Demo harus:
