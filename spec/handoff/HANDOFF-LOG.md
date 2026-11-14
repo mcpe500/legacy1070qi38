@@ -279,3 +279,14 @@ Daftar open questions yang belum terjawab (update saat resolved):
     $HOME/llama-cpp-turboquant/build/bin/llama-server -m $HOME/models/Qwen3.8-9B-Q4_K_M.gguf -ngl 99 -c 114688 -ub 256 -b 512 --port 8080 --host 0.0.0.0 --metrics --slots -fa auto --cache-type-k iso3 --cache-type-v iso3 --reasoning-budget 0
   → Fork dipindah ke ~/archive/llama-cpp-turboquant-08e025c; ganti path binary saat menghidupkan lagi
 ```
+
+### Uji 27B run-001 (2026-11-14)
+
+```
+[Post-bootstrap] [UPDATE] llama.cpp utama 3549c27 dibangun di ~/llama.cpp/build-cuda (sm_61). Gated DeltaNet 27B jalan di Pascal (OQ-009)
+[Post-bootstrap] [UPDATE] OQ-005/OQ-015: IQ4_XS hybrid 2.29 tok/s (ngl 36), IQ3_XXS 1.15 tok/s (ngl 45). IQ3_XXS lebih lambat walau lebih kecil
+[Post-bootstrap] [UPDATE] OQ-012: MTP di hybrid 1.06x (depth 1), tidak ada percepatan di depth 2-3
+[Post-bootstrap] [CONFLICT] block_count GGUF 27B = 65 (64 + 1 layer MTP), kartu resmi 64 layer. Bukan kesalahan, layer MTP disimpan sebagai blok
+[Post-bootstrap] [FINDING] Build utama gagal memuat Qwen3.8-9B-Q4_K_M.gguf pengguna (expected 442 tensors, got 427). Server 9B tetap harus pakai fork
+  → Lihat spec/research/reports/2026-11-14-27b-run-001.md
+```
