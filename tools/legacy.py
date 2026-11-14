@@ -1113,7 +1113,7 @@ def parse_kld(text):
 
 
 def build_ppl_argv(bin_path, model, text_file, ctx=512, chunks=None, ngl=None, threads=None,
-                   extra=None):
+                   extra=None, kv_type=None):
     _positive("ctx", ctx)
     argv = [bin_path, "-m", model, "-f", text_file, "-c", str(int(ctx))]
     if chunks is not None:
@@ -1125,6 +1125,10 @@ def build_ppl_argv(bin_path, model, text_file, ctx=512, chunks=None, ngl=None, t
     if threads is not None:
         _positive("threads", threads)
         argv += ["-t", str(int(threads))]
+    if kv_type:
+        if kv_type not in KV_TYPE_FACTOR:
+            raise CliError(f"kv_type tidak dikenal: {kv_type}")
+        argv += ["-ctk", kv_type, "-ctv", kv_type]
     return argv + list(extra or [])
 
 
@@ -1594,8 +1598,9 @@ def cmd_quality_ppl(a):
     if not os.path.isfile(a.file):
         raise EnvError(f"berkas teks tidak ditemukan: {a.file}")
     argv = build_ppl_argv(_quality_bin(a, "llama-perplexity"), model, os.path.abspath(a.file),
-                          a.ctx, a.chunks, a.ngl, a.threads)
-    protocol = {"file": os.path.abspath(a.file), "ctx": a.ctx, "chunks": a.chunks, "ngl": a.ngl}
+                          a.ctx, a.chunks, a.ngl, a.threads, kv_type=a.kv_type)
+    protocol = {"file": os.path.abspath(a.file), "ctx": a.ctx, "chunks": a.chunks, "ngl": a.ngl,
+                "kv_type": a.kv_type}
     if a.dry_run:
         return {"dry_run": True, "argv": argv, "protocol": protocol}, EXIT_OK
     with InferenceLock(a.lock_file):
@@ -1613,11 +1618,13 @@ def cmd_quality_kld(a):
         raise EnvError(f"berkas teks tidak ditemukan: {a.file}")
     binp = _quality_bin(a, "llama-perplexity")
     text = os.path.abspath(a.file)
+    # --base-kv-type: KV cache model referensi; --kv-type: KV cache kandidat (mengukur dampak KV quant).
     step1 = build_ppl_argv(binp, base, text, a.ctx, a.chunks, a.ngl, a.threads,
-                           ["--kl-divergence-base", a.kld_file])
+                           ["--kl-divergence-base", a.kld_file], kv_type=a.base_kv_type)
     step2 = build_ppl_argv(binp, cand, text, a.ctx, a.chunks, a.ngl, a.threads,
-                           ["--kl-divergence", "--kl-divergence-base", a.kld_file])
-    protocol = {"file": text, "ctx": a.ctx, "chunks": a.chunks, "ngl": a.ngl, "kld_file": a.kld_file}
+                           ["--kl-divergence", "--kl-divergence-base", a.kld_file], kv_type=a.kv_type)
+    protocol = {"file": text, "ctx": a.ctx, "chunks": a.chunks, "ngl": a.ngl, "kld_file": a.kld_file,
+                "base_kv_type": a.base_kv_type, "kv_type": a.kv_type}
     if a.dry_run:
         return {"dry_run": True, "argv": [step1, step2], "protocol": protocol}, EXIT_OK
     with InferenceLock(a.lock_file):
@@ -1846,6 +1853,7 @@ def build_parser():
     p.add_argument("--file", required=True, help="teks evaluasi, mis. wikitext-2 raw test")
     p.add_argument("--chunks", type=int, default=None, help="batasi jumlah chunk agar cepat")
     p.add_argument("--threads", type=int, default=None)
+    p.add_argument("--kv-type", choices=sorted(KV_TYPE_FACTOR), default=None, help="tipe KV cache (-ctk/-ctv)")
     p = leaf(g, "kld", cmd_quality_kld, "KL divergence kandidat terhadap model referensi")
     _quality_common(p)
     p.add_argument("--base-model", required=True, help="quant referensi (tertinggi yang muat)")
@@ -1853,6 +1861,10 @@ def build_parser():
     p.add_argument("--file", required=True)
     p.add_argument("--chunks", type=int, default=None)
     p.add_argument("--threads", type=int, default=None)
+    p.add_argument("--kv-type", choices=sorted(KV_TYPE_FACTOR), default=None,
+                   help="tipe KV cache kandidat (-ctk/-ctv)")
+    p.add_argument("--base-kv-type", choices=sorted(KV_TYPE_FACTOR), default=None,
+                   help="tipe KV cache referensi")
     p.add_argument("--kld-file", required=True, help="berkas logit referensi (BESAR; lihat docs)")
     p.add_argument("--reuse-base", action="store_true", help="pakai ulang --kld-file yang sudah ada")
     p = leaf(g, "prompts", cmd_quality_prompts, "jalankan set prompt tetap, simpan/bandingkan jawaban")

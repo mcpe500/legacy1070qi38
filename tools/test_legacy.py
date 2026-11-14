@@ -1148,6 +1148,24 @@ class QualityTests(TempDirCase):
         with self.assertRaises(legacy.CliError):
             legacy.build_ppl_argv("/b", "/m", "/t", 512, 0)
 
+    def test_kv_type_reaches_argv(self):
+        argv = legacy.build_ppl_argv("/b/p", "/m", "/t", 512, 2, 0, 2, kv_type="q8_0")
+        self.assertEqual(argv[argv.index("-ctk") + 1], "q8_0")
+        self.assertEqual(argv[argv.index("-ctv") + 1], "q8_0")
+        self.assertNotIn("-ctk", legacy.build_ppl_argv("/b/p", "/m", "/t"))
+        with self.assertRaises(legacy.CliError):
+            legacy.build_ppl_argv("/b/p", "/m", "/t", kv_type="bogus")
+
+    def test_kld_candidate_and_base_kv_types_are_separate(self):
+        m, t = self.write("m.gguf", "x"), self.write("t.txt", "x")
+        code, data, _ = cli_json("quality", "kld", "--base-model", m, "--model", m, "--file", t,
+                                 "--kld-file", self.path("k.bin"), "--kv-type", "q8_0", "--dry-run",
+                                 "--bin-dir", "x")
+        base_argv, cand_argv = data["argv"]
+        self.assertNotIn("-ctk", base_argv)
+        self.assertEqual(cand_argv[cand_argv.index("-ctk") + 1], "q8_0")
+        self.assertEqual(data["protocol"]["kv_type"], "q8_0")
+
     def test_dry_run_commands(self):
         m, t = self.write("m.gguf", "x"), self.write("t.txt", "x")
         code, data, _ = cli_json("quality", "ppl", "--model", m, "--file", t, "--dry-run",
