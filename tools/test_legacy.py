@@ -1052,6 +1052,22 @@ class GpuClockTests(unittest.TestCase):
         self.assertEqual(s["throttle_reasons_seen"], ["gpu_idle", "sw_power_cap"])
 
 
+class RamSampleTests(unittest.TestCase):
+    def test_summary_reports_lowest_ram_and_peak_swap(self):
+        s = legacy.summarize_samples([
+            {"ram_available_gib": 6.0, "swap_used_gib": 0.1},
+            {"ram_available_gib": 2.5, "swap_used_gib": 0.9},
+            {"ram_available_gib": 4.0, "swap_used_gib": 0.4},
+        ])
+        self.assertEqual(s["min_ram_available_gib"], 2.5)
+        self.assertEqual(s["peak_swap_used_gib"], 0.9)
+
+    def test_summary_without_ram_fields(self):
+        s = legacy.summarize_samples([{"util_pct": 10}])
+        self.assertIsNone(s["min_ram_available_gib"])
+        self.assertIsNone(s["peak_swap_used_gib"])
+
+
 class MembwTests(unittest.TestCase):
     def test_threads_validated_and_reported(self):
         r = legacy.measure_membw(16, 1, 2)

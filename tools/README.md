@@ -20,7 +20,7 @@ python tools/legacy.py budget compare --file-gib 16.53 --measured-ram-gib 12.5 -
 python tools/legacy.py hw gpu --json
 python tools/legacy.py hw headroom --file-gib 16.53        # exit 1 bila tidak cukup
 python tools/legacy.py hw membw                            # coba 1,2,4,.. thread; ambil terbaik
-python tools/legacy.py hw sample --count 20 --interval 1   # puncak VRAM/suhu/daya + clock + throttle
+python tools/legacy.py hw sample --count 20 --interval 1   # puncak VRAM/suhu/daya, clock, throttle, RAM terendah, swap
 
 # Header GGUF (tidak memuat bobot)
 python tools/legacy.py gguf inspect models/Qwen3.8-27B-Q4_K_M.gguf --json

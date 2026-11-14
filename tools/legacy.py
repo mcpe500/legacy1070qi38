@@ -458,9 +458,13 @@ def summarize_samples(samples):
     busy_clocks = [s["sm_clock_mhz"] for s in samples
                    if s.get("sm_clock_mhz") is not None and (s.get("util_pct") or 0) >= 50]
     reasons = sorted({r for s in samples for r in (s.get("throttle_reasons") or [])})
+    avail = [s["ram_available_gib"] for s in samples if s.get("ram_available_gib") is not None]
+    swap = [s["swap_used_gib"] for s in samples if s.get("swap_used_gib") is not None]
     limited = sum(1 for s in samples if s.get("throttle_limiting"))
     return {
         "samples": len(samples),
+        "min_ram_available_gib": min(avail) if avail else None,
+        "peak_swap_used_gib": max(swap) if swap else None,
         "peak_sm_clock_mhz": peak("sm_clock_mhz"),
         "min_sm_clock_mhz_when_busy": min(busy_clocks) if busy_clocks else None,
         "throttle_reasons_seen": reasons,
@@ -1475,6 +1479,10 @@ def cmd_hw_sample(a):
         samples.append({k: g.get(k) for k in ("vram_used_mib", "temp_c", "power_w", "util_pct",
                                               "sm_clock_mhz", "throttle_reasons",
                                               "throttle_limiting")})
+        if not a.no_ram:
+            ram = read_ram()
+            samples[-1]["ram_available_gib"] = ram["available_gib"]
+            samples[-1]["swap_used_gib"] = ram["swap_used_gib"]
         if i + 1 < a.count:
             time.sleep(a.interval)
     res = summarize_samples(samples)
@@ -1781,9 +1789,10 @@ def build_parser():
     p.add_argument("--threads", type=int, default=0, help="0 = coba 1,2,4,.. thread dan ambil terbaik")
     p = leaf(g, "faults", cmd_hw_faults, "page fault berat dan swap")
     p.add_argument("--seconds", type=float, default=5.0)
-    p = leaf(g, "sample", cmd_hw_sample, "sampling puncak VRAM/suhu/power")
+    p = leaf(g, "sample", cmd_hw_sample, "sampling puncak VRAM/suhu/power/clock + RAM terendah dan swap")
     p.add_argument("--count", type=int, default=10)
     p.add_argument("--interval", type=float, default=1.0)
+    p.add_argument("--no-ram", action="store_true", help="jangan catat RAM tersedia dan swap")
     p = leaf(g, "headroom", cmd_hw_headroom, "go/no-go (exit 1 bila tidak cukup)")
     p.add_argument("--file-gib", type=float)
     p.add_argument("--ctx", type=int, default=4096)
