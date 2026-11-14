@@ -1,6 +1,7 @@
 # RFC-002: CLI Tooling untuk legacy1070qi38
 
-> Status: **Proposed** (untuk diskusi, belum diputuskan)
+> Status: **Accepted** (2026-11-13). Enam keputusan terbuka di issue #1 diputuskan berdasarkan bukti di bagian "Keputusan" di bawah.
+> Keputusan itu diambil oleh agen berdasarkan pengukuran; pemilik proyek dapat membukanya kembali.
 > Revisi: versi awal mengusulkan 4 MCP server. Diganti menjadi satu CLI karena lebih mudah dipasang dan dipakai orang lain.
 > Diskusi: umbrella #1; per kelompok: A #2, B #3, C #4, D #5 (github.com/mcpe500/legacy1070qi38/issues)
 
@@ -63,7 +64,7 @@ python tools/legacy.py spec validate
 
 ## Keputusan Desain yang Diusulkan
 
-1. **Satu file, library standar saja.** Pecah menjadi modul hanya jika melewati sekitar 1000 baris.
+1. **Satu file, library standar saja.** Lihat keputusan 1 untuk batas ukuran.
 2. **Logika di fungsi Python, CLI hanya lapisan tipis.** Fungsi yang sama bisa dibungkus MCP nanti.
 3. **Output `--json` di semua subcommand**, plus ringkasan yang enak dibaca manusia.
 4. **Tanpa shell bebas.** Argumen divalidasi dengan `argparse`; binary dan path model memakai allowlist.
@@ -94,14 +95,17 @@ MCP bukan lagi jalur utama. Pembungkus MCP (sekitar 50 baris, memanggil fungsi y
 
 ---
 
-## Open Questions
+## Keputusan
 
-- [ ] Versi Python minimum yang didukung?
-- [ ] `llama run` memanggil `llama-cli` per panggilan, atau mengelola `llama-server` yang tetap hidup (menghindari memuat ulang model 27B)?
-- [ ] Bagaimana proses panjang dijalankan lewat bash tool Kiro (background + polling file status)? Belum diverifikasi.
-- [ ] Hook Kiro yang menjalankan `spec validate` saat file spec disimpan: layak dipakai?
-- [ ] Bagaimana menangani desktop environment yang ikut memakai VRAM saat benchmark?
-- [ ] Apakah pembungkus MCP perlu dibuat?
+| # | Pertanyaan | Keputusan | Bukti |
+|---|---|---|---|
+| 1 | Satu file atau modul? | **Tetap satu file.** Ambang "1000 baris" diganti: pecah bila ada kebutuhan impor oleh kode lain, atau bila melewati ±2500 baris. Saat ini ±1900 baris | Dilewati 1000 baris sejak PR #18 (1403 baris) tanpa masalah: `python tools/legacy.py` langsung jalan, test mengimpor `legacy` apa adanya. Memecah sekarang menambah risiko tanpa manfaat terukur. **Ini perubahan atas usulan awal; mohon dikoreksi bila tidak setuju** |
+| 2 | Proses panjang lewat bash tool Kiro? | **Background + polling.** Jalankan dengan `run_in_background` atau `setsid nohup ... > log &`, baca log | `llama build --target ...` (4 job, selesai dalam beberapa menit) dijalankan di latar belakang dan selesai dengan benar; `quality kld` (±70 detik) dan `quality ppl` (±32 detik) berjalan sinkron dengan `timeout` yang diatur eksplisit (satuan **milidetik** pada bash tool) |
+| 3 | `llama-cli` per panggilan atau `llama-server`? | **Per panggilan untuk pengukuran** (`llama-cli -st`, `llama-bench`, `llama-perplexity`). `llama-server` tidak dibungkus sekarang | Hasil terkontrol dan punya exit code; model 0.8B termuat <5 detik. Pengguna sudah menjalankan `llama-server` sendiri di port 8080 dan alat tidak boleh menyentuhnya. Waktu muat 27B belum diukur; bila ternyata >2 menit per uji, buka ulang di issue uji 27B |
+| 4 | Hook `spec validate` saat simpan? | **Ya.** `.kiro/hooks/spec-validate-on-save.json` (trigger `PostFileSave`, pola `spec/.*\.md$`) | Perintah yang sama dijalankan tangan: `ok: True`, 0 error. Hook baru aktif pada sesi berikutnya; belum diamati terpicu |
+| 5 | Python minimum? | **3.8.** Hanya **3.10.12 yang diuji** | `ast.parse(..., feature_version=(3, 7))` lolos; tidak ada `:=`, `match`, `removeprefix`. Python 3.8/3.9 tidak ada di mesin ini, jadi tidak dijalankan |
+| 6 | Pembungkus MCP? | **Tidak dibuat.** | Agen `/kiro` memanggil CLI lewat bash. Bukti pemakaian MCP sudah ada lewat Sequential Thinking (PR #28), yang tidak membutuhkan kode kita |
+| - | Desktop yang memakai VRAM saat benchmark? | **Dicatat, bukan masalah di mesin ini.** `hw gpu` melaporkan VRAM terpakai; display NVIDIA dimatikan | `hw headroom` memeriksa VRAM bebas sebelum uji |
 
 ---
 

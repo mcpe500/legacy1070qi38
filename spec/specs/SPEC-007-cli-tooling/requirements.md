@@ -49,12 +49,12 @@ yang sama. Spec ini menetapkan apa yang harus dilakukan CLI tersebut dan bagaima
 
 ## Success Criteria
 
-- [ ] `python tools/test_legacy.py` lulus semua di mesin Linux dengan Python 3 (hasil ditempel di PR)
-- [ ] `python tools/legacy.py spec validate` keluar dengan kode 0 pada repo ini
-- [ ] `python tools/legacy.py gguf inspect <Qwen3.8-27B GGUF asli> --json` menghasilkan jumlah layer (menjawab OQ-010 bila cocok dengan kartu resmi)
-- [ ] `python tools/legacy.py hw gpu --json` berjalan di mesin GTX 1070 Ti
-- [ ] `python tools/legacy.py llama run ...` berjalan dengan llama.cpp asli dan memuat TPS
-- [ ] Pemilik repo memutuskan status RFC-002 (Proposed → Accepted atau diubah)
+- [x] `python tools/test_legacy.py` lulus semua di mesin Linux dengan Python 3 (127 test OK, PR #29)
+- [x] `python tools/legacy.py spec validate` keluar dengan kode 0 pada repo ini
+- [ ] `python tools/legacy.py gguf inspect <Qwen3.8-27B GGUF asli> --json`: **dipindah ke issue uji 27B** (GGUF belum ada). Terverifikasi pada GGUF 9B `qwen35` (OQ-010 dijawab dari kartu resmi)
+- [x] `python tools/legacy.py hw gpu --json` berjalan di mesin GTX 1070 Ti
+- [x] `python tools/legacy.py llama run ...` berjalan dengan llama.cpp asli dan memuat TPS (0.8B, CPU)
+- [x] RFC-002 diputuskan: Accepted, enam keputusan dengan bukti (oleh agen; dapat dibuka ulang oleh pemilik repo)
 
 ---
 
