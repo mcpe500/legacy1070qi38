@@ -232,3 +232,14 @@ Daftar open questions yang belum terjawab (update saat resolved):
   → Lihat: spec/specs/RFC-003-github-agent-trigger.md (Revisi 2)
 [Post-bootstrap] [FINDING] Komentar pada baris kode (tab Files changed) dan isi review tidak dipantau; hanya komentar di tab Conversation
 ```
+
+### Sequential Thinking MCP untuk agent /kiro
+
+```
+[Post-bootstrap] [DECISION] Agent /kiro wajib berpikir bertahap (sequentialthinking MCP) sebelum bertindak
+  → Terpasang: Node v24.22.3 (SHA-256 cocok) dan @modelcontextprotocol/server-sequential-thinking 2.1.1, 0 kerentanan
+  → Didaftarkan di profil agent bot, bukan di ~/.kiro/settings (Kiro melarang agent menulis ke sana)
+  → Uji nyata: tool dipanggil 2 kali, jawaban memuat "Pemahaman", keputusan "tidak perlu PR" tanpa PR
+  → Lihat: spec/specs/RFC-003-github-agent-trigger.md (Revisi 3), tools/agent/README.md
+[Post-bootstrap] [FINDING] Kiro menolak fs_write ke ~/.kiro/settings/mcp.json (aturan bawaan). Pendaftaran global dilakukan pemilik repo
+```

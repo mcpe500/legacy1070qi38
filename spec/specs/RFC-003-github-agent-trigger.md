@@ -72,6 +72,22 @@ Pengaman: bila agent menulis "Keputusan: tidak perlu PR" tetapi meninggalkan per
 
 Diuji nyata (artefak sudah ditutup): pertanyaan di issue menghasilkan balasan tanpa PR; permintaan perubahan di issue menghasilkan satu PR; di dalam PR, satu pertanyaan dijawab tanpa ubah file dan satu permintaan perubahan masuk ke branch PR yang sama.
 
+## Revisi 3: berpikir bertahap dengan Sequential Thinking MCP
+
+![Alur berpikir bertahap agent /kiro](assets/rfc-003-sequential-thinking.svg)
+
+| Aspek | Keputusan |
+|---|---|
+| Pendaftaran | Di profil agent bot (`mcpServers`), bukan `~/.kiro/settings/mcp.json`. Lingkupnya hanya agent bot |
+| Izin | `capability: mcp`, `match: sequential-thinking/*`, allow. Tidak ada MCP lain |
+| Versi | Dikunci 2.1.1, dipasang lokal dengan `--ignore-scripts`; bukan `npx -y` yang mengunduh versi terbaru tiap run |
+| Kegagalan | `--require-mcp-startup`: run gagal jelas bila server tidak naik |
+| Prompt | Wajib berpikir dulu, lalu bagian "Pemahaman" sebelum "Keputusan" |
+
+Risiko: server berjalan di luar sandbox bwrap sebagai proses Anda. Ia hanya menyimpan riwayat pikiran di memori dan tidak
+menyentuh file atau jaringan (dari kode dan README paketnya, **bukan** hasil audit kode menyeluruh). Paket kehilangan berkas
+`LICENSE` padahal `package.json` menyebutnya; README paket menyatakan MIT.
+
 ## Yang belum terjamin
 
 - **Prompt injection lewat web**: agent boleh `web_fetch`. Halaman web berbahaya bisa membujuknya menulis isi tertentu ke file atau balasan. Mitigasi: tanpa shell, PR perlu review, repo ini publik.

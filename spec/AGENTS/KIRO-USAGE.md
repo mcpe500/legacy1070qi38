@@ -26,8 +26,8 @@ menjawab syarat submission: *"Name each product you used and what it does in you
 | Hooks | ❌ Belum | — |
 | Steering files (`.kiro/steering/`) | ❌ Belum | — |
 | Skills (`.kiro/skills/`) | ❌ Belum | — |
-| MCP servers | ❌ Belum | — |
-| Property-based testing (PBT) | ❌ Belum | Belum ada kode yang diuji |
+| MCP servers | ✅ Ya | Sequential Thinking MCP (`@modelcontextprotocol/server-sequential-thinking` 2.1.1) dipakai agent GitHub `/kiro` untuk menguraikan maksud permintaan sebelum bertindak |
+| Property-based testing (PBT) | ⚠️ Sebagian | `BudgetProperties` di `tools/test_legacy.py`: properti diuji pada 300 kasus acak (seed tetap), **tanpa library PBT** seperti Hypothesis |
 | Powers | ❌ Belum | — |
 
 ---
@@ -99,6 +99,20 @@ Pelajaran: klaim faktual wajib bersumber. Sumber yang dipakai adalah model card 
   penulisan ke `/tmp` tidak terjadi, perintah dari ID yang sah menghasilkan balasan dan PR.
 - Kode dan aturan ditulis dengan bantuan Kiro (sesi ini). Uji coba memakai issue #13 sampai #15 dan PR #16, #17 (sudah ditutup).
 
+### 9. MCP: Sequential Thinking untuk agent `/kiro`
+Server MCP resmi `@modelcontextprotocol/server-sequential-thinking` (versi dikunci 2.1.1) dipasang lewat
+`tools/agent/install-sequential-thinking.sh` dan didaftarkan di profil agent bot (`mcpServers`), bukan di
+konfigurasi global. Agent diwajibkan memakainya sebelum bertindak, lalu menulis bagian "Pemahaman" di jawabannya.
+
+![Alur berpikir bertahap agent /kiro](../specs/assets/rfc-003-sequential-thinking.svg)
+
+- **Bukti uji:** agent memuat dan memanggil tool dua kali tanpa meminta izin (`thoughtHistoryLength` = 2); satu
+  perintah `/kiro` nyata di issue menghasilkan jawaban dengan "Pemahaman" dan keputusan "tidak perlu PR" tanpa PR.
+- **Pengaman:** izin `mcp` hanya untuk `sequential-thinking/*`; `--require-mcp-startup` membuat run gagal jelas bila
+  server tidak naik, bukan diam-diam berjalan tanpa tool itu.
+- **Catatan:** Kiro melarang agent menulis ke `~/.kiro/settings/`, jadi pendaftaran global untuk sesi interaktif
+  dilakukan manual dengan `kiro-cli mcp add` (perintahnya dicetak oleh skrip pemasangan).
+
 ---
 
 ## Belum Digunakan (rencana)
@@ -108,9 +122,8 @@ Pelajaran: klaim faktual wajib bersumber. Sumber yang dipakai adalah model card 
 - **Steering files**: kandidat — memindahkan hardware constraints dari `MASTER.md`
   ke `.kiro/steering/` agar otomatis dimuat di setiap sesi.
 - **PBT**: kandidat saat ada kode, mis. properti "estimasi VRAM selalu ≥ ukuran weights".
-- **MCP kustom**: sekarang opsional. Jalur utama adalah CLI `tools/legacy.py` (RFC-002,
-  status Proposed, belum dibuat). Pembungkus MCP baru dibuat jika diperlukan. Lihat
-  `spec/specs/RFC-002-cli-tooling.md` dan diskusi di GitHub issue #1.
+- **MCP kustom (buatan sendiri)**: opsional. Jalur utama adalah CLI `tools/legacy.py` (RFC-002; sudah ada,
+  lihat PR #18). Pembungkus MCP baru dibuat jika diperlukan. Diskusi di GitHub issue #1.
 - **Powers / Skills**: skills direncanakan (`vram-budget`, `run-benchmark`, `update-handoff`);
   powers belum ada kebutuhan konkret.
 
