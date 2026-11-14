@@ -125,3 +125,11 @@ Daftar open questions yang belum terjawab (update saat resolved):
   → Diskusi: GitHub issues #1 (umbrella), #2 (A), #3 (B), #4 (C), #5 (D)
   → Pertanyaan kunci: timeout tool call di Kiro, llama-cli vs llama-server, 1 vs 4 server
 ```
+
+```
+[Post-bootstrap] [DECISION] RFC-002 direvisi: 4 MCP server diganti satu CLI (tools/legacy.py)
+  → Alasan: lebih mudah dipasang dan dipakai orang lain; MCP menjadi pembungkus opsional
+  → File RFC diganti nama: RFC-002-custom-mcp-servers.md → RFC-002-cli-tooling.md
+  → Entri OPEN di atas yang menyebut 4 MCP server digantikan oleh entri ini
+  → Status: masih PROPOSED; diskusi di GitHub issues #1..#5
+```

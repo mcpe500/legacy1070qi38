@@ -82,9 +82,9 @@ Kiro. Tambahan khas proyek ini (bukan bawaan Kiro): RFC untuk keputusan arsitekt
 - **Steering files**: kandidat — memindahkan hardware constraints dari `MASTER.md`
   ke `.kiro/steering/` agar otomatis dimuat di setiap sesi.
 - **PBT**: kandidat saat ada kode, mis. properti "estimasi VRAM selalu ≥ ukuran weights".
-- **MCP kustom**: direncanakan 4 server (`legacy-budget`, `legacy-hw`, `legacy-llama`,
-  `legacy-spec`). Status: Proposed, belum dibuat. Lihat `spec/specs/RFC-002-custom-mcp-servers.md`
-  dan diskusi di GitHub issue #1.
+- **MCP kustom**: sekarang opsional. Jalur utama adalah CLI `tools/legacy.py` (RFC-002,
+  status Proposed, belum dibuat). Pembungkus MCP baru dibuat jika diperlukan. Lihat
+  `spec/specs/RFC-002-cli-tooling.md` dan diskusi di GitHub issue #1.
 - **Powers / Skills**: skills direncanakan (`vram-budget`, `run-benchmark`, `update-handoff`);
   powers belum ada kebutuhan konkret.
 
