@@ -49,7 +49,7 @@ yang sama. Spec ini menetapkan apa yang harus dilakukan CLI tersebut dan bagaima
 
 ## Success Criteria
 
-- [x] `python tools/test_legacy.py` lulus semua di mesin Linux dengan Python 3 (123 test OK, PR #29)
+- [x] `python tools/test_legacy.py` lulus semua di mesin Linux dengan Python 3 (127 test OK, PR #29)
 - [x] `python tools/legacy.py spec validate` keluar dengan kode 0 pada repo ini
 - [ ] `python tools/legacy.py gguf inspect <Qwen3.8-27B GGUF asli> --json`: **dipindah ke issue uji 27B** (GGUF belum ada). Terverifikasi pada GGUF 9B `qwen35` (OQ-010 dijawab dari kartu resmi)
 - [x] `python tools/legacy.py hw gpu --json` berjalan di mesin GTX 1070 Ti
