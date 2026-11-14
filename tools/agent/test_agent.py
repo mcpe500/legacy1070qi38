@@ -294,5 +294,88 @@ class Intent(unittest.TestCase):
             self.assertIn("=== INSTRUKSI (dari @mcpe500) ===", p)
 
 
+class SequentialThinking(unittest.TestCase):
+    def cfg(self, node=True, entry=True):
+        d = tempfile.mkdtemp()
+        n, e = pathlib.Path(d) / "node", pathlib.Path(d) / "index.js"
+        if node:
+            n.write_text("x")
+        if entry:
+            e.write_text("x")
+        return {**CFG, "sequential_thinking": {"server_name": "sequential-thinking", "node": str(n), "entry": str(e)}}
+
+    def test_ready_only_when_both_files_exist(self):
+        self.assertTrue(a.sequential_ready(self.cfg()))
+        self.assertFalse(a.sequential_ready(self.cfg(node=False)))
+        self.assertFalse(a.sequential_ready(self.cfg(entry=False)))
+
+    def test_not_configured_means_not_ready(self):
+        c = {k: v for k, v in CFG.items() if k != "sequential_thinking"}
+        self.assertFalse(a.sequential_ready(c))
+        self.assertIsNone(a.sequential_paths(c))
+
+    def test_home_is_expanded(self):
+        sp = a.sequential_paths(CFG)
+        self.assertFalse(sp["node"].startswith("~"))
+        self.assertFalse(sp["entry"].startswith("~"))
+
+    def test_profile_registers_mcp_when_ready(self):
+        for shell in (False, True):
+            p = a.profile(self.cfg(), shell)
+            self.assertIn("sequential-thinking", p["mcpServers"])
+            self.assertIn("@sequential-thinking", p["tools"])
+            self.assertIn({"capability": "mcp", "match": ["sequential-thinking/*"], "effect": "allow"},
+                          p["permissions"]["rules"])
+            self.assertEqual(p["mcpServers"]["sequential-thinking"]["env"], {"DISABLE_THOUGHT_LOGGING": "true"})
+
+    def test_profile_without_mcp_when_not_ready(self):
+        p = a.profile(self.cfg(entry=False), False)
+        self.assertNotIn("mcpServers", p)
+        self.assertNotIn("@sequential-thinking", p["tools"])
+        self.assertFalse([r for r in p["permissions"]["rules"] if r["capability"] == "mcp"])
+
+    def test_mcp_permission_is_scoped_to_that_server_only(self):
+        rules = [r for r in a.profile(self.cfg(), False)["permissions"]["rules"] if r["capability"] == "mcp"]
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0]["match"], ["sequential-thinking/*"])
+
+    def test_shell_still_denied_in_noshell_profile(self):
+        rules = a.profile(self.cfg(), False)["permissions"]["rules"]
+        self.assertIn({"capability": "shell", "effect": "deny"}, rules)
+
+    def test_thinking_rules_ready(self):
+        t = a.thinking_rules(True, "mcpe500")
+        self.assertIn("sequentialthinking", t)
+        self.assertIn("@mcpe500", t)
+        self.assertIn("Pemahaman", t)
+        self.assertIn("perlu mengubah", t)
+
+    def test_thinking_rules_not_ready_says_so(self):
+        t = a.thinking_rules(False, "mcpe500")
+        self.assertIn("TIDAK tersedia", t)
+        self.assertNotIn("Pemahaman", t)
+
+    def test_prompt_includes_thinking_rule(self):
+        info = {"title": "t", "body": "b", "author": {"id": 68177813, "login": "mcpe500", "type": "User"}}
+        ready = a.build_prompt(self.cfg(), ev(), "x", info, "d", False)
+        notready = a.build_prompt(self.cfg(entry=False), ev(), "x", info, "d", False)
+        self.assertIn("Pemahaman", ready)
+        self.assertIn("TIDAK tersedia", notready)
+
+    def test_prompt_keeps_injection_boundary(self):
+        info = {"title": "t", "body": "b", "author": STRANGER}
+        p = a.build_prompt(self.cfg(), ev(), "x", info, "d", False)
+        self.assertIn("sengaja tidak diberikan", p)
+        self.assertIn("=== INSTRUKSI (dari @mcpe500) ===", p)
+
+    def test_install_script_pins_versions(self):
+        src = (pathlib.Path(a.HERE) / "install-sequential-thinking.sh").read_text()
+        self.assertIn("--ignore-scripts", src)
+        self.assertIn("sha256sum -c", src)
+        self.assertIn('NODE_VERSION="${NODE_VERSION:-v24', src)
+        self.assertRegex(src, r'MCP_VERSION="\$\{MCP_VERSION:-\d+\.\d+\.\d+\}"')
+        self.assertNotIn("sudo ", src.replace("tanpa sudo", "").replace("Tanpa sudo", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

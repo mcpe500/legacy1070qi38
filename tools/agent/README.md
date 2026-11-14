@@ -42,6 +42,26 @@ Agar berjalan di latar belakang: `nohup python3 tools/agent/kiro_gh_agent.py run
 
 Komentar yang sudah diedit sengaja diabaikan. Bila perlu mengubah perintah, tulis komentar baru.
 
+## Berpikir bertahap (Sequential Thinking MCP)
+
+Agent diwajibkan memakai tool `sequentialthinking` untuk menguraikan maksud permintaan sebelum bertindak, lalu
+menulis bagian **Pemahaman** (maks 3 baris) di jawabannya agar Anda bisa memastikan maksudnya benar.
+
+![Alur berpikir bertahap](../../spec/specs/assets/rfc-003-sequential-thinking.svg)
+
+```bash
+tools/agent/install-sequential-thinking.sh                        # Node 24 + paket MCP (versi dikunci), tanpa sudo
+python3 tools/agent/kiro_gh_agent.py install-agent --force        # daftarkan ke profil agent bot
+```
+
+| Hal | Isi |
+|---|---|
+| Yang dipasang | Node.js 24 di `~/.local/opt` (checksum SHA-256 diverifikasi) dan paket di `~/.local/share/kiro-mcp` |
+| Jalur di `config.json` | Kunci `sequential_thinking` (`node`, `entry`). Bila tidak ditemukan, agent berjalan tanpa tool itu dan mengatakannya |
+| Bila server gagal naik | Run gagal dengan jelas (`--require-mcp-startup`), tidak diam-diam tanpa berpikir |
+| Biaya | Beberapa pemanggilan tool tambahan per run, jadi sedikit lebih lama dan lebih banyak kredit |
+| Sesi Kiro interaktif Anda | Kiro melarang agent menulis ke `~/.kiro/settings/`. Jalankan sendiri `kiro-cli mcp add ...` (dicetak di akhir skrip pemasangan) |
+
 ## Mode shell (untuk menjalankan test)
 
 Default-nya **tanpa shell**: agent bisa membaca, menulis, dan mencari di web, tapi tidak bisa menjalankan test.
@@ -68,7 +88,7 @@ Bila `allow_shell` true tapi `bwrap` tidak ada, skrip otomatis kembali ke mode t
 |---|---|
 | `kiro_gh_agent.py` | Skrip utama (hanya library standar) |
 | `config.json` | Daftar ID, batas, path terlindungi |
-| `test_agent.py` | 61 unit test: filter keamanan, PR tunggal, validasi SVG, niat per tempat komentar: `cd tools/agent && python3 -m unittest` |
+| `test_agent.py` | 73 unit test: filter keamanan, PR tunggal, validasi SVG, niat per tempat komentar, Sequential Thinking: `cd tools/agent && python3 -m unittest` |
 
 Status dan log ada di `~/.kiro-agent/` (state.json, logs/). Worktree sementara di `~/.kiro-agent-work/`.
 Agent dilarang membaca folder status itu.
