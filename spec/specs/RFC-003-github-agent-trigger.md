@@ -36,7 +36,25 @@ Perubahan file dikirim sebagai PR, tidak pernah langsung ke `main`.
 | Agent menulis di luar worktree | Izin menulis hanya `./**`; selain itu "ask", yang ditolak pada mode non-interaktif | Uji nyata: `/tmp` tidak dibuat |
 | Push ke `main` | Skrip hanya push ke branch `kiro/...`; branch protection di `main` | Branch protection: lihat catatan |
 | Menyalahgunakan kuota | 12 run/jam, timeout 30 menit | Unit test untuk pembatas |
+| Agent menyelipkan script di SVG | `svg_error` menolak `<script>`, event handler, `foreignObject`, entity | Unit test |
 | Mention massal lewat keluaran agent | `@` dinetralkan di semua komentar dan PR | Unit test |
+
+## Revisi: satu PR per issue, SVG di deskripsi
+
+![Sebelum dan sesudah: perintah lanjutan menambah ke PR yang ada](assets/rfc-003-single-pr-flow.svg)
+
+**Masalah yang ditemukan:** komentar `/kiro` di issue #1 yang meminta "tambahkan SVG di PR 18" membuat PR #19 terpisah.
+Skrip selalu membuat branch baru dari `main` untuk perintah di issue, sehingga permintaan lanjutan menjadi PR sendiri.
+
+| Perubahan | Cara |
+|---|---|
+| Perintah lanjutan menambah ke PR yang ada | Skrip mencari PR terbuka dari branch `kiro/issue-N[-...]` milik repo ini (bukan fork) dan memakai branch itu. PR tertinggi menang bila ada beberapa |
+| SVG disematkan otomatis | Tautan memakai SHA commit, bukan branch, supaya tidak putus setelah branch dihapus |
+| SVG divalidasi sebelum commit | XML valid; ditolak bila berisi `<script>`, event handler, `foreignObject`, atau entity; maksimum 500 KB |
+| Peringatan tata letak | Perkiraan lebar teks terhadap kotak dan kanvas. Hanya peringatan, bukan penghalang |
+| Peringatan PR tanpa visual | PR dengan 2 berkas atau lebih tanpa SVG diberi catatan |
+
+Diuji nyata: satu issue, dua perintah `/kiro` berurutan menghasilkan satu PR dengan tiga berkas dan SVG tampil di deskripsi (issue dan PR uji sudah ditutup).
 
 ## Yang belum terjamin
 
