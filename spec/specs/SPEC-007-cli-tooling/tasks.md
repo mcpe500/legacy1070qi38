@@ -1,6 +1,6 @@
 # Tasks — CLI Tooling (`tools/legacy.py`)
 
-> Spec: SPEC-007 | Status: **Done untuk alat** (123 test unit + 3 test kontrak binary asli lulus). Uji pada GGUF 27B dan GPU dipindah ke issue uji 27B
+> Spec: SPEC-007 | Status: **Done untuk alat** (127 test unit + 3 test kontrak binary asli lulus). Uji pada GGUF 27B dan GPU dipindah ke issue uji 27B
 > Dependencies: RFC-002 (Accepted)
 > Blocks: SPEC-002 Task 4, SPEC-006
 
