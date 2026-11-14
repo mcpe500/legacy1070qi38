@@ -13,10 +13,20 @@
   "allow_shell": false,
   "agent_shell": "legacy-bot",
   "agent_noshell": "legacy-bot-noshell",
-  "protected_paths": ["tools/agent/", ".github/", ".kiro/", ".git/"],
+  "protected_paths": [
+    "tools/agent/",
+    ".github/",
+    ".kiro/",
+    ".git/"
+  ],
   "max_file_bytes": 5000000,
   "max_comment_chars": 6000,
   "max_instruction_chars": 8000,
   "git_author_name": "mcpe500",
-  "git_author_email": "68177813+mcpe500@users.noreply.github.com"
+  "git_author_email": "68177813+mcpe500@users.noreply.github.com",
+  "sequential_thinking": {
+    "server_name": "sequential-thinking",
+    "node": "~/.local/opt/node-v24/bin/node",
+    "entry": "~/.local/share/kiro-mcp/sequential-thinking/node_modules/@modelcontextprotocol/server-sequential-thinking/dist/index.js"
+  }
 }
