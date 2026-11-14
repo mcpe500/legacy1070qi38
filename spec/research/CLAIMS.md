@@ -89,6 +89,7 @@ yang memakai arsitektur `qwen35` (lihat C-20), tetapi itu bukan Qwen3.8-27B dan 
 | C-44 | Berkas logit KLD ≈ 0.118 GiB per chunk (ctx 512, vocab 248.320); 100 chunk ≈ 11.8 GiB | uji nyata (0.472 GiB / 4 chunk) | Terukur | ✅ untuk vocab ini |
 | C-47 | Dampak KV quant pada model `qwen35` 0.8B (IQ4_XS, wikitext-2 test, 4 chunk, ctx 512, KLD terhadap KV f16): q8_0 mean KLD 0.0038 (same-top-p 96.9%); q4_0 0.0200 (91.5%) | `quality kld --kv-type`, PR #29 | Terukur | ⚠ Model kecil, 6 layer attention, konteks pendek; **tidak berlaku otomatis untuk 27B** (OQ-004) |
 | C-48 | KLD kuantisasi bobot sebagai pembanding skala: IQ4_XS -> Q3_K_S (requant, hanya uji pipeline) mean KLD 0.348, same-top-p 70.0% | `quality kld`, PR #29 | Terukur | ⚠ Requant dari quant lain; **bukan** klaim kualitas Q3_K_S |
+| C-49 | Format log pemuatan: `offloaded %d/%d layers to GPU` dan `<buffer> model buffer size = X MiB` | `src/llama-model.cpp:7752` dan `:7758` (fork `08e025c`); log CPU asli dari `llama-perplexity` | Kode + Terukur | ⚠ Log dengan layer di GPU belum diuji (VRAM penuh); regex cocok dengan string sumber |
 | C-45 | `llama-perplexity` menjalankan 4 sekuens paralel pada ctx 512 (KV 24 MiB = 4 x 6 MiB) | log nyata | Terukur | ✅ |
 
 ## Cara memakai
