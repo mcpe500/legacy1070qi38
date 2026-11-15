@@ -302,3 +302,7 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [UPDATE] OQ-004: 8 prompt tetap, kemiripan vs Q4_K_M: IQ4_XS 0.583, Q4_0 0.571, IQ3_XXS 0.504; 3 cek fakta benar di semua quant
   → Lihat spec/research/reports/2026-11-15-27b-quality-001.md
 ```
+
+```
+[Post-bootstrap] [FINDING] ctx 16384 + -ot, KV q8_0: 2.46 tok/s (FFN 12..64); + MTP d1 2.24 (FFN 8..64). MTP tidak mempercepat pada -ot di KV mana pun yang diuji
+```
