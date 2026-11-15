@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="560" viewBox="0 0 860 560" font-family="DejaVu Sans, Arial, sans-serif">
+  <rect width="860" height="560" fill="#ffffff"/>
+  <text x="24" y="34" font-size="20" font-weight="bold" fill="#1f2937">27B hybrid di 1070 Ti: -ngl vs auto-fit vs -ot, ctx 4096</text>
+  <text x="24" y="58" font-size="13" fill="#4b5563">tok/s generasi (llama-bench -d 4096, 4 thread, 1 run). Biru: -ngl terbaik. Abu: --fit. Hijau: -ot terbaik.</text>
+  <text x="24" y="110" font-size="14" font-weight="bold" fill="#111827">Q4_K_M</text>
+  <text x="130" y="110" font-size="12" fill="#374151">ngl 29</text>
+  <rect x="300" y="96" width="286" height="18" fill="#60a5fa"/>
+  <text x="594" y="110" font-size="12" fill="#111827">2.04</text>
+  <text x="130" y="136" font-size="12" fill="#374151">auto-fit 512 MiB</text>
+  <rect x="300" y="122" width="276" height="18" fill="#9ca3af"/>
+  <text x="584" y="136" font-size="12" fill="#111827">1.97</text>
+  <text x="130" y="162" font-size="12" fill="#374151">-ot FFN 11..64</text>
+  <rect x="300" y="148" width="360" height="18" fill="#10b981"/>
+  <text x="668" y="162" font-size="12" fill="#111827">2.57</text>
+  <text x="24" y="206" font-size="14" font-weight="bold" fill="#111827">IQ4_XS</text>
+  <text x="130" y="206" font-size="12" fill="#374151">ngl 33</text>
+  <rect x="300" y="192" width="259" height="18" fill="#60a5fa"/>
+  <text x="567" y="206" font-size="12" fill="#111827">1.85</text>
+  <text x="130" y="232" font-size="12" fill="#374151">auto-fit 1024 MiB</text>
+  <rect x="300" y="218" width="235" height="18" fill="#9ca3af"/>
+  <text x="543" y="232" font-size="12" fill="#111827">1.68</text>
+  <text x="130" y="258" font-size="12" fill="#374151">-ot FFN 21..64</text>
+  <rect x="300" y="244" width="402" height="18" fill="#10b981"/>
+  <text x="710" y="258" font-size="12" fill="#111827">2.87</text>
+  <text x="24" y="302" font-size="14" font-weight="bold" fill="#111827">UD-IQ3_S</text>
+  <text x="130" y="302" font-size="12" fill="#374151">ngl 40</text>
+  <rect x="300" y="288" width="234" height="18" fill="#60a5fa"/>
+  <text x="542" y="302" font-size="12" fill="#111827">1.67</text>
+  <text x="130" y="328" font-size="12" fill="#374151">auto-fit 512 MiB</text>
+  <rect x="300" y="314" width="210" height="18" fill="#9ca3af"/>
+  <text x="518" y="328" font-size="12" fill="#111827">1.50</text>
+  <text x="130" y="354" font-size="12" fill="#374151">-ot FFN 33..64</text>
+  <rect x="300" y="340" width="336" height="18" fill="#10b981"/>
+  <text x="644" y="354" font-size="12" fill="#111827">2.40</text>
+  <text x="24" y="398" font-size="14" font-weight="bold" fill="#111827">UD-Q3_K_XL</text>
+  <text x="130" y="398" font-size="12" fill="#374151">ngl 37</text>
+  <rect x="300" y="384" width="259" height="18" fill="#60a5fa"/>
+  <text x="567" y="398" font-size="12" fill="#111827">1.85</text>
+  <text x="130" y="424" font-size="12" fill="#374151">auto-fit 512 MiB</text>
+  <rect x="300" y="410" width="242" height="18" fill="#9ca3af"/>
+  <text x="550" y="424" font-size="12" fill="#111827">1.73</text>
+  <text x="130" y="450" font-size="12" fill="#374151">-ot FFN 26..64</text>
+  <rect x="300" y="436" width="315" height="18" fill="#10b981"/>
+  <text x="623" y="450" font-size="12" fill="#111827">2.25</text>
+  <line x1="300" y1="86" x2="300" y2="470" stroke="#6b7280" stroke-width="1"/>
+  <text x="24" y="494" font-size="13" fill="#374151">Target MASTER: Q4_K_M min 1.5 (lulus), target 3 (belum). IQ3 min 2: lulus hanya dengan -ot.</text>
+  <text x="24" y="518" font-size="13" fill="#374151">Auto-fit kalah dari -ngl manual 3-10% dan dari -ot 23-41%. IQ3_M tidak ada di unsloth.</text>
+</svg>
