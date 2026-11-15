@@ -301,3 +301,9 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [DECISION] Kuantisasi ulang dengan imatrix ditunda: butuh BF16 ±50 GB; Q4_0 resmi unsloth dipakai sebagai pembanding
   → Lihat spec/research/reports/2026-11-15-27b-run-002.md
 ```
+
+```
+[Post-bootstrap] [UPDATE] OQ-017: -fa on lebih lambat di Pascal pada ctx pendek (2.59 vs 2.84 tok/s, -ot FFN 17..64). Bawaan auto = off
+[Post-bootstrap] [FINDING] Konfigurasi terbaik: RAM tersedia terendah 14.12 GiB, swap +0.175 GiB (0.724 -> 0.899), VRAM puncak 8043 MiB
+[Post-bootstrap] [BLOCKER] Vulkan: glslc tidak ada (butuh sudo apt). Channel RAM: butuh sudo dmidecode
+```
