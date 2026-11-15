@@ -1,0 +1,4 @@
+[submodule "engine/llama.cpp"]
+	path = engine/llama.cpp
+	url = https://github.com/mcpe500/llama.cpp.git
+	branch = feat/iso3-kv
