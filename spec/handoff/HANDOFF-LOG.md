@@ -292,3 +292,13 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [FINDING] llama-perplexity Q4_K_M ngl 30 gagal (buffer compute 525 MiB); ngl 26 dipakai
   → Lihat spec/research/reports/2026-11-15-27b-quality-001.md dan 2026-11-14-iso3-mtp-main.md
 ```
+
+### Konteks panjang dengan -ot dan 8 prompt tetap (2026-11-15)
+
+```
+[Post-bootstrap] [FINDING] ctx 16384 + -ot: iso3 (FFN 15..64 di CPU) 2.61 tok/s, f16 (FFN 9..64) 2.52, iso3 + MTP d1 (FFN 11..64) 2.37
+  → Konfigurasi tercepat terukur di ctx 16k: Q4_K_M + KV iso3 + -ot FFN 15..64, tanpa MTP
+[Post-bootstrap] [FINDING] iso3 + MTP d1 + -ot FFN 12..64: crash CUDA OOM (40 MiB) di tengah generasi
+[Post-bootstrap] [UPDATE] OQ-004: 8 prompt tetap, kemiripan vs Q4_K_M: IQ4_XS 0.583, Q4_0 0.571, IQ3_XXS 0.504; 3 cek fakta benar di semua quant
+  → Lihat spec/research/reports/2026-11-15-27b-quality-001.md
+```
