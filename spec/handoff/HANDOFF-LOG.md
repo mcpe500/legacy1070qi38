@@ -362,4 +362,10 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [UPDATE] OQ-014 dijawab: auto-fit (-fitt 512) 3-10% di bawah -ngl manual, 23-41% di bawah -ot; tidak OOM
 [Post-bootstrap] [FINDING] Prediksi MASTER "quant lebih kecil lebih cepat" salah untuk IQ3: IQ3_S -ngl 1.67 < IQ4_XS 1.85
   → Lihat spec/research/reports/2026-11-15-27b-run-003-ctx4096.md, CLAIMS C-59..C-62
+### Mesin dipindah ke fork di dalam repo (2026-11-15)
+
+```
+[Post-bootstrap] [DECISION] Kode mesin (iso3 di llama.cpp utama) dipush ke fork publik mcpe500/llama.cpp, cabang feat/iso3-kv (36dbad3), atas permintaan pemilik
+[Post-bootstrap] [UPDATE] Fork masuk repo ini sebagai submodule engine/llama.cpp, terkunci di 36dbad3. patches/llama.cpp/ dipertahankan sebagai riwayat
+  → Clone dengan --recurse-submodules. Perubahan mesin berikutnya: commit di fork, lalu naikkan pointer submodule lewat PR
 ```
