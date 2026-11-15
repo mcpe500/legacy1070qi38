@@ -354,6 +354,14 @@ Daftar open questions yang belum terjawab (update saat resolved):
   → Lihat spec/handoff/SESSION-002-27b-test.md
 ```
 
+### #33: tabel quant ctx 4096 dan OQ-014 (2026-11-15)
+
+```
+[Post-bootstrap] [CONFLICT] IQ3_M tidak ada di unsloth/Qwen3.8-27B-GGUF. Diganti UD-IQ3_S dan UD-Q3_K_XL (sha256 cocok LFS). Prediksi IQ3_M di MASTER/RFC-001 tidak diuji langsung
+[Post-bootstrap] [FINDING] ctx 4096, terbaik -ngl / -ot (tok/s): Q4_K_M 2.04/2.57, IQ4_XS 1.85/2.87, IQ3_S 1.67/2.40, Q3_K_XL 1.85/2.25. Batas -ot Q4_K_M turun dari k=17 ke k=11 di ctx 4096
+[Post-bootstrap] [UPDATE] OQ-014 dijawab: auto-fit (-fitt 512) 3-10% di bawah -ngl manual, 23-41% di bawah -ot; tidak OOM
+[Post-bootstrap] [FINDING] Prediksi MASTER "quant lebih kecil lebih cepat" salah untuk IQ3: IQ3_S -ngl 1.67 < IQ4_XS 1.85
+  → Lihat spec/research/reports/2026-11-15-27b-run-003-ctx4096.md, CLAIMS C-59..C-62
 ### Mesin dipindah ke fork di dalam repo (2026-11-15)
 
 ```

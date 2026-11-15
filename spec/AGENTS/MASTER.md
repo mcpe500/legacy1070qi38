@@ -153,6 +153,7 @@ Batas atas TPS ≈ bandwidth RAM ÷ bobot di RAM   (bobot GPU menambah ~0.03 s p
 |---|---|---|
 | A: Q4_K_M hybrid (`-ngl 99 -ot` FFN 17..64) | 2.85 tok/s (C-54) | minimum 1.5 lulus; target 3 belum |
 | A: IQ3_M / IQ3_XXS | 1.15 tok/s (IQ3_XXS, C-50). IQ3_M belum diuji | minimum 2 **tidak** lulus; IQ3_XXS lebih lambat dari IQ4_XS |
+| A: UD-IQ3_S / UD-Q3_K_XL (pengganti IQ3_M, tidak ada di unsloth), ctx 4096 | IQ3_S 1.67 (`-ngl`) / 2.40 (`-ot`); Q3_K_XL 1.85 / 2.25 (C-60) | minimum 2 lulus hanya dengan `-ot`; target 5 belum. Q4_K_M ctx 4096: 2.04 / 2.57 |
 | B: muat penuh di VRAM | belum diuji | - |
 | C: dengan MTP | +6% terbaik (depth 1, `-ngl 32`, C-51); dengan `-ot` tidak ada percepatan (C-56) | minimum +30% **tidak tercapai** di mesin ini |
 | RAM puncak | tersedia terendah 14.12 GiB, swap +0.175 GiB | RAM lulus; "tanpa swap tambahan" tidak penuh |
