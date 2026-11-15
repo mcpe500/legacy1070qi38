@@ -281,3 +281,14 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [FINDING] KV konteks MTP (1 layer) memakai -ctkd/-ctvd (default f16), tidak mewarisi -ctk/-ctv. Belum diubah (keputusan perilaku)
   → Lihat spec/research/reports/2026-11-14-iso3-mtp-main.md
 ```
+
+### iso3 konteks panjang dan kualitas 27B (2026-11-15)
+
+```
+[Post-bootstrap] [FINDING] ctx 16384, Q4_K_M: KV iso3 ngl 31 2.23 tok/s vs f16 ngl 28 1.86 (+20%); iso3+MTP d1 ngl 28 2.37 vs f16+MTP d1 ngl 26 1.80
+[Post-bootstrap] [FINDING] iso3 + MTP depth 3 pada ctx 16384 ngl 28: crash CUDA OOM di tengah generasi (bukan saat muat)
+[Post-bootstrap] [UPDATE] OQ-004: KLD vs Q4_K_M (wikitext-2, ctx 512, 20 chunk): KV q8_0 0.0005, KV iso3 0.0102, IQ4_XS 0.0162, Q4_0 0.0301, IQ3_XXS 0.0604
+    PPL: Q4_K_M 6.919, IQ4_XS 6.949, Q4_0 7.057, IQ3_XXS 7.203
+[Post-bootstrap] [FINDING] llama-perplexity Q4_K_M ngl 30 gagal (buffer compute 525 MiB); ngl 26 dipakai
+  → Lihat spec/research/reports/2026-11-15-27b-quality-001.md dan 2026-11-14-iso3-mtp-main.md
+```

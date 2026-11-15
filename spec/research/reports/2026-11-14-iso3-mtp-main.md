@@ -56,3 +56,21 @@ Temuan:
 - Di semua layer KV ditempatkan di GPU (log `layer 63: dev = CUDA0` pada ngl 30), jadi jalur FA CPU iso3 hanya diuji lewat `test-backend-ops` (CPU sebagai referensi) dan `test-iso3`.
 - Pada ctx 2048 iso3 tidak mempercepat: KV 27B kecil (f16 128 MiB, iso3 25 MiB). Manfaat yang diharapkan ada pada konteks panjang; belum diukur.
 - Konversi iso3 -> f16 tiap langkah memakan waktu; kernel vektor iso3 native belum dibuat.
+
+## Konteks panjang: Qwen3.8-27B UD-Q4_K_M, ctx 16384, prompt 6011 token (wikitext-2), 64 token generasi
+
+`tools/iso3/long_ctx.py` (llama-server 127.0.0.1, `-np 1 -fa on -t 4`, temperature 0). Untuk tiap konfigurasi dicoba ngl menurun; dicatat ngl tertinggi yang jalan. KV f16 pada 16384 sel = 1 GiB, iso3 = 0.195 GiB.
+
+| KV | MTP | ngl maks | prompt tok/s | gen tok/s | draft / diterima | VRAM puncak MiB | md5 |
+|---|---|---:|---:|---:|---|---:|---|
+| f16 | - | 28 (30 OOM) | 35.30 | 1.86 | - | 7737 | 1e09276c |
+| iso3 | - | 31 (32 OOM) | 37.57 | **2.23** | - | 8031 | f0d64c22 |
+| f16 | depth 1 | 26 (28 OOM saat membuat konteks MTP) | 33.86 | 1.80 | 37 / 26 | 7883 | 1e09276c |
+| iso3 (MTP KV iso3) | depth 1 | 28 (30, 31 OOM) | 35.42 | **2.37** | 32 / 30 | 8029 | f0d64c22 |
+| iso3 (MTP KV iso3) | depth 3 | 28: **crash** CUDA OOM saat generasi (`cuMemCreate`, ggml-cuda.cu:653); 30, 31 OOM saat muat | - | - | - | - | - |
+
+Temuan:
+- Pada konteks 16k iso3 membebaskan VRAM untuk 3 layer tambahan: generasi **+20%** (2.23 vs 1.86 tok/s) tanpa MTP, dan iso3 + MTP depth 1 **+32%** (2.37 vs 1.80) dibanding f16 + MTP depth 1.
+- iso3 + MTP depth 1 menghasilkan teks identik dengan iso3 tanpa MTP (md5 f0d64c22), begitu juga f16 (1e09276c) pada 64 token ini.
+- Teks iso3 berbeda dari f16 (kuantisasi KV 3-bit mengubah keluaran); dampak kualitas diukur dengan KLD.
+- MTP depth 3 butuh VRAM lebih banyak dari yang tersisa di ngl 28; crash OOM terjadi di tengah generasi, bukan saat muat. Belum dicoba ngl 26 untuk depth 3.
