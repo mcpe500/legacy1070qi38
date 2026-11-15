@@ -67,7 +67,7 @@ Tidak diasumsikan seluruh model muat di VRAM.
 | Konteks | 262.144 native, 1.000.000 dengan YaRN statis | C-08 | ✅ Resmi |
 | KV cache | **64 KiB per token** (FP16) = 16 x 2 x 4 x 256 x 2 B; 4096 token = 256 MiB, 32k = 2 GiB | C-05 | ✅ Turunan dari resmi |
 | State DeltaNet | **≈ 0.146 GiB**, ukuran tetap (tidak tumbuh dengan konteks) | C-06 | ⚠ Turunan; rumus cocok persis pada 0.8B, belum diukur pada 27B |
-| MTP head | Ada, dilatih multi-langkah. Di llama.cpp utama: `--spec-type draft-mtp`; **fork kita tidak punya** | C-09, C-18, C-19 | ✅ ada; ⚠ belum diuji di build kita |
+| MTP head | Ada, dilatih multi-langkah. Di llama.cpp utama: `--spec-type draft-mtp`; **fork kita tidak punya** | C-09, C-18, C-19 | ✅ ada; ✅ jalan di llama.cpp utama (C-51, C-52); percepatan kecil di mesin ini (C-51, C-56) |
 | Vision | `mmproj` terpisah (±0.9 GiB), opsional | C-12 | ⚠ Komunitas |
 | Model lain dengan arsitektur sama | Ada GGUF **9B** `qwen35` (32 blok, `full_attention_interval=4`) yang dipakai sebagai pengganti arsitektur untuk menguji kernel dan alat. Asalnya diduga distilasi komunitas, **bukan** rilis resmi Qwen | C-20, C-21 | ✅ terukur; ⚠ asal file |
 
@@ -146,6 +146,17 @@ Batas atas TPS ≈ bandwidth RAM ÷ bobot di RAM   (bobot GPU menambah ~0.03 s p
 | C: dengan MTP | +30% dari A | +80% dari A |
 | RAM puncak | ≤ 15 GiB | ≤ 12 GiB |
 | Kualitas | PPL tidak lebih dari 10% di atas Q4_K_M | |
+
+**Hasil terukur (2026-11-15, 27B di 1070 Ti, bench pendek):**
+
+| Skenario | Terukur | Terhadap target |
+|---|---|---|
+| A: Q4_K_M hybrid (`-ngl 99 -ot` FFN 17..64) | 2.85 tok/s (C-54) | minimum 1.5 lulus; target 3 belum |
+| A: IQ3_M / IQ3_XXS | 1.15 tok/s (IQ3_XXS, C-50). IQ3_M belum diuji | minimum 2 **tidak** lulus; IQ3_XXS lebih lambat dari IQ4_XS |
+| B: muat penuh di VRAM | belum diuji | - |
+| C: dengan MTP | +6% terbaik (depth 1, `-ngl 32`, C-51); dengan `-ot` tidak ada percepatan (C-56) | minimum +30% **tidak tercapai** di mesin ini |
+| RAM puncak | tersedia terendah 14.12 GiB, swap +0.175 GiB | RAM lulus; "tanpa swap tambahan" tidak penuh |
+| Kualitas | PPL IQ4_XS 0.4% di atas Q4_K_M; Q4_0 2.0%; IQ3_XXS 4.1% (C-55) | lulus (batas 10%) |
 
 ---
 
@@ -261,7 +272,7 @@ Daftar aktif dan statusnya ada di `spec/handoff/HANDOFF-LOG.md`. Yang paling men
 - [x] Kernel Gated DeltaNet di SM 6.1: **ya untuk 9B di fork** (C-17). Untuk 27B dan llama.cpp utama: lihat issue uji 27B
 - [x] Konfigurasi kartu resmi (layer, KV heads, head dim): **terjawab** (C-01..C-05)
 - [~] Bandwidth RAM: ≥ 18.4 GB/s baca terukur; **single/dual channel belum dikonfirmasi** (C-35)
-- [ ] Apakah MTP jalan di build kita, dan berapa percepatannya? Fork tidak punya; perlu build utama (issue uji 27B)
+- [x] Apakah MTP jalan di build kita, dan berapa percepatannya? **Jalan di llama.cpp utama; paling tinggi +6%, dengan `-ot` tidak mempercepat** (C-51, C-56)
 - [~] Strategi B: **tidak muat penuh** menurut hitungan (C-30); kualitas dan TPS nyata belum diukur
 - [ ] Apakah auto-fit layer lebih baik dari `-ngl` manual? (issue uji 27B)
 
