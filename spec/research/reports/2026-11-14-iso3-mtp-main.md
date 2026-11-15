@@ -87,3 +87,14 @@ Temuan:
 - MTP depth 1 di konfigurasi ini **memperlambat** (2.37 vs 2.61): konteks MTP butuh VRAM yang memaksa 4 FFN layer kembali ke CPU.
 - Teks iso3 dengan `-ot` (1951488d) berbeda dari iso3 dengan `-ngl 31` (f0d64c22), sedangkan f16 sama di kedua penempatan (1e09276c). Dugaan: penempatan mengubah urutan hitung pada nilai KV 3-bit yang hampir seri; belum diselidiki.
 - Konfigurasi tercepat terukur untuk ctx 16k: **UD-Q4_K_M + KV iso3 + `-ot` FFN 15..64 ke CPU, tanpa MTP: 2.61 tok/s**.
+
+### KV q8_0 + `-ot` + MTP (ctx 16384, prompt 6011, Q4_K_M)
+
+| KV | MTP | k maks (FFN di GPU) | prompt tok/s | gen tok/s | draft / diterima | md5 |
+|---|---|---:|---:|---:|---|---|
+| q8_0 | - | 12 (13: crash CUDA OOM saat generasi; 14 OOM saat muat) | 39.41 | 2.46 | - | 1e09276c |
+| q8_0 (MTP KV q8_0) | depth 1 | 8 (9: crash CUDA OOM saat generasi; 10-12 OOM saat muat) | 35.22 | 2.24 | 36 / 27 | 1e09276c |
+
+- MTP depth 1 juga memperlambat pada KV q8_0 (2.24 vs 2.46 tok/s), karena 4 FFN layer harus pindah ke CPU agar konteks MTP muat.
+- KV q8_0 menghasilkan teks yang sama dengan f16 (md5 1e09276c); KLD q8_0 0.00049.
+- Urutan tercepat di ctx 16k: iso3 2.61 > f16 2.52 > q8_0 2.46 > iso3+MTP 2.37 > q8_0+MTP 2.24 (semua dengan `-ot`).
