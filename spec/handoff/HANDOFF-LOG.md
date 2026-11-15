@@ -369,3 +369,16 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [UPDATE] Fork masuk repo ini sebagai submodule engine/llama.cpp, terkunci di 36dbad3. patches/llama.cpp/ dipertahankan sebagai riwayat
   → Clone dengan --recurse-submodules. Perubahan mesin berikutnya: commit di fork, lalu naikkan pointer submodule lewat PR
 ```
+
+### #34: Vulkan dan Strategi B (2026-11-15)
+
+```
+[Post-bootstrap] [UPDATE] BLOCKER glslc selesai: LunarG SDK 1.4.363.1 di ~/tools tanpa sudo; ~/llama.cpp/build-vulkan terbangun (36dbad3)
+[Post-bootstrap] [FINDING] OQ-016: Vulkan 1-6% lebih lambat dari CUDA pada Q4_K_M (2.01 vs 2.04, 2.41 vs 2.57), tanpa crash decode; ±0.9 GiB lebih banyak RAM host
+[Post-bootstrap] [FINDING] Q3-DOWN-XS asli (7.91 GiB, bukan 7.68) tidak muat 8 GiB; terbaik Vulkan ngl 62 7.05 tok/s, CUDA ngl 60 5.54. MASTER min 8 tidak tercapai
+[Post-bootstrap] [FINDING] Kualitas Q3-DOWN-XS: PPL +22% vs Q4_K_M, KLD 0.273, melewati batas 10%
+[Post-bootstrap] [CONFLICT] Ukuran Q3-DOWN-XS di RFC-001/MASTER 7.68 GiB vs berkas 7.91 GiB
+[Post-bootstrap] [FINDING] Q3-DOWN-XS CUDA KV q4_0: ngl 63 muat, 6.51 tok/s (+17% vs f16 5.54); -fa 1 tidak berpengaruh berarti (5.64)
+[Post-bootstrap] [OPEN] KV iso3 pada Q3-DOWN-XS (llama-bench menolak -ctk iso3); BF16 tidak diunduh (tidak perlu)
+  → Lihat spec/research/reports/2026-11-15-27b-run-004-vulkan-strategy-b.md, CLAIMS C-63..C-68
+```

@@ -40,6 +40,8 @@ def main():
     ap.add_argument("--ot-from", type=int, default=None, help="FFN layer k..64 ke CPU")
     ap.add_argument("--fit-target", type=int, default=None, help="-fitt MiB")
     ap.add_argument("--fit-ctx", type=int, default=None, help="-fitc")
+    ap.add_argument("--kv", default=None, help="tipe KV cache (-ctk/-ctv): q8_0, q4_0, iso3")
+    ap.add_argument("--fa", default=None, help="-fa 0 atau 1")
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--depth", type=int, default=4096)
     ap.add_argument("--gen", type=int, default=16)
@@ -54,6 +56,12 @@ def main():
     if a.ot_from is not None:
         ls = "|".join(str(i) for i in range(a.ot_from, 65))
         cmd += ["-ot", r"blk\.(%s)\.ffn_(up|down|gate)\.weight=CPU" % ls]
+    if a.kv:
+        cmd += ["-ctk", a.kv, "-ctv", a.kv]
+        if a.kv in ("q8_0", "q4_0", "iso3") and a.fa is None:
+            cmd += ["-fa", "1"]  # KV V terkuantisasi butuh flash attention
+    if a.fa is not None:
+        cmd += ["-fa", a.fa]
     if a.fit_target is not None:
         cmd += ["-fitt", str(a.fit_target)]
     if a.fit_ctx is not None:
