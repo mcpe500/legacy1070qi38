@@ -65,8 +65,28 @@ spec/research/    CLAIMS.md: setiap klaim faktual dengan sumber dan status
 spec/handoff/     HANDOFF-LOG.md (append-only), catatan sesi
 tools/legacy.py   CLI satu file, hanya library standar
 tools/agent/      pemantau GitHub untuk komentar /kiro
+engine/llama.cpp  mesin inferensi: submodule ke fork mcpe500/llama.cpp (branch feat/iso3-kv)
+patches/          dua patch iso3 (riwayat); sumber utama sekarang engine/llama.cpp
 .kiro/hooks/      hook Kiro (validasi spec saat disimpan)
 ```
+
+## Mesin (llama.cpp dengan iso3)
+
+Mesin yang dipakai uji 27B adalah fork [`mcpe500/llama.cpp`](https://github.com/mcpe500/llama.cpp), cabang `feat/iso3-kv`. Isinya llama.cpp utama (`ggml-org`, commit `3549c27`) ditambah tipe KV cache `iso3` (CPU + CUDA) dan tesnya. MTP sudah ada di llama.cpp utama. Fork ini masuk ke repo sebagai submodule di `engine/llama.cpp`, terkunci pada satu commit.
+
+```bash
+git clone --recurse-submodules https://github.com/mcpe500/legacy1070qi38
+# sudah terlanjur clone tanpa submodule:
+git submodule update --init engine/llama.cpp
+
+cd engine/llama.cpp
+cmake -B build-cuda -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cuda -j4
+# pakai dengan tools/legacy.py:
+LEGACY_LLAMA_BIN_DIR=$PWD/build-cuda/bin python3 ../../tools/legacy.py llama run --help
+```
+
+Perintah `cmake` di atas belum dijalankan dari salinan submodule ini. Build yang dipakai pengukuran dibuat di `~/llama.cpp/build-iso3` dari commit yang sama (`36dbad3`).
 
 ## Cara berkontribusi
 
