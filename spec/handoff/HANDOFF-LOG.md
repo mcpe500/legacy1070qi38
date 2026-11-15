@@ -290,3 +290,14 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [FINDING] Build utama gagal memuat Qwen3.8-9B-Q4_K_M.gguf pengguna (expected 442 tensors, got 427). Server 9B tetap harus pakai fork
   → Lihat spec/research/reports/2026-11-14-27b-run-001.md
 ```
+
+### Uji 27B run-002 (2026-11-15): thread, Q4_K_M, Q4_0, --override-tensor
+
+```
+[Post-bootstrap] [FINDING] Sapuan -t (IQ4_XS ngl 36): 1.40/1.90/2.32/2.29/2.21 tok/s untuk t=2/3/4/6/8. Naik linear sampai 4 core fisik lalu turun
+  → Pada 2-4 thread CPU (komputasi) yang menahan; IQ4_XS hanya ±15.6 GB/s dari RAM, Q4_K_M ±22.0 GB/s (hitungan)
+[Post-bootstrap] [UPDATE] OQ-015: dequant IQ4_XS lebih mahal di CPU ini. Q4_K_M ngl 32: 2.60 tok/s > IQ4_XS 2.29 > Q4_0 2.39 (ngl 33)
+[Post-bootstrap] [FINDING] --override-tensor FFN layer 17..64 ke CPU, sisanya -ngl 99: Q4_K_M 2.85 tok/s (+9.6% dari ngl 32). k=18 OOM
+[Post-bootstrap] [DECISION] Kuantisasi ulang dengan imatrix ditunda: butuh BF16 ±50 GB; Q4_0 resmi unsloth dipakai sebagai pembanding
+  → Lihat spec/research/reports/2026-11-15-27b-run-002.md
+```
