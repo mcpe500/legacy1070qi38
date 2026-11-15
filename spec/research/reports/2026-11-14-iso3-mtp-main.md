@@ -74,3 +74,16 @@ Temuan:
 - iso3 + MTP depth 1 menghasilkan teks identik dengan iso3 tanpa MTP (md5 f0d64c22), begitu juga f16 (1e09276c) pada 64 token ini.
 - Teks iso3 berbeda dari f16 (kuantisasi KV 3-bit mengubah keluaran); dampak kualitas diukur dengan KLD.
 - MTP depth 3 butuh VRAM lebih banyak dari yang tersisa di ngl 28; crash OOM terjadi di tengah generasi, bukan saat muat. Belum dicoba ngl 26 untuk depth 3.
+
+### Dengan `--override-tensor` (ctx 16384, prompt 6011, `-ngl 99 -ot "blk\.(k..64)\.ffn_(up|down|gate)\.weight=CPU"`)
+
+| KV | MTP | k maks (FFN di GPU) | prompt tok/s | gen tok/s | draft / diterima | md5 |
+|---|---|---:|---:|---:|---|---|
+| f16 | - | 9 (10..14 OOM saat muat) | 38.04 | 2.52 | - | 1e09276c |
+| iso3 | - | 15 (16 OOM) | 41.14 | **2.61** | - | 1951488d |
+| iso3 (MTP KV iso3) | depth 1 | 11 (12: crash CUDA OOM 40 MiB saat generasi; 13-15 OOM saat muat) | 37.19 | 2.37 | 35 / 28 | ddab9aeb |
+
+- Dengan `-ot`, keunggulan iso3 di ctx 16k mengecil menjadi +3.6% (2.61 vs 2.52), karena `-ot` sudah menaruh semua attention di GPU dan VRAM yang dibebaskan iso3 (0.8 GiB) hanya menambah 6 FFN layer.
+- MTP depth 1 di konfigurasi ini **memperlambat** (2.37 vs 2.61): konteks MTP butuh VRAM yang memaksa 4 FFN layer kembali ke CPU.
+- Teks iso3 dengan `-ot` (1951488d) berbeda dari iso3 dengan `-ngl 31` (f0d64c22), sedangkan f16 sama di kedua penempatan (1e09276c). Dugaan: penempatan mengubah urutan hitung pada nilai KV 3-bit yang hampir seri; belum diselidiki.
+- Konfigurasi tercepat terukur untuk ctx 16k: **UD-Q4_K_M + KV iso3 + `-ot` FFN 15..64 ke CPU, tanpa MTP: 2.61 tok/s**.
