@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="560" viewBox="0 0 860 560" font-family="DejaVu Sans, Arial, sans-serif">
+  <rect width="860" height="560" fill="#ffffff"/>
+  <text x="24" y="34" font-size="20" font-weight="bold" fill="#1f2937">Vulkan vs CUDA di 1070 Ti, 27B, ctx 4096</text>
+  <text x="24" y="58" font-size="13" fill="#4b5563">tok/s generasi, 4 thread. Sumber kode sama (36dbad3). Biru: CUDA. Oranye: Vulkan.</text>
+  <text x="24" y="110" font-size="14" font-weight="bold" fill="#111827">Q4_K_M ngl 29</text>
+  <text x="250" y="110" font-size="12" fill="#374151">CUDA</text>
+  <rect x="360" y="96" width="122" height="18" fill="#60a5fa"/>
+  <text x="490" y="110" font-size="12" fill="#111827">2.04</text>
+  <text x="250" y="136" font-size="12" fill="#374151">Vulkan</text>
+  <rect x="360" y="122" width="121" height="18" fill="#f59e0b"/>
+  <text x="489" y="136" font-size="12" fill="#111827">2.01</text>
+  <text x="24" y="180" font-size="14" font-weight="bold" fill="#111827">Q4_K_M -ot FFN 11..64</text>
+  <text x="250" y="180" font-size="12" fill="#374151">CUDA</text>
+  <rect x="360" y="166" width="154" height="18" fill="#60a5fa"/>
+  <text x="522" y="180" font-size="12" fill="#111827">2.57</text>
+  <text x="250" y="206" font-size="12" fill="#374151">Vulkan</text>
+  <rect x="360" y="192" width="145" height="18" fill="#f59e0b"/>
+  <text x="513" y="206" font-size="12" fill="#111827">2.41</text>
+  <text x="24" y="250" font-size="14" font-weight="bold" fill="#111827">Q3-DOWN-XS ngl 60</text>
+  <text x="250" y="250" font-size="12" fill="#374151">CUDA</text>
+  <rect x="360" y="236" width="332" height="18" fill="#60a5fa"/>
+  <text x="700" y="250" font-size="12" fill="#111827">5.54</text>
+  <text x="250" y="276" font-size="12" fill="#374151">Vulkan</text>
+  <rect x="360" y="262" width="316" height="18" fill="#f59e0b"/>
+  <text x="684" y="276" font-size="12" fill="#111827">5.27</text>
+  <text x="24" y="320" font-size="14" font-weight="bold" fill="#111827">Q3-DOWN-XS terbaik</text>
+  <text x="250" y="320" font-size="12" fill="#374151">CUDA ngl 60</text>
+  <rect x="360" y="306" width="332" height="18" fill="#60a5fa"/>
+  <text x="700" y="320" font-size="12" fill="#111827">5.54</text>
+  <text x="250" y="346" font-size="12" fill="#374151">Vulkan ngl 62</text>
+  <rect x="360" y="332" width="423" height="18" fill="#f59e0b"/>
+  <text x="791" y="346" font-size="12" fill="#111827">7.05</text>
+  <text x="250" y="372" font-size="12" fill="#374151">CUDA ngl 63, KV q4_0</text>
+  <rect x="360" y="358" width="391" height="18" fill="#10b981"/>
+  <text x="759" y="372" font-size="12" fill="#111827">6.51</text>
+  <line x1="360" y1="86" x2="360" y2="392" stroke="#6b7280" stroke-width="1"/>
+  <text x="24" y="416" font-size="13" fill="#374151">Target MASTER Strategi B: minimum 8, target 14 tok/s. Terbaik terukur 7.05 (Vulkan): belum lulus.</text>
+  <text x="24" y="440" font-size="13" fill="#374151">File Q3-DOWN-XS 7.91 GiB tidak muat 8 GiB: CUDA maks 61 (KV q4_0: 63) dari 66, Vulkan 62; -ngl 99 OOM.</text>
+  <text x="24" y="464" font-size="13" fill="#374151">Kualitas vs Q4_K_M: PPL 8.46 vs 6.92 (+22%), KLD 0.273. Melewati batas 10% MASTER.</text>
+</svg>
