@@ -353,3 +353,11 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [OPEN] OQ-018 channel RAM (butuh sudo dmidecode), OQ-019 bit campuran per layer, OQ-020 pemangkasan layer (belum diputuskan pemilik)
   → Lihat spec/handoff/SESSION-002-27b-test.md
 ```
+
+### Mesin dipindah ke fork di dalam repo (2026-11-15)
+
+```
+[Post-bootstrap] [DECISION] Kode mesin (iso3 di llama.cpp utama) dipush ke fork publik mcpe500/llama.cpp, cabang feat/iso3-kv (36dbad3), atas permintaan pemilik
+[Post-bootstrap] [UPDATE] Fork masuk repo ini sebagai submodule engine/llama.cpp, terkunci di 36dbad3. patches/llama.cpp/ dipertahankan sebagai riwayat
+  → Clone dengan --recurse-submodules. Perubahan mesin berikutnya: commit di fork, lalu naikkan pointer submodule lewat PR
+```
