@@ -343,3 +343,13 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [FINDING] Konfigurasi terbaik: RAM tersedia terendah 14.12 GiB, swap +0.175 GiB (0.724 -> 0.899), VRAM puncak 8043 MiB
 [Post-bootstrap] [BLOCKER] Vulkan: glslc tidak ada (butuh sudo apt). Channel RAM: butuh sudo dmidecode
 ```
+
+### Merge PR #37 dan #38, sesi 27B dicatat (2026-11-15)
+
+```
+[Post-bootstrap] [DECISION] PR #37 dan #38 di-merge oleh agen atas perintah langsung pemilik repo (gh pr merge --merge, tanpa melewati proteksi main)
+[Post-bootstrap] [UPDATE] Konflik HANDOFF-LOG di PR #38 diselesaikan dengan menyimpan kedua sisi; 127 test lulus, spec validate ok
+[Post-bootstrap] [UPDATE] CLAIMS C-53..C-58 ditambah; MASTER diberi hasil terukur (target MTP +30% tidak tercapai di mesin ini)
+[Post-bootstrap] [OPEN] OQ-018 channel RAM (butuh sudo dmidecode), OQ-019 bit campuran per layer, OQ-020 pemangkasan layer (belum diputuskan pemilik)
+  → Lihat spec/handoff/SESSION-002-27b-test.md
+```

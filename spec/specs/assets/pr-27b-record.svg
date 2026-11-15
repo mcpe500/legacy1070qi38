@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="420" viewBox="0 0 860 420" font-family="DejaVu Sans, Arial, sans-serif">
+  <rect width="860" height="420" fill="#ffffff"/>
+  <text x="24" y="34" font-size="20" font-weight="bold" fill="#1f2937">Qwen3.8-27B di GTX 1070 Ti: kecepatan generasi terukur</text>
+  <text x="24" y="58" font-size="13" fill="#4b5563">tok/s, llama.cpp utama 3549c27 + patch iso3, 4 thread, bench pendek kecuali disebut</text>
+
+  <text x="24" y="104" font-size="13" fill="#111827">IQ3_XXS, ngl 45</text>
+  <rect x="250" y="88" width="230" height="22" fill="#9ca3af"/>
+  <text x="488" y="104" font-size="13" fill="#111827">1.15</text>
+
+  <text x="24" y="148" font-size="13" fill="#111827">IQ4_XS, ngl 36</text>
+  <rect x="250" y="132" width="458" height="22" fill="#60a5fa"/>
+  <text x="716" y="148" font-size="13" fill="#111827">2.29</text>
+
+  <text x="24" y="192" font-size="13" fill="#111827">Q4_0, ngl 33</text>
+  <rect x="250" y="176" width="478" height="22" fill="#60a5fa"/>
+  <text x="736" y="192" font-size="13" fill="#111827">2.39</text>
+
+  <text x="24" y="236" font-size="13" fill="#111827">Q4_K_M, ngl 32</text>
+  <rect x="250" y="220" width="520" height="22" fill="#60a5fa"/>
+  <text x="778" y="236" font-size="13" fill="#111827">2.60</text>
+
+  <text x="24" y="280" font-size="13" fill="#111827">Q4_K_M, ctx 16k, KV iso3, -ot</text>
+  <rect x="250" y="264" width="522" height="22" fill="#34d399"/>
+  <text x="778" y="280" font-size="13" fill="#111827">2.61</text>
+
+  <text x="24" y="324" font-size="13" font-weight="bold" fill="#111827">Q4_K_M, -ot FFN 17..64 (terbaik)</text>
+  <rect x="250" y="308" width="570" height="22" fill="#10b981"/>
+  <text x="560" y="324" font-size="13" font-weight="bold" fill="#ffffff">2.85</text>
+
+  <line x1="250" y1="80" x2="250" y2="340" stroke="#6b7280" stroke-width="1"/>
+  <text x="24" y="372" font-size="13" fill="#374151">KLD vs Q4_K_M: KV q8_0 0.0005, KV q4_0 0.0024, KV iso3 0.0102, IQ4_XS 0.0162, IQ3_XXS 0.0604</text>
+  <text x="24" y="396" font-size="13" fill="#374151">MTP: +6% terbaik, tidak mempercepat dengan -ot. Satu teks wikitext-2, belum mewakili kode.</text>
+</svg>
