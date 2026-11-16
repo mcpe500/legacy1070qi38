@@ -1,0 +1,3 @@
+cap-probe-kviso3-ngl23 ready=1 peak_vram_MiB=6749 cap_MiB=7373 UNDER_CAP
+cap-probe-kviso3-ngl22 ready=1 peak_vram_MiB=6549 cap_MiB=7373 UNDER_CAP
+[17:28:49] cap probe finished

@@ -1,0 +1,29 @@
+
+per-layer parity (l_out after each layer, T=5)
+  layer   cosine     max_abs
+    0   0.999958  8.204e-02
+    1   0.999958  1.418e-01
+    2   0.999955  1.967e-01
+    3   0.999878  2.822e-01
+    4   0.999878  2.865e-01
+    5   0.999872  4.466e-01
+    6   0.999850  1.066e+00
+    7   0.999273  1.767e+00
+   15   0.999290  6.411e+00
+   23   0.998490  9.371e+00
+   31   0.999043  5.097e+00
+   39   0.999211  4.102e+00
+   47   0.999086  4.412e+00
+   55   0.999113  5.304e+00
+   63   0.998869  7.271e+00
+worst layer cosine 0.998341 at layer 51
+logits cosine 0.999253, top-1 MATCH (ours 11751 vs ref 11751)
+top-5 ours: 11751(17.64) 524(14.65) 264(14.51) 31586(14.37) 303(14.29)
+top-5 ref:  11751(17.66) 524(14.78) 264(14.67) 31586(14.39) 303(14.35)
+
+prompt: The capital of France is
+generated:  Paris.
+The capital of Germany is Berlin.
+The capital of Italy is Rome.
+The capital of Spain is
+{"prompt_tokens":5,"generated_tokens":24,"ids":[11751,13,198,760,6511,314,9564,369,19241,13,198,760,6511,314,14898,369,21047,13,198,760,6511,314,17163,369],"text":" Paris.\nThe capital of Germany is Berlin.\nThe capital of Italy is Rome.\nThe capital of Spain is","load_s":12.83,"prefill_s":25.04,"prefill_tok_s":0.200,"decode_s":12.64,"decode_tok_s":1.8988,"heap_allocs_in_decode_forward":0,"peak_rss_kb":10521392,"rss_anon_kb":248044,"rss_file_kb":10254916,"swap_used_kb_before":375196,"swap_used_kb_after":372380,"parity_failures":0,"logits_cos":0.999253,"top1_match":true,"gpu_layers":24,"gpu_arena_mib":5121.9,"gpu_weights_mib":4869.2,"gpu_kv_mib":9.4,"vram_used_mib":5234.2,"kv":"iso3"}

@@ -1,0 +1,47 @@
+PASS server starts and /health answers : 44 s
+PASS GET /health : {"busy":false,"status":"ok"}
+PASS GET /v1/models : {"data":[{"created":0,"id":"qwen3.8-27b","meta":{"n_ctx":4096,"n_vocab":248320},"object":"model","owned_by":"qwen38-engi
+PASS GET /v1/stats has VRAM and RSS : vram 7242 MiB, rss 1787 MiB
+PASS GET / serves the embedded WebUI : 18244 bytes
+PASS unknown path is 404
+PASS empty messages -> 400
+PASS bad top_p -> 400
+PASS mtp_steps 7 -> 400
+PASS last message from the assistant -> 400
+PASS invalid JSON -> 400
+PASS non-stream chat answers Paris : 'Paris'
+PASS non-stream response format
+PASS stream is text/event-stream : text/event-stream
+PASS stream starts with the assistant role and ends with [DONE]
+PASS stream text equals the non-stream text (temperature 0) : 'Paris'
+PASS final chunk: finish_reason, usage, telemetry
+PASS x_stats.pp_tok_s present : 3.7861044332629326
+PASS x_stats.tg_tok_s present : 0.9407269890194065
+PASS x_stats.ttft_ms present : 6339.1474499999995
+PASS x_stats.accept_pct present : 100.0
+PASS x_stats.vram_mib present : 7244.1875
+PASS x_stats.rss_mib present : 9002.078125
+PASS x_stats.draft_n present : 2
+PASS x_stats.mtp_steps present : 2
+PASS x_stats values are plausible : ttft 6339 ms, tg 0.94, vram 7244, rss 9002
+PASS multi-turn: the model remembers the first turn : 'Zorblax'
+PASS multi-turn: the cached prefix of turn 1 is reused : reused 43 of 66 tokens
+PASS multi-turn: same answer without the cache (cache_prompt=false) : 'Zorblax'
+PASS a different conversation falls back to a full prefill
+PASS temperature 0: mtp_steps 2 output == mtp_steps 0 output : 'The vast, deep blue sea stretches endlessly to the horizon, its surface shimmeri'
+PASS mtp_steps 0 drafts nothing, mtp_steps 2 drafts and accepts : draft_n 16 accepted 13
+PASS same seed -> same sampled text, with and without MTP : 'The vast, blue expanse of the sea stretches endlessly to the' / 'The vast, blue expanse of the sea stretches endlessly to the'
+PASS different seed -> different text
+PASS top_k = 1 equals greedy
+PASS temperature 2.0 without truncation differs from greedy
+PASS min_p 0.99 collapses to the top token (== greedy)
+PASS top_p 0.01 collapses to the top token (== greedy)
+PASS repeat/presence penalty changes the greedy text : 'The vast, deep blue ocean stretches endlessly to meet a hazy'
+PASS penalties: output identical with mtp_steps 2
+PASS thinking stream starts with <think> : '<think>\nThe user is asking me '
+PASS WebUI parser on the real stream: raw text preserved
+PASS WebUI parser on the real stream: reasoning extracted : '\nThe user is asking me to add 17 + 25. This is a simple arit'
+PASS WebUI parser: block closed, answer extracted : '17 + 25 = **42**'
+PASS answer contains 42 : '17 + 25 = **42**'
+PASS history with a raw <think> block is accepted (turn 2) : '50'
+PASS non-stream thinking: reasoning_content or open content : {'content': 'Hi! 👋 How can I help you today?', 'reasoning_content': "The user is asking me to say hi

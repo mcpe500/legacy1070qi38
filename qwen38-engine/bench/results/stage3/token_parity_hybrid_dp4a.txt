@@ -1,0 +1,5 @@
+engine tokens  : 24
+baseline tokens: 24
+compared       : 24
+result: IDENTICAL (24/24 tokens)
+text  : ' Paris.\nThe capital of Germany is Berlin.\nThe capital of Italy is Rome.\nThe capital of Spain is'

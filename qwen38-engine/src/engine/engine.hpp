@@ -1,0 +1,144 @@
+// CPU inference engine for Qwen3.8-27B (Stage 2): 64 layers, quantized weights read straight from the mmap,
+// FP32 activations, static arena for every buffer, and a layer residency policy for the 16 GB RAM limit.
+//
+// Memory design (skill memory-budget-24gb): the model file is mapped read-only. The first layers up to a byte
+// budget stay in the page cache ("resident"); the later layers are read with readahead before use and dropped
+// from the page cache right after use ("streamed"), so one forward pass never needs the whole 16.5 GB resident.
+#pragma once
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "arena.hpp"
+#include "gguf_index.hpp"
+#include "pool.hpp"
+#include "qmat.hpp"
+#include "tokenizer.hpp"
+
+struct EngineConfig {
+    std::string gguf;
+    int ctx_max = 4096;          // KV cache positions (<= 4096)
+    int t_max = 512;             // largest batch of tokens in one forward call
+    int threads = 4;
+    double resident_gib = 11.0;  // CPU layers kept resident, in GiB of file bytes (layers beyond it are streamed)
+    // Default mode: hybrid. Layers 0 .. gpu_layers-1 run on the GPU (0 = CPU only), iso3 KV cache on the GPU attention
+    // layers, Q8_1 + __dp4a for every quantization type that has a kernel (mask below = Q3_K, Q4_K, Q5_K, Q6_K, IQ4_NL,
+    // IQ3_S, IQ4_XS; Q8_0 always uses dp4a). The default layer count comes from the VRAM sweep in docs/AFK_STATUS.md.
+    int gpu_layers = 32;
+    bool kv_iso3 = true;
+    uint32_t dp4a_mask = (1u << 11) | (1u << 12) | (1u << 13) | (1u << 14) | (1u << 20) | (1u << 21) | (1u << 23);
+    // Prefill batches of at least stream_min_t tokens (first call, position 0) run the CPU layers on the GPU too, one layer
+    // at a time through a staging buffer. 0 disables it.
+    int stream_min_t = 40;
+    int mtp_steps = 2;           // 0 .. 3 draft tokens per cycle from the MTP head (blk.64); 0 = plain greedy decoding
+};
+
+class GpuLayers;
+
+struct LayerW {
+    bool is_attn = false;
+    const float * attn_norm = nullptr;  // [5120]
+    const float * post_norm = nullptr;  // [5120]
+    QMat ffn_gate, ffn_up, ffn_down;
+    // Gated DeltaNet
+    QMat qkv, gate_z, alpha, beta, ssm_out;
+    const float * ssm_norm = nullptr;   // [128]
+    const float * ssm_a = nullptr;      // [48]
+    const float * ssm_dt = nullptr;     // [48]
+    const float * conv_w = nullptr;     // [10240][4]
+    // Gated Attention
+    QMat wq, wk, wv, wo;
+    const float * q_norm = nullptr;     // [256]
+    const float * k_norm = nullptr;     // [256]
+    // Residency
+    uint64_t span_begin = 0, span_end = 0;  // file offsets (page aligned) covering every tensor of the layer
+    bool resident = true;
+};
+
+class Engine {
+public:
+    explicit Engine(const EngineConfig & cfg);
+    ~Engine();
+
+    // Processes T tokens at positions pos0 .. pos0+T-1. State (KV cache, DeltaNet) of earlier calls is kept.
+    // If logits != nullptr it receives the n_vocab logits of the last token.
+    void forward(const int32_t * tokens, int T, int pos0, float * logits);
+
+    // Like forward(), for speculative verification: logits of the last n_out rows go to logits[n_out][n_vocab] (n_out = 0 for none)
+    // and, when h_rows != nullptr, the output-normed hidden state of every row to h_rows[T][5120] (the MTP head input).
+    void forward_ex(const int32_t * tokens, int T, int pos0, float * logits, int n_out, float * h_rows);
+
+    // MTP draft head (block 64). Batch of T tokens at positions pos0.. with the hidden rows h_in[T][5120] of the previous
+    // positions (see src/engine/main.cpp for the pairing). Fills the MTP KV; the last row's hidden state (after the head norm)
+    // goes to h_out and its logits to logits (either may be null).
+    void mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits);
+    bool has_mtp() const { return mtp_ok_; }
+    const EngineConfig & config() const { return cfg_; }
+
+    // DeltaNet state snapshot and rollback (GPU and CPU layers). With the snapshot on, a forward() of at most kRollT tokens keeps
+    // the state from before the call; dn_rollback(keep) leaves the state as if only the first `keep` tokens had been processed.
+    static constexpr int kRollT = 4;
+    void dn_snapshot(bool on);
+    void dn_rollback(int keep);
+
+    // Zeroes the recurrent state and the position counter; the KV cache is overwritten as positions advance.
+    void reset();
+
+    // Called after each layer with the residual stream x[T][5120] (for parity tests). Not used in the token loop.
+    std::function<void(int il, const float * x, int T)> tap;
+
+    GgufIndex ix;
+    Tokenizer tok;
+    int64_t n_vocab = 0;
+    int n_resident_layers = 0;
+    double resident_gib_actual = 0, streamed_gib = 0;
+    size_t arena_used() const { return arena_->used(); }
+    // GPU side (0 when CPU only): device bytes owned by the GPU layer runner, and the device memory in use by this process.
+    size_t gpu_arena_bytes() const;
+    size_t gpu_weight_bytes() const;
+    size_t gpu_kv_bytes() const;
+    double vram_used_mib() const;      // total minus free device memory, includes the CUDA context
+    // Wall time of the sections of the last forward() call, in seconds.
+    double last_gpu_s = 0, last_cpu_s = 0, last_head_s = 0;
+
+private:
+    void dn_layer(int il, const LayerW & L, int T);
+    void attn_layer(int il, const LayerW & L, int T, int pos0);
+    void ffn(const LayerW & L, int T);
+    void dn_conv_rec(int di, const LayerW & L, const float * qkv, const float * z, const float * gate, const float * beta, int T,
+                     float * out);
+    void forward_stream(int T, int pos0);
+    void hint_layer(int il, bool willneed);   // readahead / drop for the streaming policy
+    void check_memory(int il) const;
+
+    EngineConfig cfg_;
+    std::unique_ptr<Arena> arena_;
+    std::unique_ptr<Pool> pool_;
+    std::unique_ptr<GpuLayers> gpu_;
+    std::vector<LayerW> layers_;
+    QMat tok_embd_, lm_head_;
+    const float * out_norm_ = nullptr;
+    float eps_ = 1e-6f;
+
+    // Scratch (all from the arena).
+    float *x_ = nullptr, *xn_ = nullptr, *proj_ = nullptr;
+    float *bufA_ = nullptr, *bufB_ = nullptr, *conv_silu_ = nullptr, *attn_o_ = nullptr;
+    float *alpha_ = nullptr, *betar_ = nullptr, *gate_ = nullptr, *beta_ = nullptr;
+    float *fg_ = nullptr, *fu_ = nullptr, *qbuf_ = nullptr, *kbuf_ = nullptr, *vbuf_ = nullptr;
+    uint8_t * act_ = nullptr;
+    float * hlast_ = nullptr;
+    float * hn_ = nullptr;      // [8][5120] normed rows when forward_ex has no h_rows buffer
+    // MTP head
+    LayerW mtp_L_;
+    QMat mtp_eh_;
+    const float *mtp_enorm_ = nullptr, *mtp_hnorm_ = nullptr, *mtp_head_norm_ = nullptr;
+    bool mtp_ok_ = false;
+    // DeltaNet rollback on the CPU layers (indexed like conv_state_; null for layers that run on the GPU).
+    bool dn_save_ = false;
+    std::vector<float *> snap_conv_, snap_ssm_, sv_qkv_, sv_z_, sv_gate_, sv_beta_;
+    // Persistent state.
+    std::vector<float *> conv_state_, ssm_state_;  // per DeltaNet layer
+    std::vector<float *> kcache_, vcache_;         // per attention layer, [ctx_max][4][256]
+};

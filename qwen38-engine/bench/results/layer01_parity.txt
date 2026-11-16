@@ -1,0 +1,58 @@
+
+== layer 0 (T=5) ==
+stage                          cosine      max_abs      rel_rms
+a_softplus-0                 0.999999    3.733e-02    1.096e-03 
+alpha-0                      0.999995    3.733e-02    3.215e-03 
+attn_norm-0                  1.000000    0.000e+00    0.000e+00 
+attn_output-0                0.999998    5.069e-03    2.347e-03 
+attn_post_norm-0             0.998611    3.715e-02    5.284e-02 
+attn_residual-0              0.999963    8.152e-02    8.966e-03 
+beta_sigmoid-0               0.999999    4.818e-03    1.363e-03 
+conv_input-0                 0.999971    2.371e-01    7.586e-03 
+conv_output_raw-0            0.999998    7.835e-02    1.996e-03 
+conv_output_silu-0           0.999999    7.835e-02    1.651e-03 
+ffn_gate-0                   0.998516    6.551e-02    5.451e-02 
+ffn_out-0                    0.999634    9.901e-02    2.732e-02 
+ffn_swiglu-0                 0.999374    6.710e-02    3.910e-02 
+ffn_up-0                     0.998518    3.653e-02    5.450e-02 
+final_output-0               0.999992    5.694e-03    3.962e-03 
+gate-0                       1.000000    1.260e-02    9.316e-04 
+l_out-0                      0.999958    8.279e-02    9.256e-03 
+linear_attn_out-0            0.999963    8.152e-02    8.991e-03 
+linear_attn_qkv_mixed-0      0.999971    2.371e-01    7.586e-03 
+new_state-0                  0.999956    1.706e-01    9.440e-03 
+norm-0                       1.000000    0.000e+00    0.000e+00 
+norm-0__1                    0.999998    1.541e-01    1.912e-03 
+norm-0__2                    0.999967    5.944e-02    8.107e-03 
+z-0                          0.999933    1.598e-01    1.155e-02 
+FINAL l_out-0: cosine=0.999958 max_abs=8.279e-02 rel_rms=9.256e-03
+
+== layer 1 (T=5) ==
+stage                          cosine      max_abs      rel_rms
+a_softplus-1                 0.999992    6.869e-03    4.239e-03 
+alpha-1                      0.999962    3.185e-02    8.693e-03 
+attn_norm-1                  1.000000    1.907e-06    4.204e-08 
+attn_output-1                0.999964    2.836e-04    8.677e-03 
+attn_post_norm-1             0.999811    1.819e-02    1.946e-02 
+attn_residual-1              0.999993    3.005e-02    3.829e-03 
+beta_sigmoid-1               0.999997    4.304e-03    2.318e-03 
+conv_input-1                 0.999599    7.089e-02    2.831e-02 
+conv_output_raw-1            0.999954    2.532e-02    9.729e-03 
+conv_output_silu-1           0.999889    1.493e-02    1.490e-02 
+ffn_gate-1                   0.999711    2.817e-02    2.405e-02 
+ffn_out-1                    0.999735    7.770e-03    2.301e-02 
+ffn_swiglu-1                 0.999647    6.715e-03    2.660e-02 
+ffn_up-1                     0.999717    2.401e-02    2.379e-02 
+final_output-1               0.999813    1.436e-02    1.936e-02 
+gate-1                       0.999978    5.535e-02    7.684e-03 
+l_out-1                      0.999992    2.711e-02    4.120e-03 
+linear_attn_out-1            0.999899    3.005e-02    1.425e-02 
+linear_attn_qkv_mixed-1      0.999599    7.089e-02    2.831e-02 
+new_state-1                  0.999770    6.902e-03    2.147e-02 
+norm-1                       1.000000    7.629e-06    4.860e-08 
+norm-1__1                    0.999938    1.100e-01    1.128e-02 
+norm-1__2                    0.999992    3.339e-02    3.930e-03 
+z-1                          0.999520    6.265e-02    3.098e-02 
+FINAL l_out-1: cosine=0.999992 max_abs=2.711e-02 rel_rms=4.120e-03
+
+result: PASS (threshold cosine >= 0.995, failures=0)

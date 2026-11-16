@@ -1,0 +1,10 @@
+
+prompt:  
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was perfor
+generated:  
+ = Robert Boulter = 
+ 
+ Robert
+{"prompt_tokens":62,"generated_tokens":8,"ids":[695,283,8137,211388,455,283,30858,8137],"text":" \n = Robert Boulter = \n \n Robert","load_s":41.54,"prefill_s":16.49,"prefill_tok_s":3.759,"decode_s":3.35,"decode_tok_s":2.3847,"heap_allocs_in_decode_forward":0,"peak_rss_kb":8719988,"rss_anon_kb":269228,"rss_file_kb":8432328,"swap_used_kb_before":732432,"swap_used_kb_after":732176,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":32,"gpu_arena_mib":6931.3,"gpu_weights_mib":6646.2,"gpu_kv_mib":12.5,"vram_used_mib":7044.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":0.526,"decode_cpu_layers_s":2.530,"decode_head_s":0.299,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0],"mtp_prefill_s":0.000,"prefill_main_s":16.495,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":0}

@@ -1,0 +1,26 @@
+loaded in 36.42 s; CPU arena 597.7 MiB; CPU resident layers 32 (6.96 GiB), streamed 0.00 GiB
+GPU: layers 0..31, KV iso3, arena 6931.3 MiB (weights 6646.2 MiB, KV 12.5 MiB), device memory in use 7042.2 MiB
+prompt tokens: 5
+	Command being timed: "taskset -c 0-3 ./build/qwen38-engine -m $HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p The capital of France is -n 24 --temp 0 --seed 42 --gpu-layers 32 --kv iso3 --dp4a all --resident-gib 11.0"
+	User time (seconds): 41.22
+	System time (seconds): 6.73
+	Percent of CPU this job got: 98%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:48.53
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 8696268
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 45692
+	Minor (reclaiming a frame) page faults: 326441
+	Voluntary context switches: 77033
+	Involuntary context switches: 992
+	Swaps: 0
+	File system inputs: 10129800
+	File system outputs: 16
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

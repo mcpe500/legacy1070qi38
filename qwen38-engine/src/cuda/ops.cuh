@@ -1,0 +1,30 @@
+// FP32 CUDA operators of the Qwen3.8-27B layers (sm_61). Every activation, norm, gate, RoPE rotation, DeltaNet state
+// update and attention score is computed in FP32. No half-precision arithmetic is used anywhere in these kernels.
+// All launchers enqueue on the given stream and return cudaGetLastError().
+#pragma once
+#include <cuda_runtime.h>
+
+#include <cstdint>
+
+// y[r] = x[r] / sqrt(mean(x[r]^2) + eps) * w   (w may be null). Rows are `n` floats; x may alias y.
+cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s);
+cudaError_t op_add_inplace(float * x, const float * y, int64_t n, cudaStream_t s);          // x += y
+cudaError_t op_silu_mul(float * g, const float * u, int64_t n, cudaStream_t s);              // g = silu(g) * u
+
+// Gated DeltaNet. T tokens, 48 value heads, 16 key heads, head size 128, conv kernel 4.
+cudaError_t op_dn_prep(const float * alpha, const float * beta_raw, const float * dt_bias, const float * ssm_a,
+                       float * gate, float * beta, int T, cudaStream_t s);
+cudaError_t op_dn_conv(const float * qkv, const float * conv_w, float * conv_state, float * out, int T, cudaStream_t s);
+// state_t holds, per value head, the transposed matrix Mt[i][j] = M[j][i] (j value index, i key index), 128 x 128.
+cudaError_t op_dn_rec(const float * conv_out, const float * gate, const float * beta, const float * z,
+                      const float * ssm_norm, float * state_t, float * attn_o, int T, float eps, cudaStream_t s);
+
+// Gated Attention. qfull: [T][24 heads][q(256) | gate(256)]. kproj: [T][4][256].
+// Writes qbuf [T][24][256] (RMSNorm + RoPE) and kout [T][4][256] (RMSNorm + RoPE).
+cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * qnorm, const float * knorm, float * qbuf,
+                       float * kout, int T, int pos0, float theta_scale, float eps, cudaStream_t s);
+// Stores T rows of [4][256] values at cache positions pos0.. . iso3: 8 blocks of 50 bytes per position, else FP32.
+cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool iso3, cudaStream_t s);
+// Causal GQA attention (24 query heads over 4 kv heads) with FP32 dequantization of the iso3 cache inside the kernel.
+cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
+                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s);

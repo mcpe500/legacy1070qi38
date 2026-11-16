@@ -1,0 +1,37 @@
+
+per-layer parity (l_out after each layer, T=509)
+  layer   cosine     max_abs
+    0   1.000000  1.692e-02
+    1   0.999999  2.839e-02
+    2   0.999996  1.046e-01
+    3   0.999997  9.996e-02
+    4   0.999995  1.084e-01
+    5   0.999993  1.175e-01
+    6   0.999990  1.299e-01
+    7   0.999990  1.265e-01
+   15   0.999987  2.181e-01
+   23   0.999967  2.604e-01
+   31   0.999943  3.477e-01
+   39   0.999914  7.812e-01
+   47   0.999875  4.936e+00
+   55   0.999353  4.778e+01
+   63   0.999904  6.046e-01
+worst layer cosine 0.999283 at layer 62
+logits cosine 0.999665, top-1 MATCH (ours 220 vs ref 220)
+top-5 ours: 220(23.31) 279(18.57) 5869(18.21) 7165(17.85) 5297(17.77)
+top-5 ref:  220(23.33) 279(18.60) 5869(18.20) 7165(17.86) 5297(17.75)
+
+prompt:  
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as " Craig " in the episode " Teddy 's Story " of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . 
+ In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as " Kieron Fletcher " . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . 
+ 
+ = = Career = = 
+ 
+ 
+ = = = 2000 – 2005 = = = 
+ 
+ In 2000 Boulter had a guest @-@ starring role on the television series The Bill ; he portrayed " Scott Parry " in the episode , " In Safe Hands " . Boulter starred as " Scott " in the play Herons written by Simon Stephens , which was performed in
+generated:  2001 at the Royal Court Theatre . He had a guest role
+{"prompt_tokens":509,"generated_tokens":16,"ids":[220,17,15,15,16,506,279,15717,6930,25385,641,1216,995,264,8376,3364],"text":" 2001 at the Royal Court Theatre . He had a guest role","load_s":43.28,"prefill_s":31.95,"prefill_tok_s":15.930,"decode_s":7.13,"decode_tok_s":2.2430,"heap_allocs_in_decode_forward":0,"peak_rss_kb":8815024,"rss_anon_kb":295368,"rss_file_kb":8435688,"swap_used_kb_before":716584,"swap_used_kb_after":715304,"parity_failures":0,"logits_cos":0.999665,"top1_match":true,"gpu_layers":32,"gpu_arena_mib":7123.9,"gpu_weights_mib":6646.2,"gpu_kv_mib":128.0,"vram_used_mib":7238.2,"kv":"f32","dp4a_mask":11565056,"decode_gpu_s":0.970,"decode_cpu_layers_s":5.567,"decode_head_s":0.596,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0],"mtp_prefill_s":0.000,"prefill_main_s":31.953,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":16}

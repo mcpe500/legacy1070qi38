@@ -1,0 +1,5 @@
+PASS server starts and /health answers : 42 s
+PASS long prompt has more than 2048 tokens and is accepted : 3889
+PASS needle-in-a-haystack over 3889 tokens (chunked prefill, iso3 KV) : 'PINEAPPLE-7421'
+PASS VRAM stays under the 7373 MiB cap during the long prefill : 7244.1875
+PASS a prompt longer than the context is rejected cleanly (400)

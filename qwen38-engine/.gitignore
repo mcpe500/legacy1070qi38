@@ -1,0 +1,20 @@
+# build trees and temporary artefacts
+build/
+build-sass/
+build*/
+archive/
+*.gguf
+*.bin
+*.cubin
+*.o
+*.a
+__pycache__/
+*.pyc
+# reference dumps (rebuild with tests/tools/dump_ref_tensors, see docs/stage1-baseline.md)
+tests/ref_tensors/
+tests/ref_full/
+# raw sampler logs of the benchmark runs (the summaries and result texts stay tracked)
+bench/results/**/*.vram.csv
+bench/results/**/*.vmstat
+bench/results/**/*.server.log
+tests/ref_full.std*

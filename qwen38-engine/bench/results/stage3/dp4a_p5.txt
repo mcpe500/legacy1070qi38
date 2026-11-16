@@ -1,0 +1,7 @@
+
+prompt: The capital of France is
+generated:  Paris.
+The capital of Germany is Berlin.
+The capital of Italy is Rome.
+The capital of Spain is
+{"prompt_tokens":5,"generated_tokens":24,"ids":[11751,13,198,760,6511,314,9564,369,19241,13,198,760,6511,314,14898,369,21047,13,198,760,6511,314,17163,369],"text":" Paris.\nThe capital of Germany is Berlin.\nThe capital of Italy is Rome.\nThe capital of Spain is","load_s":30.49,"prefill_s":5.88,"prefill_tok_s":0.850,"decode_s":11.29,"decode_tok_s":2.1260,"heap_allocs_in_decode_forward":0,"peak_rss_kb":10515208,"rss_anon_kb":244976,"rss_file_kb":10251800,"swap_used_kb_before":421672,"swap_used_kb_after":454376,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":24,"gpu_arena_mib":5132.5,"gpu_weights_mib":4869.2,"gpu_kv_mib":9.4,"vram_used_mib":5246.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":1.088,"decode_cpu_layers_s":9.328,"decode_head_s":0.872}

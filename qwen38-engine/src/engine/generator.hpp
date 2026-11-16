@@ -1,0 +1,47 @@
+// Generation session on top of Engine: chunked prefill (prompts up to ctx_max), reuse of the cached prefix for multi-turn chat,
+// the sampler, and speculative decoding with the MTP head and DeltaNet rollback. Used by the CLI and by the HTTP server.
+#pragma once
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
+
+#include "engine.hpp"
+#include "sampler.hpp"
+
+struct GenParams {
+    SamplerParams sp;
+    int max_tokens = 256;
+    int mtp_steps = 2;     // 0..3, clamped to 0 when the engine has no MTP block
+    bool reuse = true;     // continue from the cached state when it is a prefix of the new prompt
+    std::vector<float> * capture_logits = nullptr;   // receives the logits after the prefill (parity tests)
+};
+
+struct GenStats {
+    int prompt_tokens = 0, reused_tokens = 0, generated = 0, mtp_steps = 0;
+    double prefill_s = 0, prefill_main_s = 0, mtp_prefill_s = 0, ttft_s = 0, decode_s = 0;
+    double t_draft = 0, t_verify = 0, t_roll = 0, dec_gpu = 0, dec_cpu = 0, dec_head = 0;
+    long long cycles = 0, draft_n = 0, draft_acc = 0, accept_hist[4] = {0, 0, 0, 0};
+    uint64_t heap_allocs = 0;
+    std::string finish = "length";   // "stop" (end token), "length", "abort" (callback returned false)
+    std::vector<int32_t> ids;        // generated tokens (the stop token is not included)
+};
+
+class Generator {
+public:
+    explicit Generator(Engine & e);
+    // Calls on_token for every generated token as soon as it is final. Returning false aborts the generation.
+    // Called with the engine idle; one run at a time. `on_prefill(done, total)` (optional) reports prefill chunks.
+    void run(const std::vector<int32_t> & prompt, const GenParams & gp, const std::function<bool(int32_t)> & on_token, GenStats & st,
+             const std::function<void(int, int)> & on_prefill = nullptr);
+    void reset_cache() { cached_.clear(); have_h_ = false; }
+    size_t cached_tokens() const { return cached_.size(); }
+    bool is_stop(int32_t t) const;
+
+private:
+    Engine & eng_;
+    std::vector<int32_t> cached_;      // tokens whose effect is in the model state (positions 0 .. n-1)
+    bool have_h_ = false;              // last_h_ holds the output-normed hidden row of position n-1 (needed to continue the MTP KV)
+    std::vector<float> last_h_, hbuf_, hin_, hv_, hv_next_, hm_, hm2_, lrows_, lmtp_;
+    Sampler sampler_;
+};

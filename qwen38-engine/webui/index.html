@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>qwen38-engine</title>
+<style>
+:root{--bg:#0e1013;--panel:#161a20;--panel2:#1c2129;--line:#2a313b;--fg:#d8dee9;--dim:#8a94a3;--acc:#6aa9ff;--ok:#7bd88f;--warn:#f0c674;--err:#ff7b7b;--think:#b9a3ff}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+#app{display:grid;grid-template-columns:1fr 300px;grid-template-rows:auto 1fr auto;height:100%}
+header{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:15px;margin:0;font-weight:600}
+header .sub{color:var(--dim);font-size:12px}
+#state{margin-left:auto;font-size:12px;color:var(--dim)}
+#state.busy{color:var(--warn)}
+#chat{overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.msg{max-width:900px;width:100%;margin:0 auto}
+.role{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin-bottom:3px}
+.user .body{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;white-space:pre-wrap;word-break:break-word}
+.assistant .answer{white-space:pre-wrap;word-break:break-word}
+.assistant .answer:empty{display:none}
+details.think{margin:0 0 8px;border:1px solid var(--line);border-left:3px solid var(--think);border-radius:6px;background:#12151b}
+details.think summary{cursor:pointer;padding:5px 10px;color:var(--think);font-size:12px;user-select:none}
+details.think .tbody{padding:2px 12px 10px;color:var(--dim);white-space:pre-wrap;word-break:break-word;font-size:13px}
+.err{color:var(--err)}
+aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;padding:10px 12px}
+aside h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:6px 0 8px}
+.ctl{margin:0 0 9px}
+.ctl label{display:flex;justify-content:space-between;font-size:12px;color:var(--dim)}
+.ctl input[type=range]{width:100%;accent-color:var(--acc)}
+.ctl input[type=number],.ctl select{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:4px 6px}
+.row{display:flex;gap:8px;align-items:center}
+.row input[type=number]{width:64px}
+button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}
+button.primary{background:var(--acc);color:#07101c;border-color:var(--acc);font-weight:600}
+button.stop{background:var(--err);color:#200;border-color:var(--err)}
+#composer{grid-column:1;display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line);background:var(--panel)}
+#input{flex:1;resize:vertical;min-height:44px;max-height:200px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
+#telemetry{grid-column:1/3;display:flex;flex-wrap:wrap;gap:6px 22px;padding:6px 14px;border-top:1px solid var(--line);background:var(--panel);font-variant-numeric:tabular-nums}
+#telemetry div{display:flex;gap:6px;align-items:baseline}
+#telemetry .k{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+#telemetry .v{color:var(--ok);font-weight:600}
+#empty{color:var(--dim);text-align:center;margin-top:12vh}
+@media (max-width:820px){#app{grid-template-columns:1fr}aside{display:none}header,#telemetry,#composer{grid-column:1}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header><h1>qwen38-engine</h1><span class="sub">Qwen3.8-27B · GTX 1070 Ti · hybrid GPU + CPU</span><span id="state">idle</span></header>
+  <main id="chat"><div id="empty">Send a message to start. Reasoning appears in a collapsible block.</div></main>
+  <aside>
+    <h2>Sampler</h2>
+    <div class="ctl"><label>temperature <span id="v_temperature"></span></label><input type="range" id="temperature" min="0" max="2" step="0.05"></div>
+    <div class="ctl"><label>top_k (0 = off) <span id="v_top_k"></span></label><input type="range" id="top_k" min="0" max="200" step="1"></div>
+    <div class="ctl"><label>top_p <span id="v_top_p"></span></label><input type="range" id="top_p" min="0.05" max="1" step="0.01"></div>
+    <div class="ctl"><label>min_p <span id="v_min_p"></span></label><input type="range" id="min_p" min="0" max="0.5" step="0.01"></div>
+    <div class="ctl"><label>repeat_penalty <span id="v_repeat_penalty"></span></label><input type="range" id="repeat_penalty" min="1" max="2" step="0.01"></div>
+    <div class="ctl"><label>presence_penalty <span id="v_presence_penalty"></span></label><input type="range" id="presence_penalty" min="0" max="2" step="0.05"></div>
+    <div class="ctl"><label>seed (empty = random)</label><input type="number" id="seed" step="1" placeholder="random"></div>
+    <div class="ctl"><label>max_tokens</label><input type="number" id="max_tokens" min="1" max="4000" step="1"></div>
+    <h2>Engine</h2>
+    <div class="ctl"><label>mtp_steps (0-3) <span id="v_mtp_steps"></span></label><input type="range" id="mtp_steps" min="0" max="3" step="1"></div>
+    <div class="ctl"><label>reasoning effort</label><select id="reasoning_effort"><option>low</option><option>medium</option><option>xhigh</option></select></div>
+    <div class="ctl row"><input type="checkbox" id="enable_thinking"><label for="enable_thinking">thinking</label></div>
+    <div class="ctl row"><input type="checkbox" id="cache_prompt"><label for="cache_prompt">reuse cached prefix</label></div>
+    <div class="ctl row"><input type="checkbox" id="autocollapse"><label for="autocollapse">fold reasoning when done</label></div>
+    <div class="row"><button id="clear">Clear chat</button><button id="resetcache">Reset cache</button></div>
+  </aside>
+  <div id="composer"><textarea id="input" placeholder="Message (Enter sends, Shift+Enter = new line)"></textarea><button id="send" class="primary">Send</button></div>
+  <div id="telemetry">
+    <div><span class="k">pp tok/s</span><span class="v" id="t_pp">–</span></div>
+    <div><span class="k">tg tok/s</span><span class="v" id="t_tg">–</span></div>
+    <div><span class="k">TTFT ms</span><span class="v" id="t_ttft">–</span></div>
+    <div><span class="k">MTP accept</span><span class="v" id="t_acc">–</span></div>
+    <div><span class="k">VRAM MiB</span><span class="v" id="t_vram">–</span></div>
+    <div><span class="k">RSS MiB</span><span class="v" id="t_rss">–</span></div>
+    <div><span class="k">tokens</span><span class="v" id="t_tok">–</span></div>
+  </div>
+</div>
+
+<script id="core">
+// ---- pure logic (no DOM): tested headless with tests/webui_test.py -------------------------------------------------
+// Splits a stream of text into reasoning and answer parts. Tags that are cut between chunks are held back until they resolve.
+function ThinkParser() { this.mode = 'text'; this.buf = ''; }
+ThinkParser.prototype.push = function (chunk, final) {
+  this.buf += chunk;
+  var out = [];
+  for (;;) {
+    var tag = this.mode === 'text' ? '<think>' : '</think>';
+    var i = this.buf.indexOf(tag);
+    if (i >= 0) {
+      if (i > 0) out.push({ type: this.mode, text: this.buf.slice(0, i) });
+      this.buf = this.buf.slice(i + tag.length);
+      this.mode = this.mode === 'text' ? 'think' : 'text';
+      out.push({ type: 'switch', to: this.mode });
+      continue;
+    }
+    var keep = 0;
+    if (!final) {
+      for (var k = Math.min(tag.length - 1, this.buf.length); k > 0; k--) {
+        if (tag.indexOf(this.buf.slice(this.buf.length - k)) === 0) { keep = k; break; }
+      }
+    }
+    var emit = this.buf.slice(0, this.buf.length - keep);
+    if (emit) out.push({ type: this.mode, text: emit });
+    this.buf = this.buf.slice(this.buf.length - keep);
+    break;
+  }
+  return out;
+};
+
+// Splits an SSE byte stream (already decoded to text) into the payloads of its "data:" lines.
+function SSEParser() { this.buf = ''; }
+SSEParser.prototype.push = function (text) {
+  this.buf += text;
+  var parts = this.buf.split(/\r?\n\r?\n/);
+  this.buf = parts.pop();
+  var out = [];
+  for (var i = 0; i < parts.length; i++) {
+    var lines = parts[i].split(/\r?\n/), data = [];
+    for (var j = 0; j < lines.length; j++) {
+      if (lines[j].indexOf('data:') === 0) data.push(lines[j].slice(5).replace(/^ /, ''));
+    }
+    if (data.length) out.push(data.join('\n'));
+  }
+  return out;
+};
+
+// Request body for POST /v1/chat/completions from the control values and the chat history.
+function buildRequest(s, messages) {
+  var body = {
+    model: 'qwen3.8-27b', stream: true, messages: messages,
+    temperature: Number(s.temperature), top_k: Math.round(Number(s.top_k)), top_p: Number(s.top_p), min_p: Number(s.min_p),
+    repeat_penalty: Number(s.repeat_penalty), presence_penalty: Number(s.presence_penalty),
+    max_tokens: Math.max(1, Math.round(Number(s.max_tokens))), mtp_steps: Math.max(0, Math.min(3, Math.round(Number(s.mtp_steps)))),
+    enable_thinking: !!s.enable_thinking, reasoning_effort: s.reasoning_effort, cache_prompt: !!s.cache_prompt
+  };
+  if (s.seed !== '' && s.seed !== null && s.seed !== undefined && !isNaN(Number(s.seed))) body.seed = Math.round(Number(s.seed));
+  return body;
+}
+
+// Accumulates a whole reply: raw text (what is sent back as history) plus the reasoning / answer split.
+function ReplyState() { this.parser = new ThinkParser(); this.raw = ''; this.think = ''; this.answer = ''; this.thinking = false; this.thinkDone = false; }
+ReplyState.prototype.push = function (chunk, final) {
+  this.raw += chunk;
+  var parts = this.parser.push(chunk, final), events = [];
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i];
+    if (p.type === 'think') { this.think += p.text; this.thinking = true; }
+    else if (p.type === 'text') {
+      var t = p.text;
+      if (this.answer === '' && this.thinkDone) t = t.replace(/^\s+/, '');
+      this.answer += t;
+    } else if (p.type === 'switch') {
+      if (p.to === 'think') this.thinking = true;
+      else { this.thinking = false; this.thinkDone = true; }
+    }
+    events.push(p);
+  }
+  return events;
+};
+</script>
+
+<script id="ui">
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var DEFAULTS = { temperature: 0.7, top_k: 20, top_p: 0.95, min_p: 0, repeat_penalty: 1, presence_penalty: 0, seed: '', max_tokens: 1024,
+                   mtp_steps: 2, reasoning_effort: 'low', enable_thinking: true, cache_prompt: true, autocollapse: true };
+  var NUM = ['temperature', 'top_k', 'top_p', 'min_p', 'repeat_penalty', 'presence_penalty', 'mtp_steps'];
+  var settings = {};
+  try { settings = JSON.parse(localStorage.getItem('qwen38.settings') || '{}'); } catch (e) { settings = {}; }
+  Object.keys(DEFAULTS).forEach(function (k) { if (settings[k] === undefined) settings[k] = DEFAULTS[k]; });
+
+  function save() { try { localStorage.setItem('qwen38.settings', JSON.stringify(settings)); } catch (e) {} }
+  function bind() {
+    Object.keys(DEFAULTS).forEach(function (k) {
+      var el = $(k); if (!el) return;
+      if (el.type === 'checkbox') { el.checked = !!settings[k]; el.addEventListener('change', function () { settings[k] = el.checked; save(); }); return; }
+      el.value = settings[k];
+      var lab = $('v_' + k); if (lab) lab.textContent = settings[k];
+      el.addEventListener('input', function () {
+        settings[k] = (el.type === 'range' || k === 'max_tokens') ? Number(el.value) : el.value;
+        var l = $('v_' + k); if (l) l.textContent = el.value;
+        save();
+      });
+    });
+  }
+  bind();
+
+  var history = [];            // {role, content}  (assistant content = raw text with <think> tags)
+  var running = null;          // AbortController while a reply is streaming
+  var chat = $('chat');
+
+  function setState(text, busy) { var s = $('state'); s.textContent = text; s.className = busy ? 'busy' : ''; }
+  function fmt(x, d) { return (typeof x === 'number' && isFinite(x)) ? x.toFixed(d) : '–'; }
+  function scrollDown() { chat.scrollTop = chat.scrollHeight; }
+
+  function addMsg(role) {
+    var e = $('empty'); if (e) e.remove();
+    var m = document.createElement('div'); m.className = 'msg ' + role;
+    var r = document.createElement('div'); r.className = 'role'; r.textContent = role; m.appendChild(r);
+    var body = document.createElement('div'); body.className = role === 'user' ? 'body' : 'answer'; m.appendChild(body);
+    chat.appendChild(m); scrollDown();
+    return { root: m, body: body };
+  }
+
+  function showStats(x) {
+    if (!x) return;
+    if (x.phase === 'prefill') { setState('prefill ' + x.prefill_done + ' / ' + x.prefill_total + ' tokens', true); return; }
+    if (typeof x.pp_tok_s === 'number' && x.pp_tok_s > 0) $('t_pp').textContent = fmt(x.pp_tok_s, 1);
+    if (typeof x.tg_tok_s === 'number') $('t_tg').textContent = fmt(x.tg_tok_s, 2);
+    if (typeof x.ttft_ms === 'number' && x.ttft_ms > 0) $('t_ttft').textContent = fmt(x.ttft_ms, 0);
+    if (typeof x.accept_pct === 'number' && (x.draft_n > 0 || x.phase === 'done')) $('t_acc').textContent = x.draft_n > 0 ? fmt(x.accept_pct, 0) + ' %' : 'off';
+    if (typeof x.vram_mib === 'number') $('t_vram').textContent = fmt(x.vram_mib, 0);
+    if (typeof x.rss_mib === 'number') $('t_rss').textContent = fmt(x.rss_mib, 0);
+    if (typeof x.completion_tokens === 'number') $('t_tok').textContent = (x.prompt_tokens !== undefined ? x.prompt_tokens + ' in / ' : '') + x.completion_tokens + ' out';
+  }
+
+  function pollStats() {
+    if (running) return;
+    fetch('/v1/stats').then(function (r) { return r.json(); }).then(function (j) {
+      $('t_vram').textContent = fmt(j.vram_mib, 0); $('t_rss').textContent = fmt(j.rss_mib, 0);
+      if (!running) setState(j.busy ? 'busy (another client)' : 'idle', !!j.busy);
+    }).catch(function () { setState('server unreachable', true); });
+  }
+  setInterval(pollStats, 3000); pollStats();
+
+  function send() {
+    if (running) return;
+    var text = $('input').value.trim(); if (!text) return;
+    $('input').value = '';
+    history.push({ role: 'user', content: text });
+    addMsg('user').body.textContent = text;
+    var view = addMsg('assistant');
+    var reply = new ReplyState();
+    var thinkEl = null, thinkBody = null, thinkStart = 0;
+    function ensureThink() {
+      if (thinkEl) return;
+      thinkEl = document.createElement('details'); thinkEl.className = 'think'; thinkEl.open = true;
+      var sm = document.createElement('summary'); sm.textContent = 'Thinking…'; thinkEl.appendChild(sm);
+      thinkBody = document.createElement('div'); thinkBody.className = 'tbody'; thinkEl.appendChild(thinkBody);
+      view.root.insertBefore(thinkEl, view.body);
+      thinkStart = Date.now();
+    }
+    function render(events) {
+      for (var i = 0; i < events.length; i++) {
+        var p = events[i];
+        if (p.type === 'think') { ensureThink(); thinkBody.textContent = reply.think; }
+        else if (p.type === 'text') { view.body.textContent = reply.answer; }
+        else if (p.type === 'switch') {
+          if (p.to === 'think') ensureThink();
+          else if (thinkEl) {
+            thinkEl.firstChild.textContent = 'Reasoning (' + Math.max(1, Math.round((Date.now() - thinkStart) / 1000)) + ' s)';
+            if (settings.autocollapse) thinkEl.open = false;
+          }
+        }
+      }
+      scrollDown();
+    }
+
+    var ctrl = new AbortController(); running = ctrl;
+    $('send').textContent = 'Stop'; $('send').className = 'stop';
+    setState('waiting for the server', true);
+    var req = buildRequest(settings, history.slice());
+    var sse = new SSEParser(), dec = new TextDecoder('utf-8'), gotAny = false;
+
+    function finish(note) {
+      var tail = reply.push('', true); render(tail);
+      if (thinkEl && reply.thinking) thinkEl.firstChild.textContent = 'Reasoning (unfinished)';
+      if (note) { var n = document.createElement('div'); n.className = 'err'; n.textContent = note; view.root.appendChild(n); }
+      if (reply.raw) history.push({ role: 'assistant', content: reply.raw }); else history.pop();
+      running = null; $('send').textContent = 'Send'; $('send').className = 'primary';
+      setState('idle', false); pollStats();
+    }
+
+    fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req), signal: ctrl.signal })
+      .then(function (resp) {
+        if (!resp.ok) return resp.json().then(function (j) { throw new Error((j.error && j.error.message) || ('HTTP ' + resp.status)); });
+        var reader = resp.body.getReader();
+        function pump() {
+          return reader.read().then(function (r) {
+            if (r.done) return;
+            var payloads = sse.push(dec.decode(r.value, { stream: true }));
+            for (var i = 0; i < payloads.length; i++) {
+              if (payloads[i] === '[DONE]') continue;
+              var j; try { j = JSON.parse(payloads[i]); } catch (e) { continue; }
+              if (j.error) throw new Error(j.error.message || 'server error');
+              var ch = j.choices && j.choices[0];
+              if (ch && ch.delta && typeof ch.delta.content === 'string' && ch.delta.content !== '') {
+                if (!gotAny) { gotAny = true; setState('generating', true); }
+                render(reply.push(ch.delta.content, false));
+              }
+              if (j.x_stats) showStats(j.x_stats);
+            }
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .then(function () { finish(null); })
+      .catch(function (e) { finish(e && e.name === 'AbortError' ? null : 'Error: ' + (e && e.message ? e.message : e)); });
+  }
+
+  $('send').addEventListener('click', function () { if (running) running.abort(); else send(); });
+  $('input').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!running) send(); } });
+  $('clear').addEventListener('click', function () { if (running) return; history = []; chat.innerHTML = '<div id="empty">Send a message to start.</div>'; });
+  $('resetcache').addEventListener('click', function () { fetch('/v1/cache/clear', { method: 'POST' }).then(pollStats); });
+})();
+</script>
+</body>
+</html>

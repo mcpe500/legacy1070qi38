@@ -1,0 +1,10 @@
+[17:04:39] start bench-server-kviso3-nomtp
+bench-server-kviso3-nomtp: pp=13.458940593108807 tok/s (n=509), tg=2.1477257121805824 tok/s (n=256), draft_n=None accepted=None, peak_vram_MiB=7402
+[17:15:00] done bench-server-kviso3-nomtp
+[17:15:00] start bench-server-kviso3-mtp1
+bench-server-kviso3-mtp1: pp=10.832669876641429 tok/s (n=509), tg=2.3207594435000876 tok/s (n=256), draft_n=131 accepted=123, peak_vram_MiB=6965
+[17:19:02] done bench-server-kviso3-mtp1
+[17:19:02] start bench-server-kviso3-mtp2
+bench-server-kviso3-mtp2: pp=27.975782316095778 tok/s (n=509), tg=2.4048151755720193 tok/s (n=256), draft_n=179 accepted=165, peak_vram_MiB=7015
+[17:23:24] done bench-server-kviso3-mtp2
+[17:23:24] server sweep finished

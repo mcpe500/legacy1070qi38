@@ -1,0 +1,10 @@
+
+prompt: The capital of France is
+generated:  Paris.
+The capital of Germany is Berlin.
+The capital of Italy is Rome.
+The capital of Spain is Madrid.
+The capital of Portugal is Lisbon.
+The capital of Greece is Athens.
+The capital of the United
+{"prompt_tokens":5,"generated_tokens":48,"ids":[11751,13,198,760,6511,314,9564,369,19241,13,198,760,6511,314,14898,369,21047,13,198,760,6511,314,17163,369,23327,13,198,760,6511,314,32208,369,77916,13,198,760,6511,314,23655,369,44299,13,198,760,6511,314,279,3516],"text":" Paris.\nThe capital of Germany is Berlin.\nThe capital of Italy is Rome.\nThe capital of Spain is Madrid.\nThe capital of Portugal is Lisbon.\nThe capital of Greece is Athens.\nThe capital of the United","load_s":42.20,"prefill_s":1.66,"prefill_tok_s":3.016,"decode_s":18.61,"decode_tok_s":2.5799,"heap_allocs_in_decode_forward":0,"peak_rss_kb":9189656,"rss_anon_kb":330632,"rss_file_kb":8775056,"swap_used_kb_before":687796,"swap_used_kb_after":687540,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":32,"gpu_arena_mib":7089.2,"gpu_weights_mib":6646.2,"gpu_kv_mib":12.5,"vram_used_mib":7202.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":1.498,"decode_cpu_layers_s":14.217,"decode_head_s":1.451,"mtp_steps":1,"cycles":25,"draft_n":25,"draft_n_accepted":24,"accept_hist":[1,24,0,0],"mtp_prefill_s":0.043,"prefill_main_s":1.615,"mtp_draft_s":1.413,"mtp_verify_s":17.166,"mtp_rollback_s":0.026,"stream_min_t":40}
