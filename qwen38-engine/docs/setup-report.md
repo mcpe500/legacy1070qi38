@@ -1,7 +1,7 @@
 # Laporan setup.sh
 
 - waktu (UTC): 2026-11-15T15:35:23Z
-- workspace: $HOME/kiroween-2026/legacy1070qi38/qwen38-engine
+- workspace: ~/kiroween-2026/legacy1070qi38/qwen38-engine
 
 ## 1. Sistem dan kunci perangkat keras
   [info] Linux 5.15.0-203-generic x86_64
@@ -24,7 +24,7 @@
   [OK]   GTX 1070 Ti terdeteksi
   [OK]   compute capability 6.1 (sm_61)
   [WARN] ada proses GPU aktif. Jangan jalankan engine bersamaan:
-        402229, $HOME/llama.cpp/build-vulkan/bin/llama-bench, 7601 MiB
+        402229, ~/llama.cpp/build-vulkan/bin/llama-bench, 7601 MiB
   [OK]   tidak ada llama-server yang berjalan
 
 ## 4. Toolchain CUDA dan sm_61
@@ -52,8 +52,8 @@
   [OK]   curl: /usr/bin/curl
   [OK]   gh: /usr/bin/gh
   [OK]   git: /usr/bin/git
-  [OK]   hyperfine: $HOME/.local/bin/hyperfine
-  [OK]   rg: $HOME/.local/bin/rg
+  [OK]   hyperfine: ~/.local/bin/hyperfine
+  [OK]   rg: ~/.local/bin/rg
   [WARN] node tidak ada. Dibutuhkan untuk Playwright. Pasang Node LTS (nvm tanpa sudo, atau paket resmi)
   [WARN] npx tidak ada. Ikut Node. Playwright dijalankan one-shot dengan npx setelah Node ada
   [WARN] tidak ada chromium/google-chrome. Tes UI memakai Playwright setelah Node ada, atau pasang chromium (tanpa snap jika bisa)
@@ -81,16 +81,16 @@
   [OK]   CLAUDE.md -> AGENTS.md
 
 ## 10. Model dan binary (untuk Tahap 1)
-  [OK]   model 27B: $HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf (16G)
+  [OK]   model 27B: ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf (16G)
   [info] varian lokal: Qwen3.8-27B-Q3-DOWN-XS.gguf (7.9G)
   [info] varian lokal: Qwen3.8-27B-Q4_0.gguf (15G)
   [info] varian lokal: Qwen3.8-27B-UD-IQ3_S.gguf (594M)
   [info] varian lokal: Qwen3.8-27B-UD-IQ3_XXS.gguf (11G)
   [info] varian lokal: Qwen3.8-27B-UD-IQ4_XS.gguf (14G)
   [info] varian lokal: Qwen3.8-27B-UD-Q4_K_M.gguf (16G)
-  [OK]   $HOME/llama.cpp/build-iso3/bin/llama-server
-  [OK]   $HOME/llama.cpp/build-iso3/bin/llama-bench
-  [OK]   $HOME/llama.cpp/build-iso3/bin/llama-perplexity
+  [OK]   ~/llama.cpp/build-iso3/bin/llama-server
+  [OK]   ~/llama.cpp/build-iso3/bin/llama-bench
+  [OK]   ~/llama.cpp/build-iso3/bin/llama-perplexity
   [WARN] submodule legacy engine/llama.cpp tidak ditemukan
 
 ## Ringkasan

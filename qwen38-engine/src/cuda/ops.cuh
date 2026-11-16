@@ -20,11 +20,15 @@ cudaError_t op_dn_rec(const float * conv_out, const float * gate, const float * 
                       const float * ssm_norm, float * state_t, float * attn_o, int T, float eps, cudaStream_t s);
 
 // Gated Attention. qfull: [T][24 heads][q(256) | gate(256)]. kproj: [T][4][256].
-// Writes qbuf [T][24][256] (RMSNorm + RoPE) and kout [T][4][256] (RMSNorm + RoPE).
+// Writes qbuf [T][24][256] (RMSNorm + RoPE) and kout [T][4][256] (RMSNorm + RoPE). The RoPE angle tables
+// [ctx_max][32] are generated once by op_rope_table on the device.
+cudaError_t op_rope_table(float * cos_tab, float * sin_tab, int n_pos, float theta_scale, cudaStream_t s);
 cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * qnorm, const float * knorm, float * qbuf,
-                       float * kout, int T, int pos0, float theta_scale, float eps, cudaStream_t s);
+                       float * kout, int T, int pos0, const float * rope_cos, const float * rope_sin, float eps, cudaStream_t s,
+                       const int * pos_dev = nullptr);
 // Stores T rows of [4][256] values at cache positions pos0.. . iso3: 8 blocks of 50 bytes per position, else FP32.
-cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool iso3, cudaStream_t s);
+// pos_dev (optional): device pointer to the position, read by the kernel instead of pos0 (needed to replay a CUDA graph).
+cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool iso3, cudaStream_t s, const int * pos_dev = nullptr);
 // Causal GQA attention (24 query heads over 4 kv heads) with FP32 dequantization of the iso3 cache inside the kernel.
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
-                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s);
+                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev = nullptr);

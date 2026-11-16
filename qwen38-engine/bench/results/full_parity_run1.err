@@ -1,7 +1,7 @@
 loaded in 1.05 s; arena 597.7 MiB; resident layers 51 (10.38 GiB), streamed 3.08 GiB
 prompt tokens: 5
 Command exited with non-zero status 1
-	Command being timed: "taskset -c 0-3 ./build/qwen38-engine -m $HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p The capital of France is -n 0 --parity-dir tests/ref_full --resident-gib 10.5"
+	Command being timed: "taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p The capital of France is -n 0 --parity-dir tests/ref_full --resident-gib 10.5"
 	User time (seconds): 11.62
 	System time (seconds): 7.32
 	Percent of CPU this job got: 73%

@@ -1,0 +1,15 @@
+
+prompt:  
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as " Craig " in the episode " Teddy 's Story " of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . 
+ In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as " Kieron Fletcher " . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . 
+ 
+ = = Career = = 
+ 
+ 
+ = = = 2000 – 2005 = = = 
+ 
+ In 2000 Boulter had a guest @-@ starring role on the television series The Bill ; he portrayed " Scott Parry " in the episode , " In Safe Hands " . Boulter starred as " Scott " in the play Herons written by Simon Stephens , which was performed in
+generated:  2001 at the Royal Court Theatre . He had a guest role
+{"prompt_tokens":509,"generated_tokens":16,"ids":[220,17,15,15,16,506,279,15717,6930,25385,641,1216,995,264,8376,3364],"text":" 2001 at the Royal Court Theatre . He had a guest role","load_s":43.23,"prefill_s":23.10,"prefill_tok_s":22.039,"decode_s":5.50,"decode_tok_s":2.9082,"heap_allocs_in_decode_forward":0,"peak_rss_kb":9429572,"rss_anon_kb":556340,"rss_file_kb":8787216,"swap_used_kb_before":644328,"swap_used_kb_after":644328,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":32,"gpu_arena_mib":7199.5,"gpu_weights_mib":6646.2,"gpu_kv_mib":25.0,"vram_used_mib":7334.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":0.328,"decode_cpu_layers_s":4.201,"decode_head_s":0.396,"mtp_steps":2,"cycles":5,"draft_n":10,"draft_n_accepted":10,"accept_hist":[0,0,5,0],"mtp_prefill_s":5.041,"prefill_main_s":18.038,"mtp_draft_s":0.574,"mtp_verify_s":4.925,"mtp_rollback_s":0.003,"stream_min_t":40,"ttft_s":23.096,"finish":"length","temperature":0.000}

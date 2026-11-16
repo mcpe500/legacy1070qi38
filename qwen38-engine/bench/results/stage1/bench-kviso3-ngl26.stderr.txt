@@ -2,7 +2,7 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 8105 MiB):
   Device 0: NVIDIA GeForce GTX 1070 Ti, compute capability 6.1, VMM: yes, VRAM: 8105 MiB
 error: invalid parameter for argument: -ctk
 Command exited with non-zero status 1
-	Command being timed: "taskset -c 0,1,2,3 $HOME/llama.cpp/build-iso3/bin/llama-bench -m $HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -ngl 26 -p 512 -n 256 -r 2 -t 4 -ctk iso3 -ctv iso3 -o json"
+	Command being timed: "taskset -c 0,1,2,3 ~/llama.cpp/build-iso3/bin/llama-bench -m ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -ngl 26 -p 512 -n 256 -r 2 -t 4 -ctk iso3 -ctv iso3 -o json"
 	User time (seconds): 0.03
 	System time (seconds): 0.09
 	Percent of CPU this job got: 99%

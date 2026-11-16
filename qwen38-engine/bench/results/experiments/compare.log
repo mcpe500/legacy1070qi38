@@ -1,0 +1,19 @@
+[12:11:32] llama-server llama_ngl24 (-ngl 24, draft-mtp)
+llama_ngl24 {'tag': 'llama_ngl24', 'engine': 'llama-server', 'ngl': 24, 'spec': 'draft-mtp', 'ok': True, 'pp_tok_s': 12.260855801472031, 'tg_tok_s': 2.483875604938163, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 41514.231, 'draft_n': 179, 'draft_acc': 165, 'peak_vram_mib': 7015, 'peak_rss_mib': 14454.97265625}
+  peak VRAM at -ngl 24: 7015 MiB (cap 7373)
+[12:15:55] llama-server llama_ngl25 (-ngl 25, draft-mtp)
+llama_ngl25 {'tag': 'llama_ngl25', 'engine': 'llama-server', 'ngl': 25, 'spec': 'draft-mtp', 'ok': True, 'pp_tok_s': 27.246694732368134, 'tg_tok_s': 2.518898057370501, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 18681.165, 'draft_n': 181, 'draft_acc': 164, 'peak_vram_mib': 7239, 'peak_rss_mib': 14569.296875}
+  peak VRAM at -ngl 25: 7239 MiB (cap 7373)
+[12:20:05] llama-server llama_ngl26 (-ngl 26, draft-mtp)
+llama_ngl26 {'tag': 'llama_ngl26', 'engine': 'llama-server', 'ngl': 26, 'spec': 'draft-mtp', 'ok': True, 'pp_tok_s': 16.772845810523716, 'tg_tok_s': 2.6046200280204, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 30346.669, 'draft_n': 179, 'draft_acc': 165, 'peak_vram_mib': 7473, 'peak_rss_mib': 14674.73046875}
+  peak VRAM at -ngl 26: 7473 MiB (cap 7373)
+selected -ngl 25
+[12:24:29] llama-server llama_nomtp_ngl25 (-ngl 25, none)
+llama_nomtp_ngl25 {'tag': 'llama_nomtp_ngl25', 'engine': 'llama-server', 'ngl': 25, 'spec': 'none', 'ok': True, 'pp_tok_s': 29.50684953106718, 'tg_tok_s': 2.240697913957692, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 17250.232, 'draft_n': 0, 'draft_acc': 0, 'peak_vram_mib': 6605, 'peak_rss_mib': 14611.55859375}
+[12:28:41] qwen38-engine engine_mtp2 (--mtp-steps 2)
+engine_mtp2 {'tag': 'engine_mtp2', 'engine': 'qwen38-engine', 'mtp': 2, 'ok': True, 'pp_tok_s': 26.26418988648091, 'tg_tok_s': 2.0238, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 19380.0, 'ttft_ms': 19383.0, 'draft_n': 176, 'draft_acc': 168, 'peak_rss_mib': 9086.59765625, 'rss_anon_mib': 433.1484375, 'heap_allocs': 0, 'gpu_layers': 32, 'kv': 'iso3', 'load_s': 67.89, 'peak_vram_mib': 7335}
+[12:32:17] qwen38-engine engine_mtp0 (--mtp-steps 0)
+engine_mtp0 {'tag': 'engine_mtp0', 'engine': 'qwen38-engine', 'mtp': 0, 'ok': True, 'pp_tok_s': 26.974032856385797, 'tg_tok_s': 1.9527, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 18870.0, 'ttft_ms': 18867.0, 'draft_n': 0, 'draft_acc': 0, 'peak_rss_mib': 8660.14453125, 'rss_anon_mib': 325.9140625, 'heap_allocs': 0, 'gpu_layers': 32, 'kv': 'iso3', 'load_s': 73.21, 'peak_vram_mib': 7253}
+[12:36:02] qwen38-engine engine_adaptive (--mtp-steps 2)
+engine_adaptive {'tag': 'engine_adaptive', 'engine': 'qwen38-engine', 'mtp': 2, 'ok': True, 'pp_tok_s': 26.691137912952282, 'tg_tok_s': 2.582, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 19070.0, 'ttft_ms': 19070.0, 'draft_n': 207, 'draft_acc': 198, 'peak_rss_mib': 9121.1484375, 'rss_anon_mib': 452.47265625, 'heap_allocs': 0, 'gpu_layers': 32, 'kv': 'iso3', 'load_s': 58.94, 'peak_vram_mib': 7359}
+wrote ~/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/experiments/compare_raw.md

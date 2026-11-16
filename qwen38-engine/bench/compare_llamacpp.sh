@@ -6,10 +6,12 @@
 #   2. build/qwen38-engine --gpu-layers 32 --kv iso3 --dp4a all --mtp-steps 2 (and one extra run with --mtp-steps 0).
 # Prompt: bench/prompt512.txt, 256 generated tokens, temperature 0, seed 42. Output: bench/results/stage5/ and
 # bench/results/final_comparison.md.   Env: NGL_LIST="24 25 26"  CAP_MIB=7373  SKIP_LLAMA=1  SKIP_ENGINE=1  EXTRA=0
+#   OUTDIR=dir TABLE=file.md (other output places)  ADAPTIVE=1 (extra engine run with --mtp-adaptive 1)  TAGSUF=_r2 (repeat round)
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
 cd "$ROOT" || exit 2
-OUT="$ROOT/bench/results/stage5"
+OUT="${OUTDIR:-$ROOT/bench/results/stage5}"
+TABLE="${TABLE:-$ROOT/bench/results/final_comparison.md}"
 mkdir -p "$OUT"
 B="$HOME/llama.cpp/build-iso3/bin"
 M="$HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf"
@@ -66,15 +68,15 @@ PY
   [ "$ready" -eq 1 ]
 }
 
-run_engine() {  # TAG MTP_STEPS
-  local tag="$1" mtp="$2"
+run_engine() {  # TAG MTP_STEPS [extra engine args]
+  local tag="$1" mtp="$2"; shift 2
   echo "[$(date -u +%T)] qwen38-engine $tag (--mtp-steps $mtp)"
   pkill -x llama-server || true
   wait_gpu_free
   nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 200 > "$OUT/$tag.vram.csv" 2>/dev/null &
   local SMI=$!
   taskset -c 0-3 ./build/qwen38-engine -m "$M" -p "$(cat "$PROMPT_FILE")" -n "$N_PREDICT" --temp 0 --seed 42 \
-    --gpu-layers 32 --kv iso3 --dp4a all --mtp-steps "$mtp" > "$OUT/$tag.txt" 2> "$OUT/$tag.err"
+    --gpu-layers 32 --kv iso3 --dp4a all --mtp-steps "$mtp" "$@" > "$OUT/$tag.txt" 2> "$OUT/$tag.err"
   kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
   python3 bench/bench_summary.py engine "$tag" "$OUT" "$mtp"
 }
@@ -100,6 +102,7 @@ fi
 if [ -z "${SKIP_ENGINE:-}" ]; then
   run_engine "engine_mtp2${SUF}" 2
   [ "$EXTRA" = "1" ] && run_engine "engine_mtp0${SUF}" 0
+  [ -n "${ADAPTIVE:-}" ] && run_engine "engine_adaptive${SUF}" 2 --mtp-adaptive 1
 fi
 
-python3 bench/bench_summary.py table "$OUT" "$ROOT/bench/results/final_comparison.md"
+python3 bench/bench_summary.py table "$OUT" "$TABLE"

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 
@@ -17,6 +18,14 @@ int argmax(const float * v, int64_t n) {
     for (int64_t i = 1; i < n; ++i) if (v[i] > v[best]) best = i;
     return static_cast<int>(best);
 }
+
+// Softmax probability of token `best` (the argmax) over n logits.
+float top1_prob(const float * v, int64_t n, int best) {
+    const float mx = v[best];
+    double s = 0;
+    for (int64_t i = 0; i < n; ++i) s += std::exp(static_cast<double>(v[i] - mx));
+    return static_cast<float>(1.0 / s);
+}
 }  // namespace
 
 Generator::Generator(Engine & e) : eng_(e), sampler_(e.n_vocab) {
@@ -25,11 +34,11 @@ Generator::Generator(Engine & e) : eng_(e), sampler_(e.n_vocab) {
     last_h_.assign(H, 0.0f);
     hbuf_.assign(Tm * H, 0.0f);
     hin_.assign(Tm * H, 0.0f);
-    hv_.assign(4 * static_cast<size_t>(H), 0.0f);
-    hv_next_.assign(4 * static_cast<size_t>(H), 0.0f);
+    hv_.assign(5 * static_cast<size_t>(H), 0.0f);
+    hv_next_.assign(5 * static_cast<size_t>(H), 0.0f);
     hm_.assign(H, 0.0f);
     hm2_.assign(H, 0.0f);
-    lrows_.assign(4 * V, 0.0f);
+    lrows_.assign(5 * V, 0.0f);
     lmtp_.assign(V, 0.0f);
     cached_.reserve(static_cast<size_t>(eng_.config().ctx_max) + 8);
 }
@@ -40,7 +49,8 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
                     const std::function<void(int, int)> & on_prefill) {
     const EngineConfig & cfg = eng_.config();
     const int V = static_cast<int>(eng_.n_vocab);
-    const int D = eng_.has_mtp() ? std::max(0, std::min(gp.mtp_steps, 3)) : 0;
+    const bool adaptive = eng_.has_mtp() && gp.mtp_adaptive && gp.mtp_steps != 0;
+    const int D = !eng_.has_mtp() ? 0 : adaptive ? 4 : std::max(0, std::min(gp.mtp_steps, 3));   // D = largest number of drafts
     const int n_prompt = static_cast<int>(prompt.size());
     if (n_prompt < 1) throw std::runtime_error("empty prompt");
     if (n_prompt + 1 >= cfg.ctx_max) throw std::runtime_error("prompt of " + std::to_string(n_prompt) + " tokens does not fit in the context of " + std::to_string(cfg.ctx_max));
@@ -64,7 +74,11 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
     const bool had_h = have_h_;
     cached_.clear();
     have_h_ = false;
-    if (L == 0) eng_.reset();
+    if (L == 0) {
+        eng_.reset();
+        mtp_start_ = (D > 0 && gp.mtp_window > 0) ? std::max(0, n_prompt - gp.mtp_window) : 0;
+        eng_.set_mtp_kv_start(mtp_start_);
+    }
     st.reused_tokens = static_cast<int>(L);
 
     // ---- chunked prefill (chunks of t_max tokens; each chunk streams the CPU layers through the GPU when it is large)
@@ -86,9 +100,17 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
         const auto c1 = Clock::now();
         st.prefill_main_s += secs(c0, c1);
         if (D > 0) {
-            std::memcpy(hin_.data(), hprev.data(), sizeof(float) * H);   // zeros at position 0 (as llama.cpp)
-            if (T > 1) std::memcpy(hin_.data() + H, hbuf_.data(), sizeof(float) * H * static_cast<size_t>(T - 1));
-            eng_.mtp_forward(prompt.data() + pos, hin_.data(), T, pos, nullptr, nullptr);
+            // MTP rows for positions s0 .. pos+T-1 (s0 > pos when the prefill window starts inside this chunk). Position k pairs with the
+            // hidden row of k-1: hprev for the first position of the chunk (zeros at position 0, as llama.cpp), hbuf otherwise.
+            const int s0 = std::max(pos, mtp_start_);
+            if (s0 < pos + T) {
+                const int n = pos + T - s0;
+                for (int k = s0; k < pos + T; ++k) {
+                    const float * src = k == pos ? hprev.data() : hbuf_.data() + static_cast<size_t>(k - 1 - pos) * H;
+                    std::memcpy(hin_.data() + static_cast<size_t>(k - s0) * H, src, sizeof(float) * H);
+                }
+                eng_.mtp_prefill(prompt.data() + s0, hin_.data(), n, s0);
+            }
             std::memcpy(hprev.data(), hbuf_.data() + static_cast<size_t>(T - 1) * H, sizeof(float) * H);
             st.mtp_prefill_s += secs(c1, Clock::now());
         }
@@ -139,7 +161,7 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
         // one verification batch [cur, drafts] with logits for every row. Row j is sampled with the normal sampler; a draft is
         // accepted when it equals the sampled token, otherwise the sampled token replaces it. With bit-identical rows (every
         // operator gives a token the same result for any batch size) the output and the RNG stream equal plain decoding.
-        std::vector<int32_t> bt(5), vt(4), dr(3);
+        std::vector<int32_t> bt(6), vt(5), dr(4);
         std::vector<float> * hv = &hv_, * hvn = &hv_next_;
         // hv row 0 = h of position pos-1 (the last prefill row)
         std::memcpy(hv->data(), hprev.data(), sizeof(float) * H);
@@ -155,33 +177,47 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
             bt[k_prev] = cur;
             guarded([&] { eng_.mtp_forward(bt.data(), hv->data(), k_prev + 1, pos_new - k_prev, hm->data(), lmtp_.data()); });
             dr[0] = argmax(lmtp_.data(), V);
-            for (int i = 1; i < D; ++i) {
-                guarded([&] { eng_.mtp_forward(&dr[i - 1], hm->data(), 1, pos_new + i, hm2->data(), lmtp_.data()); });
-                dr[i] = argmax(lmtp_.data(), V);
-                std::swap(hm, hm2);
+            int De = D;   // drafts in this cycle
+            if (adaptive) {
+                float p = top1_prob(lmtp_.data(), V, dr[0]);
+                De = p >= gp.mtp_p_keep ? 1 : 0;
+                while (De < D && p >= gp.mtp_p_cont) {
+                    guarded([&] { eng_.mtp_forward(&dr[De - 1], hm->data(), 1, pos_new + De, hm2->data(), lmtp_.data()); });
+                    dr[De] = argmax(lmtp_.data(), V);
+                    p = top1_prob(lmtp_.data(), V, dr[De]);
+                    std::swap(hm, hm2);
+                    if (p < gp.mtp_p_keep) break;   // too uncertain to be worth a verification row
+                    ++De;
+                }
+            } else {
+                for (int i = 1; i < D; ++i) {
+                    guarded([&] { eng_.mtp_forward(&dr[i - 1], hm->data(), 1, pos_new + i, hm2->data(), lmtp_.data()); });
+                    dr[i] = argmax(lmtp_.data(), V);
+                    std::swap(hm, hm2);
+                }
             }
             const auto q1 = Clock::now();
             vt[0] = cur;
-            for (int i = 0; i < D; ++i) vt[i + 1] = dr[i];
+            for (int i = 0; i < De; ++i) vt[i + 1] = dr[i];
             guarded([&] {
-                eng_.dn_snapshot(true);
-                eng_.forward_ex(vt.data(), D + 1, pos_new, lrows_.data(), D + 1, hvn->data());
+                eng_.dn_snapshot(De > 0);
+                eng_.forward_ex(vt.data(), De + 1, pos_new, lrows_.data(), De + 1, hvn->data());
                 eng_.dn_snapshot(false);
             });
             st.dec_gpu += eng_.last_gpu_s; st.dec_cpu += eng_.last_cpu_s; st.dec_head += eng_.last_head_s;
             const auto q2 = Clock::now();
             int k = 0, cur_new = 0;
-            for (int j = 0; j <= D; ++j) {
+            for (int j = 0; j <= De; ++j) {
                 const int t = sampler_.sample(lrows_.data() + static_cast<size_t>(j) * V);
                 sampler_.accept(t);
-                if (j < D && t == dr[j]) { k = j + 1; continue; }
+                if (j < De && t == dr[j]) { k = j + 1; continue; }
                 cur_new = t;
                 break;
             }
-            guarded([&] { if (k < D) eng_.dn_rollback(k + 1); });
+            guarded([&] { if (k < De) eng_.dn_rollback(k + 1); });
             const auto q3 = Clock::now();
             st.t_draft += secs(q0, q1); st.t_verify += secs(q1, q2); st.t_roll += secs(q2, q3);
-            ++st.cycles; st.draft_n += D; st.draft_acc += k; ++st.accept_hist[k];
+            ++st.cycles; st.draft_n += De; st.draft_acc += k; ++st.accept_hist[k];
             // state first, then emission (emission may end the run)
             cached_.push_back(cur);
             for (int j = 0; j < k; ++j) cached_.push_back(dr[j]);

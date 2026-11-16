@@ -1,0 +1,4 @@
+stream: 6.96 GiB of CPU-layer weights registered as pinned memory (overlapped uploads)
+loaded in 48.73 s; CPU arena 854.9 MiB; CPU resident layers 32 (6.96 GiB), streamed 0.00 GiB
+GPU: layers 0..31, KV iso3, arena 7119.6 MiB (weights 6646.2 MiB, KV 25.0 MiB), device memory in use 7248.2 MiB
+prompt tokens: 509

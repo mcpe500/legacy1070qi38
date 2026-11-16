@@ -48,9 +48,18 @@ target_link_libraries(dump_ref_tensors PRIVATE ${LLAMA_COMMON_LIB} ${LLAMA_LIB} 
 set_target_properties(dump_ref_tensors PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
 
 # Stage 2 engine: CPU forward, tokenizer, static arena, streaming residency.
-add_library(qmat STATIC src/cpu/qmat.cpp)
-target_include_directories(qmat PUBLIC src/cpu src/packer "${LLAMA_SRC}/ggml/include")
+add_library(qmat STATIC src/cpu/qmat.cpp src/cpu/mt_dot.cpp)
+target_include_directories(qmat PUBLIC src/cpu src/packer src/common "${LLAMA_SRC}/ggml/include")
 target_link_libraries(qmat PUBLIC gguf_index ${GGML_CPU_LIB} ${GGML_LIB} ${GGML_BASE_LIB} pthread)
+
+# Multi-token W4A8 kernel self-test (Point A): mt_dot vs ggml vec_dot on random quantized blocks.
+add_executable(mt_dot_test tests/mt_dot_test.cpp src/cpu/mt_dot.cpp src/cpu/qmat.cpp)
+target_include_directories(mt_dot_test PRIVATE src/cpu src/common src/packer "${LLAMA_SRC}/ggml/include")
+target_link_libraries(mt_dot_test PRIVATE gguf_index ${GGML_CPU_LIB} ${GGML_LIB} ${GGML_BASE_LIB} pthread)
+
+# Point D evidence: scan every blk.<L>.ssm_a tensor and prove no head is -1.0 (identity invalid).
+add_executable(ssm_a_scan tests/ssm_a_scan.cpp)
+target_link_libraries(ssm_a_scan PRIVATE gguf_index)
 
 # The WebUI is compiled into the binary as a byte array.
 set(WEBUI_CPP "${CMAKE_BINARY_DIR}/webui_index.cpp")

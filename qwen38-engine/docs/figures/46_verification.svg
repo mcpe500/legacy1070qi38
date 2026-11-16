@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="430" viewBox="0 0 1000 430" role="img"><defs></defs>
+<rect x="0" y="0" width="1000" height="430" rx="0" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="24" y="38" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#1f2328" text-anchor="start">Verifikasi: matriks 6/6 PASS, SASS gate PASS, Poin D terbukti</text>
+<text x="24" y="62" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#57606a" text-anchor="start">B dan C bit-identik (3 lapis bukti) · A lulus bar numerik · D di-skip dengan bukti terukur</text>
+
+<text x="32" y="96" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#57606a" text-anchor="start">#</text>
+<text x="88" y="96" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#57606a" text-anchor="start">Pemeriksaan</text>
+<text x="520" y="96" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#57606a" text-anchor="start">Hasil</text>
+
+<rect x="24" y="104" width="604" height="34" rx="4" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="32" y="126" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1f2328" text-anchor="start">1</text>
+<text x="88" y="126" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">Rollback (mt_dot off) — bit-identik</text>
+<rect x="520" y="109" width="88" height="24" rx="12" fill="#dafbe1" stroke="none" stroke-width="1.5"/>
+<text x="564" y="126" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1a7f37" text-anchor="middle">PASS</text>
+
+<rect x="24" y="142" width="604" height="34" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="32" y="164" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1f2328" text-anchor="start">2</text>
+<text x="88" y="164" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">Parity p5 digit-exact: cosine 0,998678, worst 0,083893 @L63</text>
+<rect x="520" y="147" width="88" height="24" rx="12" fill="#dafbe1" stroke="none" stroke-width="1.5"/>
+<text x="564" y="164" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1a7f37" text-anchor="middle">PASS</text>
+
+<rect x="24" y="180" width="604" height="34" rx="4" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="32" y="202" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1f2328" text-anchor="start">3</text>
+<text x="88" y="202" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">postB p5 (mt_dot off): ids 24/24 IDENTICAL</text>
+<rect x="520" y="185" width="88" height="24" rx="12" fill="#dafbe1" stroke="none" stroke-width="1.5"/>
+<text x="564" y="202" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1a7f37" text-anchor="middle">PASS</text>
+
+<rect x="24" y="218" width="604" height="34" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="32" y="240" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1f2328" text-anchor="start">4</text>
+<text x="88" y="240" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">Parity A aktif: cosine 0,998853, KLD 0,004, top-1 match</text>
+<rect x="520" y="223" width="88" height="24" rx="12" fill="#dafbe1" stroke="none" stroke-width="1.5"/>
+<text x="564" y="240" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1a7f37" text-anchor="middle">PASS</text>
+
+<rect x="24" y="256" width="604" height="34" rx="4" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="32" y="278" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1f2328" text-anchor="start">5</text>
+<text x="88" y="278" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">post_p5 (MTP 2 + mt_dot): ids IDENTICAL (24)</text>
+<rect x="520" y="261" width="88" height="24" rx="12" fill="#dafbe1" stroke="none" stroke-width="1.5"/>
+<text x="564" y="278" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1a7f37" text-anchor="middle">PASS</text>
+
+<rect x="24" y="294" width="604" height="34" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="32" y="316" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1f2328" text-anchor="start">6</text>
+<text x="88" y="316" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">post_p512 (MTP 0): ids IDENTICAL (16)</text>
+<rect x="520" y="299" width="88" height="24" rx="12" fill="#dafbe1" stroke="none" stroke-width="1.5"/>
+<text x="564" y="316" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1a7f37" text-anchor="middle">PASS</text>
+
+<rect x="648" y="104" width="328" height="110" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="664" y="126" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="13" font-weight="700" fill="#1f2328" text-anchor="start">SASS gate (pasca-round)</text>
+<text x="664" y="150" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">IDP.4A ×1632 · HFMA2/HMUL2/HADD2 ×0</text>
+<text x="664" y="174" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="700" fill="#1a7f37" text-anchor="start">gate: PASS</text>
+<text x="664" y="196" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="start">bench/results/stage4/post_sass_gate.txt</text>
+
+<rect x="648" y="228" width="328" height="104" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="664" y="250" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="13" font-weight="700" fill="#1f2328" text-anchor="start">Poin D — pindai ssm_a (tests/ssm_a_scan)</text>
+<text x="664" y="274" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">48 layer × 48 head = 2304 nilai</text>
+<text x="664" y="292" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">min -139,42 · max -0,0038 · nol -1.0f</text>
+<text x="664" y="314" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="start">bench/results/stage4/post_ssm_a_scan.txt</text>
+
+<rect x="24" y="348" width="952" height="64" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="40" y="372" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="start">Kenapa A tidak bit-identik: mt_dot menjumlah kontribusi T token dengan urutan/pembulatan berbeda dari per-token — bar:</text>
+<text x="40" y="394" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12.5" font-weight="400" fill="#1f2328" text-anchor="start">cosine ≥ 0,995 + KLD kecil + token greedy sama (terpenuhi). Unit test 6 tipe PASS; Q4_K/Q6_K/IQ4_XS exact 0.000e+00.</text>
+</svg>

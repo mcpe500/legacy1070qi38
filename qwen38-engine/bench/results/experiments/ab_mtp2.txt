@@ -1,0 +1,4 @@
+ab_main_1: pp 15.90 tok/s (prefill 32.0 s) tg 2.578 tok/s MTP 169/176 (96%) peak VRAM 7245 MiB peak RSS 9215 MiB load 43.7 s ids vs ab_main_1: IDENTICAL
+ab_exp_1: pp 27.81 tok/s (prefill 18.3 s) tg 2.625 tok/s MTP 168/176 (95%) peak VRAM 7335 MiB peak RSS 9102 MiB load 43.2 s ids vs ab_main_1: IDENTICAL
+ab_main_2: pp 15.84 tok/s (prefill 32.1 s) tg 2.557 tok/s MTP 169/176 (96%) peak VRAM 7245 MiB peak RSS 9215 MiB load 42.0 s ids vs ab_main_1: IDENTICAL
+ab_exp_2: pp 27.81 tok/s (prefill 18.3 s) tg 2.608 tok/s MTP 168/176 (95%) peak VRAM 7335 MiB peak RSS 9102 MiB load 43.2 s ids vs ab_main_1: IDENTICAL

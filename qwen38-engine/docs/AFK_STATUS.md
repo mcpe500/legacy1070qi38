@@ -1,6 +1,6 @@
 # AFK status: qwen38-engine (Stages 2-5)
 
-Updated: 2026-11-16 (Stages 3 to 5 done: hybrid defaults, MTP + rollback, sampler, chunked prefill, HTTP/SSE server, WebUI, head-to-head benchmark). Single session, no subagents, no `/goal`. Canonical tree locked to this session.
+Updated: 2026-11-16 (Stages 3 to 5 done: hybrid defaults, MTP + rollback, sampler, chunked prefill, HTTP/SSE server, WebUI, head-to-head benchmark). Optimization round Poin A+B+C landed the same day (multi-token W4A8 CPU kernel, GQA invert, RoPE table; D measured-skipped — see the round section). Single session, no subagents, no `/goal`. Canonical tree locked to this session.
 Guardrails followed: `ninja -j4`; `taskset -c 0-3` on every run; one engine at a time (llama-server only between
 engine runs, never together); no full 64-layer FP32 load (weights stay quantized in the mmap, layers beyond a byte
 budget are streamed); SKILL.md and AGENTS.md stay local, nothing pushed or committed.
@@ -320,6 +320,25 @@ Reading: decode is 3 % faster in the engine in both rounds, prompt processing is
 The engine's pp is bound by streaming 7 GiB through the PCIe x1 link (about 9 s per prefill) plus 5 s of MTP prefill.
 The generated tokens of the two programs agree for the first 12 of 256 tokens, then diverge (different iso3 attention numerics in the two programs); the engine's own output is identical for MTP 0 and 2.
 
+## Experiment branch `exp/bit-lop3-cudagraph-prefill` (2026-11-16)
+
+Baseline commit `f90f3d7` could not be pushed to `main` (protected branch, push declined); it is on GitHub as branch `baseline/stage1-5`.
+Full record: `bench/results/experiment_comparison.md` (tables) and `bench/results/experiments/EXPERIMENT-LOG.md` (every attempt with reason, command, output, decision).
+
+A/B on the benchmark prompt (509 + 256, MTP 2, warm cache, alternating binaries, `bench/ab_main_vs_exp.sh`):
+
+| Binary | pp tok/s | tg tok/s | MTP accept | Peak VRAM MiB | Peak RSS MiB | tokens |
+|---|---:|---:|---|---:|---:|---|
+| baseline | 15.90 / 15.84 | 2.578 / 2.557 | 96 % | 7245 | 9215 | reference |
+| experiment | 27.81 / 27.81 | 2.625 / 2.608 | 95 % | 7335 | 9102 | 256/256 identical |
+
+llama-server `-ngl 25` iso3 + draft-mtp 2 in the same session: 27.25 pp, 2.519 tg (28.70 / 2.50 in the Stage 5 round). Prefill now matches llama.cpp; it does not clearly beat it.
+
+Kept: overlapped streaming from pinned page-cache pages (prefill 27.2 s -> 18.1 s), MTP KV prefill on the GPU (5 s -> 0.2 s), 128-bit weight loads + PTX lop3, CUDA graphs (no measurable gain),
+CPU matmul grain 128 (298 -> 287 ms/token). Opt-in: adaptive MTP (`--mtp-adaptive 1`), MTP prefill window (`--mtp-window`). Rejected after measurement: CPU-only prefill (3.4 tok/s),
+MTP prefill on the last token only (acceptance 96 % -> 51 %), token tiles 32/64, `__ldg`, software prefetch.
+Open: the first engine runs right after llama-server are cold (load 73 s, decode about 2.0 tok/s) with the 7 GiB pin; VRAM margin is 38 MiB.
+
 ## Decisions
 - **D8: dp4a per type behind a mask.** Option A stays the default and the fallback; `--dp4a all` enables the upgraded kernels. Hybrid is still not the default
   (`gpu_layers = 0`, `dp4a_mask = 0` in the config). Needs a user decision whether `--gpu-layers 24 --dp4a all` should become the default.
@@ -381,9 +400,30 @@ Q8_0 x Q8_1 `__dp4a` GEMV on `ssm_alpha` and `ssm_beta` of layer 0: cosine 1.000
 - The benchmark is one 256-token run per program, two rounds for the headline pair, a single prompt; no confidence interval.
 - Prefix reuse works when the new prompt starts with the exact token sequence of the previous prompt and reply. Re-tokenizing an assistant reply can differ from the generated tokens; the prompt is then prefilled again.
 
+## Round 2026-11-16: optimization points A + B + C (D measured-skipped)
+
+Three-point optimization round on this branch; every attempt, bug and decision is logged in
+`docs/OPT_LOG_2026-11-16.md`, raw files `bench/results/stage4/{pre_*,post_*}`.
+
+| Point | Change | Verification | Verdict |
+|---|---|---|---|
+| A | multi-token W4A8 dot products, `src/cpu/mt_dot.cpp` + dispatch from `qmatmul`: each weight block is decoded once and multiplied against all T activation rows (T 2..16), AVX2, ggml-shaped integer/float epilog | NOT bit-identical by design. Parity: cosine 0.998853 (bar >= 0.995), KLD(ref\|\|ours) 0.0041, greedy top-1 = reference 11751; generated ids IDENTICAL vs pre-round baselines at both MTP 0 and MTP 2 | kept |
+| B | GQA loop inverted in CPU `attn_layer`: six Q heads share one K/V row read | bit-identical, three layers of proof: rollback PASS, parity digits reproduce 0.998678 / 0.083893 exactly, ids 24/24 identical | kept |
+| C | RoPE cos/sin precomputed [ctx][32] at load (CPU) + `rope_table_kernel` lookup (GPU `ops.cu`) | bit-identical, same three-layer proof as B | kept |
+| D | `sigmoid(-x)` identity for ssm_a | measured and skipped: `tests/ssm_a_scan` over all 48 layers = 2304 values, min -139.42, max -0.0038, zero bitwise -1.0f (`bench/results/stage4/post_ssm_a_scan.txt`) — identity invalid, exact form still needs powf | skipped with evidence |
+
+Verification matrix 6/6 PASS (rollback; digit-exact parity with `QWEN_MT_DOT=0`; postB ids 24/24; Point-A parity
+above bar; `post_p5` MTP 2 + mt_dot ids IDENTICAL(24); `post_p512` MTP 0 ids IDENTICAL(16)). SASS gate PASS after
+the round (`post_sass_gate.txt`). Battery numbers in `bench/results/experiment_comparison.md`: MTP 0 tg
+2.494 -> 2.814 (+13 %, B+C), MTP 2/3 tg up to 3.322-3.373 (+33 % over baseline; MTP now beats no-MTP at 100 %
+acceptance — this closes the Stage 5 "Next session" item 3), pp unchanged, VRAM/RSS unchanged. mt_dot micro-bench
+at T=4: Q4_K 1.07-1.11x, Q5_K 1.31-1.35x, Q6_K 1.34-1.35x, IQ4_XS 1.21-1.33x.
+
 ## Next session
 All five stages are done. Open points, in order of value:
 1. Open `scripts/serve.sh` in a real browser and check the layout.
 2. Faster prefill: overlap the weight upload with compute in streamed prefill (needs a second staging buffer, about 75 MiB), or skip the MTP prefill for short replies.
-3. A multi-token CPU kernel for the K-quants would make MTP verification cheaper and lower the acceptance rate at which MTP pays off (about 90 % now).
+3. DONE 2026-11-16 (Point A, `src/cpu/mt_dot.cpp`): MTP verify 87.7 -> 75.9 s on the headline 256-token run,
+   MTP 2/3 tg up to +33 % over the pre-round baseline and now above no-MTP at 100 % acceptance; see the round
+   section above.
 4. Decide the MTP default (0 or 1 are faster on low-acceptance text) and whether long contexts should default to `--kv f32` (fits the cap at 7319 MiB).

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -227,6 +228,21 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     hlast_ = arena_->alloc_n<float>(kHidden);
     hn_ = arena_->alloc_n<float>(8 * static_cast<size_t>(kHidden));
     act_ = static_cast<uint8_t *>(arena_->alloc(qmat_act_bytes(12 /* Q4_K -> Q8_K */, kFFN, cfg_.t_max)));
+    rope_cos_ = arena_->alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * (kRope / 2));
+    rope_sin_ = arena_->alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * (kRope / 2));
+    {
+        // Same theta chain as the old per-call rope lambda (theta = pos, then repeated theta_scale multiplies),
+        // so the table values are bit-identical to what std::cos/std::sin produced inline.
+        const float theta_scale = std::pow(10000000.0f, -2.0f / static_cast<float>(kRope));
+        for (int pos = 0; pos < cfg_.ctx_max; ++pos) {
+            float theta = static_cast<float>(pos);
+            for (int p = 0; p < kRope / 2; ++p) {
+                rope_cos_[static_cast<size_t>(pos) * (kRope / 2) + p] = std::cos(theta);
+                rope_sin_[static_cast<size_t>(pos) * (kRope / 2) + p] = std::sin(theta);
+                theta *= theta_scale;
+            }
+        }
+    }
     const bool roll = cfg_.mtp_steps > 0 && mtp_ok_;
     for (int il = 0; il < kLayers; ++il) {
         if (layers_[il].is_attn) {
@@ -261,6 +277,8 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         gc.dp4a_mask = cfg_.dp4a_mask;
         gc.stream_prefill = cfg_.stream_min_t > 0 && g0 < kLayers;
         gc.roll_t = roll ? kRollT : 0;
+        gc.use_graph = cfg_.cuda_graph;
+        gc.pin_stream = cfg_.pin_stream;
         gpu_ = std::make_unique<GpuLayers>(ix, gc, eps_);
         for (int il = 0; il < g0; ++il) hint_layer(il, false);  // weights are in VRAM now: drop their file pages
     }
@@ -441,17 +459,16 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
     qmatmul(*pool_, L.wk, xn_, T, kbuf_, act_);
     qmatmul(*pool_, L.wv, xn_, T, vbuf_, act_);
 
-    // RoPE angle table for the first 64 dims: pair p (0..31) rotates dims (p, p+32), theta = pos * base^(-2p/64),
-    // accumulated by repeated multiplication exactly like ggml_mrope_cache_init (all position components equal for text).
-    const float theta_scale = std::pow(10000000.0f, -2.0f / static_cast<float>(kRope));
+    // RoPE angles come from the precomputed tables (generated at load with the identical accumulation chain),
+    // so the values are bit-identical to the old inline chain; the 28 heads of a token share one lookup.
     auto rope = [&](float * v, int pos) {
-        float theta = static_cast<float>(pos);
+        const float * cs = rope_cos_ + static_cast<size_t>(pos) * (kRope / 2);
+        const float * sn = rope_sin_ + static_cast<size_t>(pos) * (kRope / 2);
         for (int p = 0; p < kRope / 2; ++p) {
-            const float c = std::cos(theta), s = std::sin(theta);
+            const float c = cs[p], s = sn[p];
             const float x0 = v[p], x1 = v[p + kRope / 2];
             v[p] = x0 * c - x1 * s;
             v[p + kRope / 2] = x0 * s + x1 * c;
-            theta *= theta_scale;
         }
     };
 
@@ -473,30 +490,51 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
     }
 
     const float kq_scale = 1.0f / std::sqrt(static_cast<float>(kHD));
-    pool_->parallel_for(static_cast<int64_t>(T) * kNH, 1, [&](int64_t b, int64_t e) {
-        float sc[kMaxCtxStack];
+    constexpr int kQG = kNH / kNKV;  // 6 query heads share one K/V group: their score and V passes read each row once
+    pool_->parallel_for(static_cast<int64_t>(T) * kNKV, 1, [&](int64_t b, int64_t e) {
+        float sc[kQG][kMaxCtxStack];
         for (int64_t idx = b; idx < e; ++idx) {
-            const int t = static_cast<int>(idx / kNH), h = static_cast<int>(idx % kNH), g = h / (kNH / kNKV);
-            const int n = pos0 + t + 1;  // causal: positions 0 .. pos0+t
-            const float * q = qbuf_ + static_cast<int64_t>(t) * kQW + h * kHD;
-            float mx = -INFINITY;
-            for (int j = 0; j < n; ++j) {
-                sc[j] = dotf(q, kc + static_cast<int64_t>(j) * kKVW + g * kHD, kHD) * kq_scale;
-                if (sc[j] > mx) mx = sc[j];
+            const int t = static_cast<int>(idx / kNKV), g = static_cast<int>(idx % kNKV);
+            const int n = pos0 + t + 1;  // causal: positions j0 .. pos0+t (j0 > 0 only for the MTP layer with a prefill window)
+            const int j0 = il == 64 ? std::min(mtp_kv_start_, pos0 + t) : 0;
+            const float * q[kQG];
+            float mx[kQG], sum[kQG];
+            for (int hh = 0; hh < kQG; ++hh) {
+                q[hh] = qbuf_ + static_cast<int64_t>(t) * kQW + (g * kQG + hh) * kHD;
+                mx[hh] = -INFINITY;
+                sum[hh] = 0.0f;
             }
-            float sum = 0.0f;
-            for (int j = 0; j < n; ++j) { sc[j] = std::exp(sc[j] - mx); sum += sc[j]; }
-            const float inv = 1.0f / sum;
-            float o[kHD];
-            for (int d = 0; d < kHD; ++d) o[d] = 0.0f;
-            for (int j = 0; j < n; ++j) {
-                const float pj = sc[j] * inv;
+            // Score pass: every K row is read once for all six query heads of the group.
+            for (int j = 0; j < j0; ++j)
+                for (int hh = 0; hh < kQG; ++hh) sc[hh][j] = 0.0f;
+            for (int j = j0; j < n; ++j) {
+                const float * krow = kc + static_cast<int64_t>(j) * kKVW + g * kHD;
+                for (int hh = 0; hh < kQG; ++hh) {
+                    const float s = dotf(q[hh], krow, kHD) * kq_scale;
+                    sc[hh][j] = s;
+                    if (s > mx[hh]) mx[hh] = s;
+                }
+            }
+            for (int hh = 0; hh < kQG; ++hh)
+                for (int j = j0; j < n; ++j) { sc[hh][j] = std::exp(sc[hh][j] - mx[hh]); sum[hh] += sc[hh][j]; }
+            float o[kQG][kHD];
+            for (int hh = 0; hh < kQG; ++hh) {
+                for (int d = 0; d < kHD; ++d) o[hh][d] = 0.0f;
+            }
+            // Value pass: every V row is read once for all six query heads of the group.
+            for (int j = j0; j < n; ++j) {
                 const float * v = vc + static_cast<int64_t>(j) * kKVW + g * kHD;
-                for (int d = 0; d < kHD; ++d) o[d] += pj * v[d];
+                for (int hh = 0; hh < kQG; ++hh) {
+                    const float pj = sc[hh][j] * (1.0f / sum[hh]);
+                    for (int d = 0; d < kHD; ++d) o[hh][d] += pj * v[d];
+                }
             }
-            const float * gate = bufA_ + static_cast<int64_t>(t) * 2 * kQW + h * 2 * kHD + kHD;
-            float * dst = attn_o_ + static_cast<int64_t>(t) * kInner + h * kHD;
-            for (int d = 0; d < kHD; ++d) dst[d] = o[d] * sigm(gate[d]);
+            for (int hh = 0; hh < kQG; ++hh) {
+                const int h = g * kQG + hh;
+                const float * gate = bufA_ + static_cast<int64_t>(t) * 2 * kQW + h * 2 * kHD + kHD;
+                float * dst = attn_o_ + static_cast<int64_t>(t) * kInner + h * kHD;
+                for (int d = 0; d < kHD; ++d) dst[d] = o[hh][d] * sigm(gate[d]);
+            }
         }
     });
 
@@ -575,6 +613,21 @@ void Engine::forward_ex(const int32_t * tokens, int T, int pos0, float * logits,
     last_gpu_s = std::chrono::duration<double>(c1 - c0).count();
     last_cpu_s = std::chrono::duration<double>(c2 - c1).count();
     last_head_s = std::chrono::duration<double>(c3 - c2).count();
+    if (T > 8 && std::getenv("QWEN_STREAM_DEBUG"))
+        std::fprintf(stderr, "forward T=%d pos0=%d: GPU layers %.2f s, CPU/streamed layers %.2f s, head %.2f s\n", T, pos0, last_gpu_s, last_cpu_s, last_head_s);
+}
+
+void Engine::mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0) {
+    if (!(gpu_ && gpu_->stream_ready() && cfg_.mtp_gpu_prefill && T >= cfg_.stream_min_t)) { mtp_forward(tokens, h_in, T, pos0, nullptr, nullptr); return; }
+    if (T < 1 || T > cfg_.t_max || pos0 < 0 || pos0 + T > cfg_.ctx_max) throw std::runtime_error("mtp_prefill: T or position out of range");
+    for (int t = 0; t < T; ++t) {
+        if (tokens[t] < 0 || tokens[t] >= n_vocab) throw std::runtime_error("mtp_prefill: token id out of range");
+        qmat_row_to_f32(tok_embd_, tokens[t], proj_);
+        float * dst = bufA_ + static_cast<int64_t>(t) * 2 * kHidden;
+        rmsnorm(proj_, kHidden, mtp_enorm_, eps_, dst);
+        rmsnorm(h_in + static_cast<int64_t>(t) * kHidden, kHidden, mtp_hnorm_, eps_, dst + kHidden);
+    }
+    gpu_->mtp_kv(bufA_, T, pos0, kcache_[16], vcache_[16]);
 }
 
 void Engine::mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits) {

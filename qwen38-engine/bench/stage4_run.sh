@@ -41,7 +41,7 @@ msg = (f"{tag}: rc={rc} prompt={d['prompt_tokens']} gen={d['generated_tokens']} 
        f"pp={d['prompt_tokens']/d['prefill_s']:.2f} tok/s (prefill {d['prefill_s']:.1f}s) tg={d['decode_tok_s']:.3f} tok/s "
        f"peak_vram={vram} MiB rss_peak={d['peak_rss_kb']/1024:.0f} MiB rss_anon={d['rss_anon_kb']/1024:.0f} MiB "
        f"swap_in/out={si}/{so} KiB heap_allocs={d['heap_allocs_in_decode_forward']} "
-       f"draft_n={d['draft_n']} draft_n_accepted={d['draft_n_accepted']} ({acc:.0f}%) cycles={d['cycles']} accept_hist={d['accept_hist'][:d['mtp_steps']+1]} "
+       f"draft_n={d['draft_n']} draft_n_accepted={d['draft_n_accepted']} ({acc:.0f}%) cycles={d['cycles']} accept_hist={d['accept_hist']} "
        f"draft/verify/rollback={d['mtp_draft_s']:.2f}/{d['mtp_verify_s']:.2f}/{d['mtp_rollback_s']:.2f}s")
 if same:
     ref = [l for l in open(same + ".txt", encoding="utf-8").read().splitlines() if l.startswith('{"prompt_tokens"')]

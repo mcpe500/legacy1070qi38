@@ -32,6 +32,9 @@ struct EngineConfig {
     // Prefill batches of at least stream_min_t tokens (first call, position 0) run the CPU layers on the GPU too, one layer
     // at a time through a staging buffer. 0 disables it.
     int stream_min_t = 40;
+    bool pin_stream = true;      // overlapped streamed prefill from pinned (registered) mmap pages
+    bool mtp_gpu_prefill = true; // MTP KV of large prefill batches computed on the GPU
+    bool cuda_graph = true;      // CUDA graph replay of the GPU layers for batches of 1..4 tokens
     int mtp_steps = 2;           // 0 .. 3 draft tokens per cycle from the MTP head (blk.64); 0 = plain greedy decoding
 };
 
@@ -74,12 +77,16 @@ public:
     // positions (see src/engine/main.cpp for the pairing). Fills the MTP KV; the last row's hidden state (after the head norm)
     // goes to h_out and its logits to logits (either may be null).
     void mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits);
+    // Prefill of the MTP KV only (no output): on the GPU when prefill streaming is available and T >= stream_min_t, else mtp_forward.
+    void mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0);
     bool has_mtp() const { return mtp_ok_; }
+    // First position the MTP attention looks at (the MTP KV below it was not filled when the prefill window is used).
+    void set_mtp_kv_start(int p) { mtp_kv_start_ = p < 0 ? 0 : p; }
     const EngineConfig & config() const { return cfg_; }
 
     // DeltaNet state snapshot and rollback (GPU and CPU layers). With the snapshot on, a forward() of at most kRollT tokens keeps
     // the state from before the call; dn_rollback(keep) leaves the state as if only the first `keep` tokens had been processed.
-    static constexpr int kRollT = 4;
+    static constexpr int kRollT = 5;   // verification batch of up to 4 drafts + 1
     void dn_snapshot(bool on);
     void dn_rollback(int keep);
 
@@ -130,11 +137,16 @@ private:
     uint8_t * act_ = nullptr;
     float * hlast_ = nullptr;
     float * hn_ = nullptr;      // [8][5120] normed rows when forward_ex has no h_rows buffer
+    // RoPE angle tables [ctx_max][kRope/2], generated once at load with the same accumulation chain as the old
+    // per-call computation (theta = pos, then repeated theta_scale multiplies) so every value is bit-identical.
+    float * rope_cos_ = nullptr;
+    float * rope_sin_ = nullptr;
     // MTP head
     LayerW mtp_L_;
     QMat mtp_eh_;
     const float *mtp_enorm_ = nullptr, *mtp_hnorm_ = nullptr, *mtp_head_norm_ = nullptr;
     bool mtp_ok_ = false;
+    int mtp_kv_start_ = 0;
     // DeltaNet rollback on the CPU layers (indexed like conv_state_; null for layers that run on the GPU).
     bool dn_save_ = false;
     std::vector<float *> snap_conv_, snap_ssm_, sv_qkv_, sv_z_, sv_gate_, sv_beta_;

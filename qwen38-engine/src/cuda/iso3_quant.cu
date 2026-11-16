@@ -50,14 +50,16 @@ __device__ void quantize_block(const float * __restrict__ x, uint8_t * __restric
 }
 
 // src: [T][1024] floats (4 kv heads x 256). Block b = t*8 + g*2 + half goes to cache position pos0 + t.
-__global__ void kv_store_iso3_kernel(const float * __restrict__ src, uint8_t * __restrict__ cache, int T, int pos0) {
+__global__ void kv_store_iso3_kernel(const float * __restrict__ src, uint8_t * __restrict__ cache, int T, int pos0, const int * pos_dev) {
+    if (pos_dev) pos0 = *pos_dev;
     const int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= T * 8) return;
     const int t = idx >> 3, rem = idx & 7;  // rem = g*2 + half
     quantize_block(src + static_cast<int64_t>(t) * 1024 + rem * 128, cache + (static_cast<int64_t>(pos0 + t) * 8 + rem) * 50);
 }
 
-__global__ void kv_store_f32_kernel(const float * __restrict__ src, float * __restrict__ cache, int T, int pos0) {
+__global__ void kv_store_f32_kernel(const float * __restrict__ src, float * __restrict__ cache, int T, int pos0, const int * pos_dev) {
+    if (pos_dev) pos0 = *pos_dev;
     const int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= static_cast<int64_t>(T) * 1024) return;
     cache[static_cast<int64_t>(pos0) * 1024 + i] = src[i];
@@ -65,13 +67,13 @@ __global__ void kv_store_f32_kernel(const float * __restrict__ src, float * __re
 
 }  // namespace
 
-cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool iso3, cudaStream_t s) {
+cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool iso3, cudaStream_t s, const int * pos_dev) {
     if (iso3) {
         const int n = T * 8;
-        kv_store_iso3_kernel<<<(n + 63) / 64, 64, 0, s>>>(src, static_cast<uint8_t *>(cache), T, pos0);
+        kv_store_iso3_kernel<<<(n + 63) / 64, 64, 0, s>>>(src, static_cast<uint8_t *>(cache), T, pos0, pos_dev);
     } else {
         const int64_t n = static_cast<int64_t>(T) * 1024;
-        kv_store_f32_kernel<<<static_cast<unsigned>((n + 255) / 256), 256, 0, s>>>(src, static_cast<float *>(cache), T, pos0);
+        kv_store_f32_kernel<<<static_cast<unsigned>((n + 255) / 256), 256, 0, s>>>(src, static_cast<float *>(cache), T, pos0, pos_dev);
     }
     return cudaGetLastError();
 }
