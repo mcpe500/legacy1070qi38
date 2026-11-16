@@ -1,0 +1,4 @@
+rollback keep=1: batch rows differing from single-step logits: 0 of 4; steps after rollback differing: 0 of 5
+rollback keep=2: batch rows differing from single-step logits: 0 of 4; steps after rollback differing: 0 of 4
+rollback keep=3: batch rows differing from single-step logits: 0 of 4; steps after rollback differing: 0 of 3
+rollback test: PASS (bit-identical)

@@ -6,6 +6,8 @@
 #include "ggml-cpu.h"
 #include "ggml.h"
 
+#include "mt_dot.hpp"
+
 void qmat_init() {
     static bool done = false;
     if (!done) {
@@ -41,10 +43,18 @@ void qmatmul(Pool & pool, const QMat & W, const float * x, int64_t T, float * y,
     const size_t arow = ggml_row_size(tc->vec_dot_type, W.in);
     for (int64_t t = 0; t < T; ++t) ta->from_float(x + t * W.in, act + t * arow, W.in);
 
+    static const int64_t grain = [] { const char * e = std::getenv("QWEN_QM_GRAIN"); return e ? std::atoll(e) : 128; }();
+
+    // Multi-token path (Point A): unpack each weight block once for the whole small batch. T == 1 decode stays on
+    // the ggml vec_dot path unchanged.
+    if (mt_dot_use(W.type, T)) {
+        mt_dot(pool, W, act, static_cast<int64_t>(arow), T, y, grain);
+        return;
+    }
+
     // 128 rows per chunk: measured 287 ms/token for the 32 CPU layers against 298 ms with 8 rows (fewer atomic hand-outs, longer
     // sequential runs for the hardware prefetcher). 512 was slower (310 ms, load imbalance); explicit _mm_prefetch was 30 % slower.
     // QWEN_QM_GRAIN overrides it (experiments only). Each row is computed the same way whatever the chunk, so results are identical.
-    static const int64_t grain = [] { const char * e = std::getenv("QWEN_QM_GRAIN"); return e ? std::atoll(e) : 128; }();
     auto work = [&](int64_t b, int64_t e) {
         for (int64_t o = b; o < e; ++o) {
             const uint8_t * row = W.p + static_cast<size_t>(o) * W.row_bytes;

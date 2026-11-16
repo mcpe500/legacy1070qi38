@@ -82,6 +82,7 @@ struct GpuLayers::Impl {
     float *alpha = nullptr, *betar = nullptr, *gate = nullptr, *beta = nullptr, *fg = nullptr, *fu = nullptr;
     float *qbuf = nullptr, *kproj = nullptr, *kout = nullptr, *vproj = nullptr;
     float theta_scale = 0.0f;
+    float * rope_cos = nullptr, * rope_sin = nullptr;   // [ctx_max][32] angle tables, generated once on the device
     // Prefill streaming: one staging buffer for the weights of the layer being run, plus one layer of state and FP32 KV.
     uint8_t * stage = nullptr;   // one matrix at a time
     uint8_t * stage2 = nullptr;  // second staging buffer: the next matrix uploads while the current one is multiplied
@@ -296,6 +297,8 @@ struct GpuLayers::Impl {
         kproj = pl.take<float>(Tm * kKVW);
         kout = pl.take<float>(Tm * kKVW);
         vproj = pl.take<float>(Tm * kKVW);
+        rope_cos = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
+        rope_sin = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         pos_dev = pl.take<int>(64);
     }
 
@@ -407,7 +410,7 @@ struct GpuLayers::Impl {
         gemv(l.wk, xn, T, kproj);
         gemv(l.wv, xn, T, vproj);
         const int * pd = in_graph ? pos_dev : nullptr;
-        CK(op_qk_prep(bufA, kproj, l.q_norm, l.k_norm, qbuf, kout, T, pos0, theta_scale, eps, st, pd));
+        CK(op_qk_prep(bufA, kproj, l.q_norm, l.k_norm, qbuf, kout, T, pos0, rope_cos, rope_sin, eps, st, pd));
         CK(op_kv_store(kout, l.kcache, T, pos0, iso3, st, pd));
         CK(op_kv_store(vproj, l.vcache, T, pos0, iso3, st, pd));
         CK(op_attention(qbuf, bufA, l.kcache, l.vcache, attn_o, T, pos0, iso3, cfg.ctx_max, st, pd));
@@ -467,6 +470,7 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     }
     CK(q8_scratch_alloc(m.q8, cfg.t_max, kHidden));
     CK(actq8_alloc(m.act, cfg.t_max, kFFN));
+    CK(op_rope_table(m.rope_cos, m.rope_sin, cfg.ctx_max, m.theta_scale, m.st));
     CK(cudaHostAlloc(reinterpret_cast<void **>(&m.h_stage), std::max(static_cast<size_t>(cfg.t_max) * kHidden, static_cast<size_t>(kVH) * kDH * kDH) * sizeof(float), cudaHostAllocDefault));
     reset();
     CK(cudaDeviceSynchronize());
@@ -656,7 +660,7 @@ void GpuLayers::mtp_kv(const float * concat_host, int T, int pos0, float * k_hos
     m.gemv(wk, m.xn, T, m.kproj);
     m.gemv(wv, m.xn, T, m.vproj);
     // q is not needed; qk_prep also writes qbuf from bufA (unused here).
-    CK(op_qk_prep(m.bufA, m.kproj, l.q_norm, l.k_norm, m.qbuf, m.kout, T, pos0, m.theta_scale, m.eps, m.st));
+    CK(op_qk_prep(m.bufA, m.kproj, l.q_norm, l.k_norm, m.qbuf, m.kout, T, pos0, m.rope_cos, m.rope_sin, m.eps, m.st));
     CK(cudaStreamSynchronize(m.st));
     CK(cudaMemcpy(k_host + static_cast<size_t>(pos0) * kKVW, m.kout, static_cast<size_t>(T) * kKVW * sizeof(float), cudaMemcpyDeviceToHost));
     CK(cudaMemcpy(v_host + static_cast<size_t>(pos0) * kKVW, m.vproj, static_cast<size_t>(T) * kKVW * sizeof(float), cudaMemcpyDeviceToHost));

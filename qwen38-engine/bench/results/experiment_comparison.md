@@ -57,3 +57,51 @@ Previous round (Stage 5, baseline binary): llama-server -ngl 25 28.70 / 2.50, ba
 
 Checks after the experiments: SASS gate PASS (IDP.4A x1632, HFMA2/HMUL2/HADD2 x0), rollback test bit-identical, `gemv_parity` PASS, greedy 24/24 identical to the llama-server baseline,
 `tests/webui_test.py` 46/46, `tests/server_test.py` 47/47.
+
+## Round 2026-11-16: multi-token W4A8 CPU kernel (A) + GQA invert (B) + RoPE table (C)
+
+Same branch after the round in `docs/OPT_LOG_2026-11-16.md` (every attempt recorded there). Prompt files and token
+counts match the Stage 4 pre-round baselines (`bench/results/stage4/pre_p5`, `pre_p512`, same harness, ctx 4096).
+
+### Battery (`bench/results/stage4/run_post_battery.sh`, `taskset -c 0-3`)
+
+| Prompt (gen) | MTP | pp tok/s (prefill s) | tg tok/s | accept | ids vs pre baseline |
+|---|---|---:|---:|---|---|
+| p5 (24) | 0 | 3.88 (1.3) | 2.811 | | IDENTICAL (24) |
+| p5 (24) | 2 | 3.94 (1.3) | 2.527 | 75 % (15/20) | IDENTICAL (24) |
+| p5 (24) | 3 | 3.91 (1.3) | 2.519 | 67 % (16/24) | |
+| p5 (24) | adaptive | 4.00 (1.2) | 2.918 | 83 % (15/18) | |
+| p64 (64) | 0 | 6.20 (10.0) | 2.665 | | |
+| p64 (64) | 2 | 6.14 (10.1) | 3.205 | 100 % (42/42) | |
+| p64 (64) | 3 | 6.15 (10.1) | **3.373** | 100 % (48/48) | |
+| p64 (64) | adaptive | 6.16 (10.1) | 3.305 | 100 % (47/47) | |
+| p512 (16) | 0 | 28.20 (18.1) | 2.814 | | IDENTICAL (16) |
+| p512 (16) | 2 | 27.88 (18.3) | 3.301 | 100 % (10/10) | |
+| p512 (16) | 3 | 27.81 (18.3) | **3.322** | 100 % (12/12) | |
+| p512 (16) | adaptive | 27.81 (18.3) | 2.674 | 86 % (12/14) | |
+| p512 (256) | 2 | 27.94 (18.2) | **3.013** | 95 % (168/176) | IDENTICAL (256) vs `ab_exp_1` |
+
+Pre-round baselines (same harness, captured before the round): `pre_p5` tg 2.711 (MTP 0), `pre_p512` pp 28.25,
+tg 2.494 (MTP 0).
+
+**Reading.**
+- MTP 0 decode (multi-token kernel inactive at T=1) improved tg 2.494 -> 2.814 on p512 (+13 %, 16-token sample) and
+  2.711 -> 2.811 on p5: that is the CPU-side saving from B (six Q heads share one K/V row read) and C (RoPE cos/sin
+  table lookup instead of per-token trig). Prefill unchanged (28.20 vs 28.25), as expected — it is GPU-bound.
+- MTP 2/3 now clearly beat MTP 0 on this text (acceptance 100 %): tg 3.21-3.37, +17-27 % over the MTP 0 runs and
+  +33 % over the pre-round baseline (2.494). Before the round MTP was slower than no-MTP on 75 % acceptance text; the
+  multi-token kernel lowers the acceptance rate at which MTP pays off — this was the open "Next session" item 3 of
+  Stage 5, now closed.
+- Headline config (p512 + 256 tokens, the A/B section above): tg 2.625/2.608 -> **3.013** (+15 %), ids 256/256
+  identical to `ab_exp_1`, MTP verify 87.72 -> 75.85 s (-13.5 %), draft 9.66 -> 8.99 s, acceptance unchanged at
+  95 % (168/176), pp 27.94 vs 27.81, peak VRAM 7337 vs 7335 MiB.
+- Short 5-token prompt stays MTP-hostile (acceptance 67-75 %, per-cycle overhead dominates 24 tokens); adaptive
+  picks 2.918 there.
+- Micro-bench of the kernel alone (48 MiB matrix, in 5120 x out 17408, `taskset -c 0-3`): T=4 speedup vs ggml
+  vec_dot Q4_K 1.07-1.11x, Q5_K 1.31-1.35x, Q6_K 1.34-1.35x, IQ4_XS 1.21-1.33x; T=3 Q4_K 0.99x (parity),
+  others 1.17-1.32x.
+- VRAM peak 7255-7361 MiB, RSS peak 8.6-9.1 GiB across the battery: same range as the pre-round runs. No memory
+  regression.
+- Point D was measured and skipped: all 48 ssm_a tensors, 2304 values, min -139.42, max -0.0038, zero bitwise
+  -1.0f (`bench/results/stage4/post_ssm_a_scan.txt`) — the sigmoid(-x) identity is invalid; the exact form still
+  needs powf.

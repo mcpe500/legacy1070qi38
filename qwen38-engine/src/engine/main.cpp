@@ -281,6 +281,27 @@ int main(int argc, char ** argv) {
             std::vector<float> ref;
             if (read_floats(parity_dir + "/result_output.bin", ref) && ref.size() == lg.size()) {
                 logits_cos = cosine(lg.data(), ref.data(), ref.size(), nullptr);
+                // KL divergence D(ref || ours) over the softmax of the two logit vectors (Point A parity bar).
+                {
+                    double rmax = -INFINITY, omax = -INFINITY;
+                    for (size_t i = 0; i < ref.size(); ++i) {
+                        rmax = std::fmax(rmax, ref[i]);
+                        omax = std::fmax(omax, lg[i]);
+                    }
+                    double lse_r = 0, lse_o = 0;
+                    for (size_t i = 0; i < ref.size(); ++i) {
+                        lse_r += std::exp(ref[i] - rmax);
+                        lse_o += std::exp(lg[i] - omax);
+                    }
+                    lse_r = rmax + std::log(lse_r);
+                    lse_o = omax + std::log(lse_o);
+                    double kld = 0;
+                    for (size_t i = 0; i < ref.size(); ++i) {
+                        const double pr = std::exp(ref[i] - lse_r);
+                        kld += pr * ((ref[i] - lse_r) - (lg[i] - lse_o));
+                    }
+                    std::printf("logits KLD(ref||ours) %.6g\n", kld);
+                }
                 top1_match = argmax(lg.data(), eng.n_vocab) == argmax(ref.data(), eng.n_vocab);
                 std::vector<int> a(ref.size()), b(ref.size());
                 for (size_t i = 0; i < a.size(); ++i) a[i] = b[i] = static_cast<int>(i);

@@ -137,6 +137,10 @@ private:
     uint8_t * act_ = nullptr;
     float * hlast_ = nullptr;
     float * hn_ = nullptr;      // [8][5120] normed rows when forward_ex has no h_rows buffer
+    // RoPE angle tables [ctx_max][kRope/2], generated once at load with the same accumulation chain as the old
+    // per-call computation (theta = pos, then repeated theta_scale multiplies) so every value is bit-identical.
+    float * rope_cos_ = nullptr;
+    float * rope_sin_ = nullptr;
     // MTP head
     LayerW mtp_L_;
     QMat mtp_eh_;
