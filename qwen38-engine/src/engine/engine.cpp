@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -261,6 +262,8 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         gc.dp4a_mask = cfg_.dp4a_mask;
         gc.stream_prefill = cfg_.stream_min_t > 0 && g0 < kLayers;
         gc.roll_t = roll ? kRollT : 0;
+        gc.use_graph = cfg_.cuda_graph;
+        gc.pin_stream = cfg_.pin_stream;
         gpu_ = std::make_unique<GpuLayers>(ix, gc, eps_);
         for (int il = 0; il < g0; ++il) hint_layer(il, false);  // weights are in VRAM now: drop their file pages
     }
@@ -477,19 +480,21 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
         float sc[kMaxCtxStack];
         for (int64_t idx = b; idx < e; ++idx) {
             const int t = static_cast<int>(idx / kNH), h = static_cast<int>(idx % kNH), g = h / (kNH / kNKV);
-            const int n = pos0 + t + 1;  // causal: positions 0 .. pos0+t
+            const int n = pos0 + t + 1;  // causal: positions j0 .. pos0+t (j0 > 0 only for the MTP layer with a prefill window)
+            const int j0 = il == 64 ? std::min(mtp_kv_start_, pos0 + t) : 0;
             const float * q = qbuf_ + static_cast<int64_t>(t) * kQW + h * kHD;
             float mx = -INFINITY;
-            for (int j = 0; j < n; ++j) {
+            for (int j = 0; j < j0; ++j) sc[j] = 0.0f;
+            for (int j = j0; j < n; ++j) {
                 sc[j] = dotf(q, kc + static_cast<int64_t>(j) * kKVW + g * kHD, kHD) * kq_scale;
                 if (sc[j] > mx) mx = sc[j];
             }
             float sum = 0.0f;
-            for (int j = 0; j < n; ++j) { sc[j] = std::exp(sc[j] - mx); sum += sc[j]; }
+            for (int j = j0; j < n; ++j) { sc[j] = std::exp(sc[j] - mx); sum += sc[j]; }
             const float inv = 1.0f / sum;
             float o[kHD];
             for (int d = 0; d < kHD; ++d) o[d] = 0.0f;
-            for (int j = 0; j < n; ++j) {
+            for (int j = j0; j < n; ++j) {
                 const float pj = sc[j] * inv;
                 const float * v = vc + static_cast<int64_t>(j) * kKVW + g * kHD;
                 for (int d = 0; d < kHD; ++d) o[d] += pj * v[d];
@@ -575,6 +580,21 @@ void Engine::forward_ex(const int32_t * tokens, int T, int pos0, float * logits,
     last_gpu_s = std::chrono::duration<double>(c1 - c0).count();
     last_cpu_s = std::chrono::duration<double>(c2 - c1).count();
     last_head_s = std::chrono::duration<double>(c3 - c2).count();
+    if (T > 8 && std::getenv("QWEN_STREAM_DEBUG"))
+        std::fprintf(stderr, "forward T=%d pos0=%d: GPU layers %.2f s, CPU/streamed layers %.2f s, head %.2f s\n", T, pos0, last_gpu_s, last_cpu_s, last_head_s);
+}
+
+void Engine::mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0) {
+    if (!(gpu_ && gpu_->stream_ready() && cfg_.mtp_gpu_prefill && T >= cfg_.stream_min_t)) { mtp_forward(tokens, h_in, T, pos0, nullptr, nullptr); return; }
+    if (T < 1 || T > cfg_.t_max || pos0 < 0 || pos0 + T > cfg_.ctx_max) throw std::runtime_error("mtp_prefill: T or position out of range");
+    for (int t = 0; t < T; ++t) {
+        if (tokens[t] < 0 || tokens[t] >= n_vocab) throw std::runtime_error("mtp_prefill: token id out of range");
+        qmat_row_to_f32(tok_embd_, tokens[t], proj_);
+        float * dst = bufA_ + static_cast<int64_t>(t) * 2 * kHidden;
+        rmsnorm(proj_, kHidden, mtp_enorm_, eps_, dst);
+        rmsnorm(h_in + static_cast<int64_t>(t) * kHidden, kHidden, mtp_hnorm_, eps_, dst + kHidden);
+    }
+    gpu_->mtp_kv(bufA_, T, pos0, kcache_[16], vcache_[16]);
 }
 
 void Engine::mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits) {

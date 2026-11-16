@@ -1,4 +1,4 @@
-usage: $HOME/llama.cpp/build-iso3/bin/llama-bench [options]
+usage: ~/llama.cpp/build-iso3/bin/llama-bench [options]
 
 options:
   -h, --help

@@ -15,8 +15,24 @@ constexpr int WARPS = 4;   // output rows per thread block
 
 __device__ __forceinline__ uint32_t rd16(const uint8_t * p) { return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8); }
 __device__ __forceinline__ uint32_t rd32(const uint8_t * p) { return rd16(p) | (rd16(p + 2) << 16); }  // 2-byte alignment is enough
-__device__ __forceinline__ uint32_t ld32a(const uint8_t * p) { return *reinterpret_cast<const uint32_t *>(p); }  // 4-byte aligned
 __device__ __forceinline__ float half_at(const uint8_t * p) { return f16_to_f32(rd16(p)); }
+
+// 128-bit and 64-bit vector loads (the caller guarantees 16-byte / 8-byte alignment: Q4_K and Q5_K blocks are 144 / 176 bytes,
+// IQ4_XS blocks 136 bytes, and every tensor starts on a 256-byte boundary of the VRAM arena).
+__device__ __forceinline__ uint4 ld128(const uint8_t * p) { return *reinterpret_cast<const uint4 *>(p); }
+__device__ __forceinline__ uint2 ld64(const uint8_t * p) { return *reinterpret_cast<const uint2 *>(p); }
+
+// PTX lop3.b32: any bitwise function of three inputs in one instruction (immLut computed for a = 0xF0, b = 0xCC, c = 0xAA).
+__device__ __forceinline__ uint32_t lop3_and(uint32_t a, uint32_t m) {            // a & m                     (0xF0 & 0xCC = 0xC0)
+    uint32_t r;
+    asm("lop3.b32 %0, %1, %2, 0, 0xC0;" : "=r"(r) : "r"(a), "r"(m));
+    return r;
+}
+__device__ __forceinline__ uint32_t lop3_and_or(uint32_t a, uint32_t m, uint32_t c) {  // (a & m) | c    ((0xF0 & 0xCC) | 0xAA = 0xEA)
+    uint32_t r;
+    asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(r) : "r"(a), "r"(m), "r"(c));
+    return r;
+}
 
 __device__ __forceinline__ void get_scale_min_k4(int j, const uint8_t * q, int & d, int & m) {
     if (j < 4) { d = q[j] & 63; m = q[j + 4] & 63; }
@@ -63,8 +79,10 @@ template <> struct Prep<GT_Q4_K> {
         u.mn = dmin * static_cast<float>(m);
         const uint8_t * q = blk + 16 + 32 * (s >> 1);
         const int sh = (s & 1) * 4;
+        const uint4 a = ld128(q), b = ld128(q + 16);
+        const uint32_t qq[8] = {a.x, a.y, a.z, a.w, b.x, b.y, b.z, b.w};
 #pragma unroll
-        for (int g = 0; g < 8; ++g) u.w[g] = (ld32a(q + 4 * g) >> sh) & 0x0F0F0F0Fu;
+        for (int g = 0; g < 8; ++g) u.w[g] = lop3_and(qq[g] >> sh, 0x0F0F0F0Fu);
     }
 };
 
@@ -79,11 +97,13 @@ template <> struct Prep<GT_Q5_K> {
         const uint8_t * qh = blk + 16;
         const uint8_t * q = blk + 48 + 32 * (s >> 1);
         const int sh = (s & 1) * 4;
+        const uint4 a = ld128(q), b = ld128(q + 16), ha = ld128(qh), hb = ld128(qh + 16);
+        const uint32_t qq[8] = {a.x, a.y, a.z, a.w, b.x, b.y, b.z, b.w};
+        const uint32_t hh[8] = {ha.x, ha.y, ha.z, ha.w, hb.x, hb.y, hb.z, hb.w};
 #pragma unroll
         for (int g = 0; g < 8; ++g) {
-            const uint32_t lo = (ld32a(q + 4 * g) >> sh) & 0x0F0F0F0Fu;
-            const uint32_t hi = ((ld32a(qh + 4 * g) >> s) & 0x01010101u) << 4;
-            u.w[g] = lo | hi;
+            const uint32_t hi = ((hh[g] >> s) & 0x01010101u) << 4;
+            u.w[g] = lop3_and_or(qq[g] >> sh, 0x0F0F0F0Fu, hi);   // (low nibble) | (fifth bit)
         }
     }
 };
@@ -151,9 +171,11 @@ template <> struct Prep<GT_IQ4_XS> {
         u.s0 = u.s1 = d * static_cast<float>(ls - 32);
         u.mn = 0.0f;
         const uint8_t * qs = blk + 8 + 16 * ib;
+        const uint2 a = ld64(qs), b = ld64(qs + 8);
+        const uint32_t qq[4] = {a.x, a.y, b.x, b.y};
 #pragma unroll
         for (int g = 0; g < 4; ++g) {
-            const int2 t = table16(ld32a(qs + 4 * g));
+            const int2 t = table16(qq[g]);
             u.w[g] = static_cast<uint32_t>(t.x);        // low nibbles -> positions 4g .. 4g+3
             u.w[4 + g] = static_cast<uint32_t>(t.y);    // high nibbles -> positions 16+4g ..
         }
@@ -248,12 +270,17 @@ __global__ void gemv_dp4a_kernel(const uint8_t * __restrict__ W, int64_t in, int
 #pragma unroll
         for (int t = 0; t < TT; ++t) {
             if (t < nt) {
-                const int * x4 = reinterpret_cast<const int *>(qx + static_cast<int64_t>(t0 + t) * in + u * 32);
+                const int4 * x16 = reinterpret_cast<const int4 *>(qx + static_cast<int64_t>(t0 + t) * in + u * 32);   // 32-byte aligned
+                const int4 xa = x16[0], xb = x16[1];
                 int i0 = 0, i1 = 0;
-#pragma unroll
-                for (int g = 0; g < 4; ++g) i0 = __dp4a(static_cast<int>(uw.w[g]), x4[g], i0);
-#pragma unroll
-                for (int g = 4; g < 8; ++g) i1 = __dp4a(static_cast<int>(uw.w[g]), x4[g], i1);
+                i0 = __dp4a(static_cast<int>(uw.w[0]), xa.x, i0);
+                i0 = __dp4a(static_cast<int>(uw.w[1]), xa.y, i0);
+                i0 = __dp4a(static_cast<int>(uw.w[2]), xa.z, i0);
+                i0 = __dp4a(static_cast<int>(uw.w[3]), xa.w, i0);
+                i1 = __dp4a(static_cast<int>(uw.w[4]), xb.x, i1);
+                i1 = __dp4a(static_cast<int>(uw.w[5]), xb.y, i1);
+                i1 = __dp4a(static_cast<int>(uw.w[6]), xb.z, i1);
+                i1 = __dp4a(static_cast<int>(uw.w[7]), xb.w, i1);
                 const float dxv = dx[static_cast<int64_t>(t0 + t) * nb32 + u];
                 const float sxv = sx[static_cast<int64_t>(t0 + t) * nb32 + u];
                 acc[t] += dxv * (uw.s0 * static_cast<float>(i0) + uw.s1 * static_cast<float>(i1)) - uw.mn * sxv;
@@ -285,7 +312,7 @@ cudaError_t launch(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, 
     if (T <= 1) return launch_tt<TYPE, 1>(W, in, out, a, T, y, s);
     if (T <= 4) return launch_tt<TYPE, 4>(W, in, out, a, T, y, s);
     if (T <= 8) return launch_tt<TYPE, 8>(W, in, out, a, T, y, s);
-    return launch_tt<TYPE, 16>(W, in, out, a, T, y, s);
+    return launch_tt<TYPE, 16>(W, in, out, a, T, y, s);   // 32 and 64 were measured slower (509-token prefill: 7.3 s, 12.8 s, 17.5 s)
 }
 
 }  // namespace

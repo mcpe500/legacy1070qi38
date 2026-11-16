@@ -320,6 +320,25 @@ Reading: decode is 3 % faster in the engine in both rounds, prompt processing is
 The engine's pp is bound by streaming 7 GiB through the PCIe x1 link (about 9 s per prefill) plus 5 s of MTP prefill.
 The generated tokens of the two programs agree for the first 12 of 256 tokens, then diverge (different iso3 attention numerics in the two programs); the engine's own output is identical for MTP 0 and 2.
 
+## Experiment branch `exp/bit-lop3-cudagraph-prefill` (2026-11-16)
+
+Baseline commit `f90f3d7` could not be pushed to `main` (protected branch, push declined); it is on GitHub as branch `baseline/stage1-5`.
+Full record: `bench/results/experiment_comparison.md` (tables) and `bench/results/experiments/EXPERIMENT-LOG.md` (every attempt with reason, command, output, decision).
+
+A/B on the benchmark prompt (509 + 256, MTP 2, warm cache, alternating binaries, `bench/ab_main_vs_exp.sh`):
+
+| Binary | pp tok/s | tg tok/s | MTP accept | Peak VRAM MiB | Peak RSS MiB | tokens |
+|---|---:|---:|---|---:|---:|---|
+| baseline | 15.90 / 15.84 | 2.578 / 2.557 | 96 % | 7245 | 9215 | reference |
+| experiment | 27.81 / 27.81 | 2.625 / 2.608 | 95 % | 7335 | 9102 | 256/256 identical |
+
+llama-server `-ngl 25` iso3 + draft-mtp 2 in the same session: 27.25 pp, 2.519 tg (28.70 / 2.50 in the Stage 5 round). Prefill now matches llama.cpp; it does not clearly beat it.
+
+Kept: overlapped streaming from pinned page-cache pages (prefill 27.2 s -> 18.1 s), MTP KV prefill on the GPU (5 s -> 0.2 s), 128-bit weight loads + PTX lop3, CUDA graphs (no measurable gain),
+CPU matmul grain 128 (298 -> 287 ms/token). Opt-in: adaptive MTP (`--mtp-adaptive 1`), MTP prefill window (`--mtp-window`). Rejected after measurement: CPU-only prefill (3.4 tok/s),
+MTP prefill on the last token only (acceptance 96 % -> 51 %), token tiles 32/64, `__ldg`, software prefetch.
+Open: the first engine runs right after llama-server are cold (load 73 s, decode about 2.0 tok/s) with the 7 GiB pin; VRAM margin is 38 MiB.
+
 ## Decisions
 - **D8: dp4a per type behind a mask.** Option A stays the default and the fallback; `--dp4a all` enables the upgraded kernels. Hybrid is still not the default
   (`gpu_layers = 0`, `dp4a_mask = 0` in the config). Needs a user decision whether `--gpu-layers 24 --dp4a all` should become the default.

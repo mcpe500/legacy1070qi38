@@ -13,6 +13,13 @@ struct GenParams {
     SamplerParams sp;
     int max_tokens = 256;
     int mtp_steps = 2;     // 0..3, clamped to 0 when the engine has no MTP block
+    // MTP prefill: run the MTP block only on the last `mtp_window` prompt tokens (0 = all of them). Only the draft quality changes;
+    // the output never does (every draft is verified by the main model).
+    int mtp_window = 0;
+    // Adaptive drafting: draft step 0 is kept when the MTP head's top-1 probability is >= p_keep, and drafting continues while it
+    // stays >= p_cont, up to 4 drafts. mtp_steps is ignored (except 0 = MTP off) when adaptive is on.
+    bool mtp_adaptive = false;
+    float mtp_p_keep = 0.5f, mtp_p_cont = 0.85f;
     bool reuse = true;     // continue from the cached state when it is a prefix of the new prompt
     std::vector<float> * capture_logits = nullptr;   // receives the logits after the prefill (parity tests)
 };
@@ -21,7 +28,7 @@ struct GenStats {
     int prompt_tokens = 0, reused_tokens = 0, generated = 0, mtp_steps = 0;
     double prefill_s = 0, prefill_main_s = 0, mtp_prefill_s = 0, ttft_s = 0, decode_s = 0;
     double t_draft = 0, t_verify = 0, t_roll = 0, dec_gpu = 0, dec_cpu = 0, dec_head = 0;
-    long long cycles = 0, draft_n = 0, draft_acc = 0, accept_hist[4] = {0, 0, 0, 0};
+    long long cycles = 0, draft_n = 0, draft_acc = 0, accept_hist[5] = {0, 0, 0, 0, 0};
     uint64_t heap_allocs = 0;
     std::string finish = "length";   // "stop" (end token), "length", "abort" (callback returned false)
     std::vector<int32_t> ids;        // generated tokens (the stop token is not included)
@@ -41,6 +48,7 @@ public:
 private:
     Engine & eng_;
     std::vector<int32_t> cached_;      // tokens whose effect is in the model state (positions 0 .. n-1)
+    int mtp_start_ = 0;                // first prompt position that went through the MTP block
     bool have_h_ = false;              // last_h_ holds the output-normed hidden row of position n-1 (needed to continue the MTP KV)
     std::vector<float> last_h_, hbuf_, hin_, hv_, hv_next_, hm_, hm2_, lrows_, lmtp_;
     Sampler sampler_;

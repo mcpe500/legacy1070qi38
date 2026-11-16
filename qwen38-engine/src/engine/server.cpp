@@ -231,6 +231,7 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
         gp.sp.seed = body.contains("seed") && body["seed"].is_number_integer() ? body["seed"].get<long long>() : -1;
         gp.max_tokens = static_cast<int>(num("max_tokens", num("max_completion_tokens", 512)));
         gp.mtp_steps = static_cast<int>(num("mtp_steps", cfg.mtp_steps));
+        gp.mtp_adaptive = body.contains("mtp_adaptive") && body["mtp_adaptive"].is_boolean() && body["mtp_adaptive"].get<bool>();
         gp.reuse = !(body.contains("cache_prompt") && body["cache_prompt"].is_boolean() && !body["cache_prompt"].get<bool>());
         if (gp.sp.temperature < 0 || gp.sp.top_k < 0 || gp.sp.top_p <= 0 || gp.sp.top_p > 1 || gp.sp.min_p < 0 || gp.sp.min_p > 1 ||
             gp.sp.repeat_penalty <= 0 || gp.max_tokens < 1 || gp.mtp_steps < 0 || gp.mtp_steps > 3) {

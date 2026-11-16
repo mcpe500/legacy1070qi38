@@ -112,7 +112,7 @@ def table(out, outfile):
         if tag.startswith("llama_selected"):
             continue
         label = ("llama-server -ngl %d, %s" % (s["ngl"], "draft-mtp 2" if s["spec"] != "none" else "no MTP")) if s["engine"] == "llama-server" else \
-                ("qwen38-engine, --mtp-steps %d" % s["mtp"])
+                ("qwen38-engine, %s" % ("adaptive MTP" if "adaptive" in tag else "--mtp-steps %d" % s["mtp"]))
         L.append(row(s, "`%s`: %s" % (tag, label)))
     L.append("")
     probes = [s for t, s in S.items() if t.startswith("llama_ngl") and not t.endswith("_r2")]
