@@ -1,0 +1,18 @@
+GPU layers 0..23, KV f32: arena 5044.7 MiB (weights 4869.2 MiB, KV 96.0 MiB), device memory used 5048.0 MiB of 8105 MiB
+
+layer   cosine     max_abs
+    0   0.999958  8.204e-02
+    1   0.999958  1.418e-01
+    2   0.999955  1.967e-01
+    3   0.999955  3.524e-01
+    4   0.999953  4.163e-01
+    5   0.999946  3.784e-01
+    6   0.999928  2.742e-01
+    7   0.999905  3.728e-01
+   11   0.999936  1.868e-01
+   15   0.999922  2.309e-01
+   19   0.999894  5.668e-01
+   23   0.999899  6.574e-01
+
+worst layer cosine 0.999870 at layer 20
+result: PASS (0 layers below 0.995)

@@ -1,0 +1,6 @@
+
+bucket       samples  differ
+ascii             25       0
+latin1             5       0
+non-ascii         13       0
+total 43 samples, 0 differ

@@ -1,0 +1,5 @@
+engine tokens  : 8
+baseline tokens: 8
+compared       : 8
+result: IDENTICAL (8/8 tokens)
+text  : ' \n = Robert Boulter = \n \n Robert'

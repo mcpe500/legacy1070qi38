@@ -1,0 +1,65 @@
+
+per-layer parity (l_out after each layer, T=509)
+  layer   cosine     max_abs
+    0   1.000000  1.692e-02
+    1   0.999999  2.839e-02
+    2   0.999996  1.046e-01
+    3   0.999771  8.175e-01
+    4   0.999675  1.858e+00
+    5   0.999608  2.548e+00
+    6   0.999547  2.184e+00
+    7   0.999370  2.500e+00
+   15   0.999208  3.155e+00
+   23   0.997771  5.297e+00
+   31   0.994550  8.331e+00   <-- below 0.995
+   32   0.994300  8.191e+00   <-- below 0.995
+   33   0.994444  6.226e+00   <-- below 0.995
+   34   0.994012  8.548e+00   <-- below 0.995
+   35   0.993101  1.199e+01   <-- below 0.995
+   36   0.993241  1.144e+01   <-- below 0.995
+   37   0.993484  8.778e+00   <-- below 0.995
+   38   0.994408  1.024e+01   <-- below 0.995
+   39   0.993963  1.310e+01   <-- below 0.995
+   40   0.993996  9.192e+00   <-- below 0.995
+   41   0.994054  1.036e+01   <-- below 0.995
+   42   0.994071  2.748e+01   <-- below 0.995
+   43   0.993497  2.867e+01   <-- below 0.995
+   44   0.993547  2.939e+01   <-- below 0.995
+   45   0.993753  2.966e+01   <-- below 0.995
+   46   0.993545  4.628e+01   <-- below 0.995
+   47   0.993009  3.970e+01   <-- below 0.995
+   48   0.993002  3.380e+01   <-- below 0.995
+   49   0.992975  2.997e+01   <-- below 0.995
+   50   0.992870  3.552e+01   <-- below 0.995
+   51   0.991664  2.001e+01   <-- below 0.995
+   52   0.991721  4.635e+01   <-- below 0.995
+   53   0.991688  5.652e+01   <-- below 0.995
+   54   0.978724  4.717e+02   <-- below 0.995
+   55   0.986000  2.627e+02   <-- below 0.995
+   56   0.988414  2.533e+02   <-- below 0.995
+   57   0.989108  2.758e+02   <-- below 0.995
+   58   0.976631  7.284e+02   <-- below 0.995
+   59   0.990925  1.054e+02   <-- below 0.995
+   60   0.991836  5.320e+01   <-- below 0.995
+   61   0.991930  4.848e+01   <-- below 0.995
+   62   0.990581  1.448e+02   <-- below 0.995
+   63   0.987958  1.459e+01   <-- below 0.995
+worst layer cosine 0.976631 at layer 58
+logits cosine 0.988270, top-1 MATCH (ours 220 vs ref 220)
+top-5 ours: 220(23.37) 279(18.40) 5869(17.91) 7165(17.79) 6492(17.76)
+top-5 ref:  220(22.64) 279(18.31) 5869(17.90) 6492(17.54) 7165(17.37)
+
+prompt:  
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as " Craig " in the episode " Teddy 's Story " of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . 
+ In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as " Kieron Fletcher " . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . 
+ 
+ = = Career = = 
+ 
+ 
+ = = = 2000 – 2005 = = = 
+ 
+ In 2000 Boulter had a guest @-@ starring role on the television series The Bill ; he portrayed " Scott Parry " in the episode , " In Safe Hands " . Boulter starred as " Scott " in the play Herons written by Simon Stephens , which was performed in
+generated:  2
+{"prompt_tokens":509,"generated_tokens":2,"ids":[220,17],"text":" 2","load_s":10.87,"prefill_s":42.07,"prefill_tok_s":12.099,"decode_s":1.31,"decode_tok_s":1.5287,"heap_allocs_in_decode_forward":0,"peak_rss_kb":8818556,"rss_anon_kb":294504,"rss_file_kb":8440084,"swap_used_kb_before":752196,"swap_used_kb_after":749636,"parity_failures":33,"logits_cos":0.988270,"top1_match":true,"gpu_layers":32,"gpu_arena_mib":7008.4,"gpu_weights_mib":6646.2,"gpu_kv_mib":12.5,"vram_used_mib":7122.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":0.126,"decode_cpu_layers_s":1.109,"decode_head_s":0.073,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0],"mtp_prefill_s":0.000,"prefill_main_s":42.069,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":16}

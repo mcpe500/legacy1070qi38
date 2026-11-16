@@ -1,0 +1,11 @@
+tensor                     type          in     out     rel_rms    max_rel  cos_vs_cpu_vecdot
+blk.1.attn_qkv.weight      q4_K        5120   10240   1.282e-07  8.763e-07  0.999976 
+blk.0.attn_qkv.weight      q5_K        5120   10240   1.243e-07  1.297e-06  0.999977 
+blk.1.ssm_out.weight       q6_K        6144    5120   1.302e-07  3.100e-06  0.999975 
+blk.0.ffn_up.weight        q3_K        5120   17408   1.200e-07  6.249e-07  0.999976 
+blk.0.ffn_gate.weight      iq4_xs      5120   17408   1.279e-07  8.828e-07  0.999976 
+blk.1.ffn_down.weight      iq4_nl     17408    5120   1.430e-07  6.814e-07  0.999986 
+blk.14.ffn_up.weight       iq3_s       5120   17408   1.283e-07  6.376e-07  0.999976 
+blk.14.ffn_down.weight     iq3_s      17408    5120   1.442e-07  6.186e-07  0.999976 
+blk.0.ssm_alpha.weight     q8_0        5120      48   1.189e-07  4.166e-07  0.999986 
+result: PASS (0 failing)

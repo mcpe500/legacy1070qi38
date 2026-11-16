@@ -1,0 +1,28 @@
+loaded in 0.48 s; arena 597.7 MiB; resident layers 53 (10.81 GiB), streamed 2.64 GiB
+prompt tokens: 62
+	Command being timed: "taskset -c 0-3 ./build/qwen38-engine -m /home/ivan/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p  
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was perfor -n 8 --temp 0 --seed 42 --resident-gib 11.0"
+	User time (seconds): 148.59
+	System time (seconds): 31.46
+	Percent of CPU this job got: 102%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:54.93
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 12911488
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 805066
+	Minor (reclaiming a frame) page faults: 582114
+	Voluntary context switches: 782986
+	Involuntary context switches: 2635
+	Swaps: 0
+	File system inputs: 49820904
+	File system outputs: 16
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

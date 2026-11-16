@@ -1,0 +1,13 @@
+[16:40:00] start bench-kvf16-ngl24
+[16:46:09] done bench-kvf16-ngl24 rc=0 peak_vram_MiB=6733 peak_rss_kB=14827952 wall=6:07.64
+[16:46:09] start bench-kvf16-ngl26
+[16:52:53] done bench-kvf16-ngl26 rc=0 peak_vram_MiB=7927 peak_rss_kB=14937832 wall=6:39.64
+[16:52:53] start bench-kvf16-ngl28
+[17:03:25] done bench-kvf16-ngl28 rc=0 peak_vram_MiB=7617 peak_rss_kB=15073072 wall=6:31.20
+[17:03:25] start bench-kviso3-ngl24
+[17:03:27] done bench-kviso3-ngl24 rc=1 peak_vram_MiB=3 peak_rss_kB=166364 wall=0:01.26
+[17:03:27] start bench-kviso3-ngl26
+[17:03:27] done bench-kviso3-ngl26 rc=1 peak_vram_MiB=3 peak_rss_kB=166652 wall=0:00.12
+[17:03:27] start bench-kviso3-ngl28
+[17:03:28] done bench-kviso3-ngl28 rc=1 peak_vram_MiB=3 peak_rss_kB=166684 wall=0:00.12
+[17:03:28] sweep finished

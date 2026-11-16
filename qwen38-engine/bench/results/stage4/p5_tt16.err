@@ -1,0 +1,3 @@
+loaded in 41.89 s; CPU arena 597.9 MiB; CPU resident layers 32 (6.96 GiB), streamed 0.00 GiB
+GPU: layers 0..31, KV iso3, arena 7008.4 MiB (weights 6646.2 MiB, KV 12.5 MiB), device memory in use 7120.2 MiB
+prompt tokens: 5

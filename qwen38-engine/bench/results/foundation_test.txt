@@ -1,0 +1,6 @@
+f16->f32: 63490 patterns, 0 mismatches
+f32->f16: 3989609 floats, 0 mismatches
+iso3: 12000 blocks, 2 quantize byte mismatches, 12000 dequantize mismatches, round-trip nmse 0.0337
+  FAIL: iso3 quantize differs from libggml
+  FAIL: iso3 dequantize differs from libggml
+result: FAIL

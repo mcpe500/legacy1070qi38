@@ -1,0 +1,62 @@
+
+per-layer parity (l_out after each layer, T=509)
+  layer   cosine     max_abs
+    0   1.000000  1.692e-02
+    1   0.999999  2.839e-02
+    2   0.999996  1.046e-01
+    3   0.999788  5.917e-01
+    4   0.999697  1.954e+00
+    5   0.999630  2.753e+00
+    6   0.999580  2.350e+00
+    7   0.999472  2.895e+00
+   15   0.999361  3.027e+00
+   23   0.998248  5.809e+00
+   31   0.995585  6.892e+00
+   34   0.994877  8.831e+00   <-- below 0.995
+   35   0.994200  9.299e+00   <-- below 0.995
+   36   0.994217  9.287e+00   <-- below 0.995
+   37   0.994356  8.222e+00   <-- below 0.995
+   39   0.994869  1.112e+01   <-- below 0.995
+   40   0.994687  9.570e+00   <-- below 0.995
+   41   0.994626  1.057e+01   <-- below 0.995
+   42   0.994392  3.781e+01   <-- below 0.995
+   43   0.994285  3.673e+01   <-- below 0.995
+   44   0.994314  3.416e+01   <-- below 0.995
+   45   0.994465  3.406e+01   <-- below 0.995
+   46   0.994375  3.553e+01   <-- below 0.995
+   47   0.994358  3.061e+01   <-- below 0.995
+   48   0.994258  2.283e+01   <-- below 0.995
+   49   0.994031  2.240e+01   <-- below 0.995
+   50   0.993379  3.583e+01   <-- below 0.995
+   51   0.992436  2.844e+01   <-- below 0.995
+   52   0.992095  4.501e+01   <-- below 0.995
+   53   0.991820  5.155e+01   <-- below 0.995
+   54   0.979358  4.691e+02   <-- below 0.995
+   55   0.986489  2.646e+02   <-- below 0.995
+   56   0.988743  2.433e+02   <-- below 0.995
+   57   0.989462  2.618e+02   <-- below 0.995
+   58   0.977709  7.302e+02   <-- below 0.995
+   59   0.992904  1.023e+02   <-- below 0.995
+   60   0.993691  1.077e+02   <-- below 0.995
+   61   0.993693  1.050e+02   <-- below 0.995
+   62   0.992283  1.237e+02   <-- below 0.995
+   63   0.994012  8.191e+00   <-- below 0.995
+worst layer cosine 0.977709 at layer 58
+logits cosine 0.992587, top-1 MATCH (ours 220 vs ref 220)
+top-5 ours: 220(23.37) 279(18.40) 5869(17.91) 7165(17.79) 6492(17.76)
+top-5 ref:  220(23.33) 279(18.60) 5869(18.20) 7165(17.86) 5297(17.75)
+
+prompt:  
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as " Craig " in the episode " Teddy 's Story " of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . 
+ In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as " Kieron Fletcher " . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . 
+ 
+ = = Career = = 
+ 
+ 
+ = = = 2000 – 2005 = = = 
+ 
+ In 2000 Boulter had a guest @-@ starring role on the television series The Bill ; he portrayed " Scott Parry " in the episode , " In Safe Hands " . Boulter starred as " Scott " in the play Herons written by Simon Stephens , which was performed in
+generated:  2001 at the Royal Court Theatre . He had a guest role
+{"prompt_tokens":509,"generated_tokens":16,"ids":[220,17,15,15,16,506,279,15717,6930,25385,641,1216,995,264,8376,3364],"text":" 2001 at the Royal Court Theatre . He had a guest role","load_s":10.71,"prefill_s":43.55,"prefill_tok_s":11.688,"decode_s":7.16,"decode_tok_s":2.2361,"heap_allocs_in_decode_forward":0,"peak_rss_kb":8821492,"rss_anon_kb":295220,"rss_file_kb":8442304,"swap_used_kb_before":723496,"swap_used_kb_after":722472,"parity_failures":29,"logits_cos":0.992587,"top1_match":true,"gpu_layers":32,"gpu_arena_mib":7008.4,"gpu_weights_mib":6646.2,"gpu_kv_mib":12.5,"vram_used_mib":7122.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":1.006,"decode_cpu_layers_s":5.556,"decode_head_s":0.593,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0],"mtp_prefill_s":0.000,"prefill_main_s":43.547,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":16}

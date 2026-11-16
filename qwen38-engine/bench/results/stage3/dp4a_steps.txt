@@ -1,0 +1,8 @@
+none                                   | worst layer cosine 0.998490 at layer 23 | L23 0.998490 | result: PASS (0 layers below 0.995)
+q4_k                                   | worst layer cosine 0.998535 at layer 23 | L23 0.998535 | result: PASS (0 layers below 0.995)
+q4_k,q5_k                              | worst layer cosine 0.998497 at layer 23 | L23 0.998497 | result: PASS (0 layers below 0.995)
+q4_k,q5_k,iq4_xs                       | worst layer cosine 0.998442 at layer 23 | L23 0.998442 | result: PASS (0 layers below 0.995)
+q4_k,q5_k,iq4_xs,q6_k                  | worst layer cosine 0.998383 at layer 23 | L23 0.998383 | result: PASS (0 layers below 0.995)
+q4_k,q5_k,iq4_xs,q6_k,iq4_nl           | worst layer cosine 0.998443 at layer 23 | L23 0.998443 | result: PASS (0 layers below 0.995)
+q4_k,q5_k,iq4_xs,q6_k,iq4_nl,q3_k      | worst layer cosine 0.998400 at layer 23 | L23 0.998400 | result: PASS (0 layers below 0.995)
+all                                    | worst layer cosine 0.998438 at layer 23 | L23 0.998438 | result: PASS (0 layers below 0.995)

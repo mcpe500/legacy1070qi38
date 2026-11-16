@@ -1,0 +1,7 @@
+[09:53:51] llama-server llama_ngl25_r2 (-ngl 25, draft-mtp)
+llama_ngl25_r2 {'tag': 'llama_ngl25_r2', 'engine': 'llama-server', 'ngl': 25, 'spec': 'draft-mtp', 'ok': True, 'pp_tok_s': 28.807881202410396, 'tg_tok_s': 2.5084031258795085, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 17668.776, 'draft_n': 181, 'draft_acc': 164, 'peak_vram_mib': 7239, 'peak_rss_mib': 14655.8046875}
+  peak VRAM at -ngl 25: 7239 MiB (cap 7373)
+selected -ngl 25
+[09:59:15] qwen38-engine engine_mtp2_r2 (--mtp-steps 2)
+engine_mtp2_r2 {'tag': 'engine_mtp2_r2', 'engine': 'qwen38-engine', 'mtp': 2, 'ok': True, 'pp_tok_s': 13.497745955979846, 'tg_tok_s': 2.5857, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 37710.0, 'ttft_ms': 37707.0, 'draft_n': 176, 'draft_acc': 169, 'peak_rss_mib': 9219.12890625, 'rss_anon_mib': 554.5390625, 'heap_allocs': 0, 'gpu_layers': 32, 'kv': 'iso3', 'load_s': 10.89, 'peak_vram_mib': 7245}
+wrote /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/final_comparison.md

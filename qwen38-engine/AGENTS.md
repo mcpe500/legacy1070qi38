@@ -1,0 +1,127 @@
+# AGENTS.md
+
+Dedicated engineering workspace for a hardware-locked inference engine for **Qwen3.8-27B**.
+This file is also reachable as `CLAUDE.md` (symlink). Domain skills live in `.agents/skills/`
+and are linked from `.opencode/skills/` and `.claude/skills/`.
+
+**Current stage: 5 DONE (all stages). Hybrid engine with MTP, sampler, chunked prefill up to 4096 tokens, HTTP/SSE server with embedded WebUI (`scripts/serve.sh`), head-to-head benchmark in bench/results/final_comparison.md. See docs/AFK_STATUS.md.**
+
+## Hardware lock
+
+| Part | Value | Checked by |
+|---|---|---|
+| GPU | GeForce GTX 1070 Ti, GP104, compute capability 6.1 (sm_61), 8192 MiB GDDR5, 256 GB/s, no Tensor Cores | `scripts/setup.sh` section 3 |
+| Driver and CUDA | driver 580.178.04, nvcc 12.6.85 at `/usr/local/cuda-12.6` | section 4 |
+| CPU | AMD Ryzen 5 2400G, Zen, `gcc -march=znver1`, 4 cores / 8 threads, AVX2 and FMA3 | section 1 |
+| Physical cores | CPUs 0,1,2,3 are four different cores (SMT siblings are 0/4, 1/5, 2/6, 3/7) | section 1 |
+| RAM | 16 GB DDR4, 15905 MiB visible to Linux. Channel layout unknown (needs `sudo dmidecode -t memory`) | section 2 |
+| memlock | 1.94 GiB limit. Cannot lock the whole model without root | section 2 |
+| Swap | 4 GiB file `/swap.img` | section 2 |
+| Model | Qwen3.8-27B. Reference GGUF: `/home/ivan/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf` (16 GB) | section 10 |
+| Reference runtime | llama.cpp `3549c27` plus the iso3 patch, `~/llama.cpp/build-iso3/bin/` | section 10 |
+
+Budgets (from the brief): VRAM at most 7.2 GB, system RAM at most 14.2 GB (decimal units, 13.2 GiB).
+Both are targets with open conflicts. See "Open conflicts".
+
+## Hard rules
+
+1. **No engine source until the user approves Stage 1.** Scaffold and tooling only.
+2. **No MCP servers, no background daemons.** Stateless CLI tools only. No Node or Python servers.
+3. **Build with `ninja -j4` only.**
+4. **Pin CPU inference threads** with `taskset -c 0,1,2,3` (or the physical list from setup.sh).
+5. **Never run llama-server and the custom engine at the same time.** Check
+   `nvidia-smi --query-compute-apps` and `pgrep -x llama-server` first.
+6. **FP32 arithmetic only.** No `half`, `__half2`, or `__hfma2`/`__hmul2` in arithmetic.
+   Int8 dot products use `__dp4a` with INT32 accumulation and FP32 scaling.
+7. **No allocation inside the token loop.** All buffers come from static arenas.
+8. **Every .cu compile passes the SASS gate:** `IDP.4A` present, zero `HFMA2`/`HMUL2`.
+9. **No push, merge, or release without the user's explicit instruction.** Skills are not pushed
+   until the user says so.
+
+## Read before you modify a module
+
+Read the skill that covers the module, then change the code.
+
+| Module | Read first |
+|---|---|
+| `src/cuda/` | `.agents/skills/pascal-sm61-cuda/SKILL.md`, `iso3-kv-and-mtp`, `memory-budget-24gb` |
+| `src/cpu/` | `qwen38-hybrid-arch`, `memory-budget-24gb` |
+| `src/packer/` | `qwen38-hybrid-arch`, `pascal-sm61-cuda` (packing), `memory-budget-24gb` |
+| `src/engine/` | `memory-budget-24gb`, `qwen38-hybrid-arch`, `iso3-kv-and-mtp` |
+| `src/server/`, `webui/` | `webui-and-parity-bench` |
+| `tests/`, `bench/` | `webui-and-parity-bench` |
+| any MTP, iso3, or DeltaNet rollback change | `iso3-kv-and-mtp` |
+
+## Layout
+
+```
+src/packer/   offline GGUF stripper and dual-layout CUDA/AVX2 repacker
+src/cuda/     sm_61 __dp4a GEMV, FP32 DeltaNet and rollback, iso3 GQA attention
+src/cpu/      AVX2 znver1 GEMV, DeltaNet, LM head, MTP head, BPE tokenizer
+src/engine/   static arena allocator, hybrid layer split, sampler, <think> state machine
+src/server/   embedded HTTP/SSE server (cpp-httplib)
+webui/        index.html, one file, no build step
+tests/        parity tests and headless UI test
+bench/        sequential benchmark against llama.cpp
+docs/         reference material (PR #38 summary and diff), setup report
+scripts/      setup.sh (environment verification)
+.agents/skills/   five domain skills (SKILL.md)
+```
+
+## Roadmap (5 stages)
+
+1. **Reference and baseline.** Environment verified (`scripts/setup.sh`), reference diff saved, baseline
+   numbers recorded from llama.cpp, GGUF checksum matches the LFS object id.
+   Exit: a baseline table with the exact command lines.
+2. **CPU-only parity pass.** CPU kernels reproduce llama.cpp logits on short prompts with cosine
+   similarity above 0.998 and identical greedy tokens.
+   Exit: stage-A parity on CPU.
+3. **CUDA sm_61 and iso3 KV offload.** GEMV, attention, and iso3 cache on the GPU. SASS gate passes.
+   Peak VRAM within the cap, measured.
+   Exit: parity on GPU, VRAM table.
+4. **MTP and DeltaNet rollback.** Draft, verify, and rollback. Rollback test passes. MTP is measured
+   and stays off by default unless it wins on the same hardware.
+   Exit: acceptance rate and tok/s with and without MTP.
+5. **Embedded WebUI and sequential benchmark.** Server, single-file UI, and a benchmark table against
+   llama.cpp, run one after the other.
+   Exit: Markdown comparison table generated by `bench/compare_llamacpp.sh`.
+
+## Verification protocol
+
+Full detail is in `webui-and-parity-bench`.
+
+- **A. Logit and token parity.** `temp = 0`, `seed = 42`, short and multi-turn prompts, against llama.cpp
+  with the same GGUF, KV type, and MTP setting.
+- **B. Headless UI and API.** `curl -N` for SSE. Playwright once Node is installed.
+- **C. Sequential benchmark.** 512-token prompt, 256-token decode. The two engines never run at the
+  same time. Output: `pp tok/s`, `tg tok/s`, `MTP accept %`, `Peak VRAM MB`, `Peak DDR4 RSS MB`.
+
+## Reference material
+
+- `docs/ref_pr38_summary.md` and `docs/ref_pr38_iso3_mtp.diff`: offline copy of
+  mcpe500/legacy1070qi38 PR #38 (merged 2026-11-15). This is the ground truth for iso3 and MTP.
+- Fork with the iso3 code: mcpe500/llama.cpp, branch `feat/iso3-kv`, commit `36dbad3`.
+- Measurements and claims with IDs (C-01..C-58) live in the legacy repo, in
+  `spec/research/CLAIMS.md`.
+
+## Open conflicts (need a user decision)
+
+1. **iso3 rotation.** The brief says Hadamard. The reference uses IsoQuant quaternion rotations.
+   The skill follows the reference until the user decides otherwise.
+2. **FP32 rule vs llama.cpp iso3 path.** llama.cpp converts iso3 KV to FP16 before CUDA flash attention.
+   This engine must not copy that path.
+3. **VRAM cap.** 7.2 GB (6866 MiB) is below the 8043 to 8057 MiB llama.cpp peaked at with 30 to 36
+   GPU layers. The layer count has to be measured against the real cap.
+4. **mlock.** The brief wants `mmap + mlock`. The limit is 1.94 GiB without root. Options: mmap without
+   mlock plus swap monitoring, or raise the limit with root.
+5. **Vision weights.** The brief says ~1.2 GB can be stripped from the GGUF. The vision encoder is a
+   separate `mmproj` file (0.87 GiB for BF16), so the LM GGUF has nothing to strip.
+6. **HTTP library.** The brief allows cpp-httplib or axum. This scaffold chooses cpp-httplib (single C++
+   toolchain).
+
+## Git
+
+This folder sits inside the git working tree of the legacy repository (`mcpe500/legacy1070qi38`).
+It has no git repository of its own and no remote. Nothing here is pushed.
+Any commit would land in the legacy repository, so commits need the user's instruction first.
+Commit only specific paths. Never commit `models/`, `build*/`, `*.gguf`, `*.cubin`, or logs.
