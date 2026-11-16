@@ -20,6 +20,11 @@ struct GenParams {
     // stays >= p_cont, up to 4 drafts. mtp_steps is ignored (except 0 = MTP off) when adaptive is on.
     bool mtp_adaptive = false;
     float mtp_p_keep = 0.5f, mtp_p_cont = 0.85f;
+    // Prompt Lookup Decoding (PLD): deterministic n-gram suffix match over prompt + generated history.
+    // When enabled, up to pld_max candidates (3-gram + 4-gram) are added to the verify batch before MTP drafts.
+    bool pld_enabled = false;
+    int pld_max = 6;       // max PLD candidates per cycle (3-gram + 4-gram combined)
+    int pld_min_len = 3;   // minimum suffix length to consider (3 or 4)
     bool reuse = true;     // continue from the cached state when it is a prefix of the new prompt
     std::vector<float> * capture_logits = nullptr;   // receives the logits after the prefill (parity tests)
 };
@@ -28,7 +33,8 @@ struct GenStats {
     int prompt_tokens = 0, reused_tokens = 0, generated = 0, mtp_steps = 0;
     double prefill_s = 0, prefill_main_s = 0, mtp_prefill_s = 0, ttft_s = 0, decode_s = 0;
     double t_draft = 0, t_verify = 0, t_roll = 0, dec_gpu = 0, dec_cpu = 0, dec_head = 0;
-    long long cycles = 0, draft_n = 0, draft_acc = 0, accept_hist[5] = {0, 0, 0, 0, 0};
+    long long cycles = 0, draft_n = 0, draft_acc = 0, accept_hist[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    long long pld_hits = 0, pld_candidates = 0, mtp_fills = 0;
     uint64_t heap_allocs = 0;
     std::string finish = "length";   // "stop" (end token), "length", "abort" (callback returned false)
     std::vector<int32_t> ids;        // generated tokens (the stop token is not included)

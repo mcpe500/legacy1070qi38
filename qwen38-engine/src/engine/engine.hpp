@@ -19,7 +19,7 @@
 
 struct EngineConfig {
     std::string gguf;
-    int ctx_max = 4096;          // KV cache positions (<= 4096)
+    int ctx_max = 4096;          // KV cache positions (hard cap 8192; raise with --ctx, VRAM grows ~59 MiB per doubling)
     int t_max = 512;             // largest batch of tokens in one forward call
     int threads = 4;
     double resident_gib = 11.0;  // CPU layers kept resident, in GiB of file bytes (layers beyond it are streamed)
@@ -86,7 +86,7 @@ public:
 
     // DeltaNet state snapshot and rollback (GPU and CPU layers). With the snapshot on, a forward() of at most kRollT tokens keeps
     // the state from before the call; dn_rollback(keep) leaves the state as if only the first `keep` tokens had been processed.
-    static constexpr int kRollT = 5;   // verification batch of up to 4 drafts + 1
+    static constexpr int kRollT = 8;   // verification batch of up to 7 drafts + 1 (PLD + MTP cascade)
     void dn_snapshot(bool on);
     void dn_rollback(int keep);
 

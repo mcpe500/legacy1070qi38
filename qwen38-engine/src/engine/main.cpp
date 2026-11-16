@@ -141,6 +141,9 @@ int main(int argc, char ** argv) {
         else if (a == "--mtp-p-cont") gp.mtp_p_cont = static_cast<float>(std::atof(next().c_str()));
         else if (a == "--mtp-window") gp.mtp_window = std::atoi(next().c_str());
         else if (a == "--mtp-gpu-prefill") cfg.mtp_gpu_prefill = std::atoi(next().c_str()) != 0;
+        else if (a == "--pld") gp.pld_enabled = std::atoi(next().c_str()) != 0;
+        else if (a == "--pld-max") gp.pld_max = std::atoi(next().c_str());
+        else if (a == "--pld-min-len") gp.pld_min_len = std::atoi(next().c_str());
         else if (a == "--pin-stream") cfg.pin_stream = std::atoi(next().c_str()) != 0;
         else if (a == "--cuda-graph") cfg.cuda_graph = std::atoi(next().c_str()) != 0;
         else if (a == "--stream-min-t") cfg.stream_min_t = std::atoi(next().c_str());
@@ -329,8 +332,9 @@ int main(int argc, char ** argv) {
                     "\"decode_tok_s\":%.4f,\"heap_allocs_in_decode_forward\":%llu,\"peak_rss_kb\":%lld,\"rss_anon_kb\":%lld,\"rss_file_kb\":%lld,"
                     "\"swap_used_kb_before\":%lld,\"swap_used_kb_after\":%lld,\"parity_failures\":%d,\"logits_cos\":%.6f,"
                     "\"top1_match\":%s,\"gpu_layers\":%d,\"gpu_arena_mib\":%.1f,\"gpu_weights_mib\":%.1f,\"gpu_kv_mib\":%.1f,\"vram_used_mib\":%.1f,\"kv\":\"%s\",\"dp4a_mask\":%u,\"decode_gpu_s\":%.3f,\"decode_cpu_layers_s\":%.3f,\"decode_head_s\":%.3f,"
-                    "\"mtp_steps\":%d,\"cycles\":%lld,\"draft_n\":%lld,\"draft_n_accepted\":%lld,\"accept_hist\":[%lld,%lld,%lld,%lld,%lld],\"mtp_adaptive\":%d,"
+                    "\"mtp_steps\":%d,\"cycles\":%lld,\"draft_n\":%lld,\"draft_n_accepted\":%lld,\"accept_hist\":[%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld],\"mtp_adaptive\":%d,"
                     "\"mtp_prefill_s\":%.3f,\"prefill_main_s\":%.3f,\"mtp_draft_s\":%.3f,\"mtp_verify_s\":%.3f,\"mtp_rollback_s\":%.3f,\"stream_min_t\":%d,"
+                    "\"pld_enabled\":%d,\"pld_hits\":%lld,\"pld_candidates\":%lld,\"mtp_fills\":%lld,"
                     "\"ttft_s\":%.3f,\"finish\":\"%s\",\"temperature\":%.3f}\n",
                     json_escape(text).c_str(), load_s, st.prefill_s, n_prompt / std::max(st.prefill_s, 1e-9), st.decode_s,
                     decode_tok_s,
@@ -339,8 +343,12 @@ int main(int argc, char ** argv) {
                     static_cast<double>(eng.gpu_arena_bytes()) / 1048576.0, static_cast<double>(eng.gpu_weight_bytes()) / 1048576.0,
                     static_cast<double>(eng.gpu_kv_bytes()) / 1048576.0, cfg.gpu_layers > 0 ? eng.vram_used_mib() : 0.0,
                     cfg.kv_iso3 ? "iso3" : "f32", cfg.dp4a_mask, st.dec_gpu, st.dec_cpu, st.dec_head,
-                    D, st.cycles, st.draft_n, st.draft_acc, st.accept_hist[0], st.accept_hist[1], st.accept_hist[2], st.accept_hist[3], st.accept_hist[4], gp.mtp_adaptive ? 1 : 0,
+                    D, st.cycles, st.draft_n, st.draft_acc,
+                    st.accept_hist[0], st.accept_hist[1], st.accept_hist[2], st.accept_hist[3], st.accept_hist[4],
+                    st.accept_hist[5], st.accept_hist[6], st.accept_hist[7], st.accept_hist[8],
+                    gp.mtp_adaptive ? 1 : 0,
                     st.mtp_prefill_s, st.prefill_main_s, st.t_draft, st.t_verify, st.t_roll, cfg.stream_min_t,
+                    gp.pld_enabled ? 1 : 0, st.pld_hits, st.pld_candidates, st.mtp_fills,
                     st.ttft_s, st.finish.c_str(), static_cast<double>(gp.sp.temperature));
         return parity_fail ? 1 : 0;
     } catch (const std::exception & e) {

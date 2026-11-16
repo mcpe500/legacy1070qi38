@@ -1,0 +1,65 @@
+def fibonacci(n):
+    if n <= 1:
+        return n
+    a, b = 0, 1
+    for _ in range(n - 1):
+        a, b = b, a + b
+    return b
+
+def quicksort(arr):
+    if len(arr) <= 1:
+        return arr
+    pivot = arr[len(arr) // 2]
+    left = [x for x in arr if x < pivot]
+    middle = [x for x in arr if x == pivot]
+    right = [x for x in arr if x > pivot]
+    return quicksort(left) + middle + quicksort(right)
+
+class BinaryTree:
+    def __init__(self, value):
+        self.value = value
+        self.left = None
+        self.right = None
+    
+    def insert(self, value):
+        if value < self.value:
+            if self.left is None:
+                self.left = BinaryTree(value)
+            else:
+                self.left.insert(value)
+        else:
+            if self.right is None:
+                self.right = BinaryTree(value)
+            else:
+                self.right.insert(value)
+    
+    def inorder(self):
+        result = []
+        if self.left:
+            result.extend(self.left.inorder())
+        result.append(self.value)
+        if self.right:
+            result.extend(self.right.inorder())
+        return result
+
+def binary_search(arr, target):
+    left, right = 0, len(arr) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if arr[mid] == target:
+            return mid
+        elif arr[mid] < target:
+            left = mid + 1
+        else:
+            right = mid - 1
+    return -1
+
+# Test
+print("Fibonacci:", [fibonacci(i) for i in range(10)])
+arr = [64, 34, 25, 12, 22, 11, 90]
+print("Sorted:", quicksort(arr))
+tree = BinaryTree(50)
+for v in [30, 70, 20, 40, 60, 80]:
+    tree.insert(v)
+print("BST inorder:", tree.inorder())
+print("Search 40:", binary_search(sorted(arr), 40))

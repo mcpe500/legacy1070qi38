@@ -427,3 +427,42 @@ All five stages are done. Open points, in order of value:
    MTP 2/3 tg up to +33 % over the pre-round baseline and now above no-MTP at 100 % acceptance; see the round
    section above.
 4. Decide the MTP default (0 or 1 are faster on low-acceptance text) and whether long contexts should default to `--kv f32` (fits the cap at 7319 MiB).
+
+## Experiment `exp/cascaded-pld-mtp` (2026-11-16)
+**Branch**: `exp/cascaded-pld-mtp` from `main` @ 28e9bb2  
+**Goal**: Cascaded Speculative Decoding — PLD (3/4-gram suffix match) + Adaptive MTP, T≤8 verify batch.
+
+### Implementation
+- `engine.hpp`: `kRollT = 8` (was 5)
+- `gpu_layers.cu`: `gexec[16]`, `T <= 8` graph condition
+- `generator.cpp`: buffers 8 rows, PLD 3/4-gram open-address hash tables, cascade verify batch = `[cur] + PLD_candidates + MTP_drafts`
+- `main.cpp`: `--pld`, `--pld-max`, `--pld-min-len` flags
+
+### Verification Gates
+| Gate | Result | Notes |
+|------|--------|-------|
+| SASS (HFMA2/HMUL2) | ✅ PASS | 0 half arithmetic |
+| Greedy parity (free-text, 509→256) | ✅ PASS | 256/256 tokens identical |
+| Greedy parity (code/repetitive) | ❌ FAIL | Diverges at ~token 60 |
+| Rollback T≤8 bit-identical | ❌ FAIL (both branches) | Pre-existing batch vs sequential numerics issue |
+
+### Benchmarks (509→256 free-text, 524→256 code, MTP 2 adaptive, temp=0 seed=42)
+
+| Metric | Main | Experimental | Δ |
+|--------|------|--------------|---|
+| **Free-text decode tok/s** | 2.67 | 0.63 | -76% |
+| Free-text MTP accept | 96% | ~0% | -96 pp |
+| **Code decode tok/s** | 2.75 | 0.68 | -75% |
+| Code MTP accept | 100% | ~0% | -100 pp |
+| **Free-text non-adaptive tok/s** | 2.52 | 0.91 | -64% |
+| Non-adaptive accept | 96% | ~3% | -93 pp |
+
+### Root Cause
+MTP drafting logic (copied from original) produces drafts that never match main model's greedy predictions. Acceptance loop / rollback interaction with PLD-inserted verify batch appears to have a subtle bug. PLD candidates (792 generated) also never accepted.
+
+### Status
+**Experimental — not ready for merge**. Core infrastructure (T≤8, PLD matcher, cascade framework) works; MTP acceptance regression blocks performance. Needs debug of `hm`/`hm2` pointer state after PLD insertion in verify batch.
+
+### Artifacts
+- Full comparison: `bench/results/experiment_comparison.md`
+- Branch: `exp/cascaded-pld-mtp` (ready to push)

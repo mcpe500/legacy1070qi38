@@ -104,7 +104,7 @@ struct GpuLayers::Impl {
     int * pos_dev = nullptr;
     int * h_pos = nullptr;
     bool in_graph = false;
-    cudaGraphExec_t gexec[10] = {};
+    cudaGraphExec_t gexec[16] = {};   // T=1..8 × (saving off/on) = 16 entries
     int n_graphs = 0;
 
     Impl(const GgufIndex & i, const GpuConfig & c, float e) : ix(i), cfg(c), eps(e) {}
@@ -423,7 +423,9 @@ struct GpuLayers::Impl {
 GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps) : p_(new Impl(ix, cfg, rms_eps)) {
     Impl & m = *p_;
     if (cfg.n_layers < 1 || cfg.n_layers > 64) throw std::runtime_error("n_layers out of range");
-    if (cfg.ctx_max > 4096) throw std::runtime_error("ctx_max above 4096 is not supported");
+    // The attention kernel keeps its scores in dynamic shared memory (ctx_max * 4 bytes): 8192 positions = 32 KiB,
+    // still under the 48 KiB per-block limit of sm_61.
+    if (cfg.ctx_max > 8192) throw std::runtime_error("ctx_max above 8192 is not supported (attention shared memory)");
     m.theta_scale = std::pow(10000000.0f, -2.0f / static_cast<float>(kRope));
 
     CK(cudaStreamCreate(&m.st));
@@ -507,7 +509,7 @@ void GpuLayers::forward(float * x_host, int T, int pos0, const std::function<voi
     if (m.saving && T > m.cfg.roll_t) throw std::runtime_error("GpuLayers::forward: batch larger than roll_t with snapshots on");
     const size_t bytes = static_cast<size_t>(T) * kHidden * sizeof(float);
     CK(cudaMemcpy(m.x, x_host, bytes, cudaMemcpyHostToDevice));
-    if (m.cfg.use_graph && !tap && T <= 5) {
+    if (m.cfg.use_graph && !tap && T <= 8) {
         // One CUDA graph per (T, snapshots on/off) holds every kernel launch of the layer stack; replaying it costs one launch.
         const int key = (T - 1) * 2 + (m.saving ? 1 : 0);
         *m.h_pos = pos0;
