@@ -84,10 +84,27 @@ struct GpuLayers::Impl {
     float theta_scale = 0.0f;
     // Prefill streaming: one staging buffer for the weights of the layer being run, plus one layer of state and FP32 KV.
     uint8_t * stage = nullptr;   // one matrix at a time
+    uint8_t * stage2 = nullptr;  // second staging buffer: the next matrix uploads while the current one is multiplied
+    // Overlapped streaming (needs the CPU-layer part of the mmap registered as pinned, read-only host memory): the copy stream `cp`
+    // uploads matrix k+1 into the other staging buffer while `st` multiplies matrix k. seq is the order of the GEMV calls.
+    cudaStream_t cp = nullptr;
+    cudaEvent_t up_done[2] = {}, comp_done[2] = {};
+    std::vector<const GgufTensor *> seq;
+    size_t cur = 0, issued = 0;
+    bool registered = false;
+    void * reg_ptr = nullptr;
     uint8_t * svec = nullptr;    // the small vectors of one layer
     size_t stage_bytes = 0;
     float *s_conv = nullptr, *s_ssm = nullptr, *s_kc = nullptr, *s_vc = nullptr;
     bool saving = false;
+    // Work stream (blocking, so it stays ordered with the legacy-stream cudaMemcpy calls) and CUDA graphs of the whole GPU layer stack
+    // for decode and verification batches (T = 1..4, with and without snapshots). Replays read the position from pos_dev.
+    cudaStream_t st = nullptr;
+    int * pos_dev = nullptr;
+    int * h_pos = nullptr;
+    bool in_graph = false;
+    cudaGraphExec_t gexec[10] = {};
+    int n_graphs = 0;
 
     Impl(const GgufIndex & i, const GpuConfig & c, float e) : ix(i), cfg(c), eps(e) {}
 
@@ -99,7 +116,7 @@ struct GpuLayers::Impl {
         for (int i = 0; i < 2; ++i) {
             CK(cudaHostAlloc(reinterpret_cast<void **>(&pin[i]), kChunk, cudaHostAllocDefault));
             CK(cudaEventCreateWithFlags(&pin_done[i], cudaEventDisableTiming));
-            CK(cudaEventRecord(pin_done[i], 0));
+            CK(cudaEventRecord(pin_done[i], st));
         }
     }
     void pin_free() {
@@ -128,8 +145,8 @@ struct GpuLayers::Impl {
                 got += static_cast<size_t>(r);
             }
             g_pread_s += now_s() - w1;
-            CK(cudaMemcpyAsync(static_cast<uint8_t *>(dst) + done, pin[b], n, cudaMemcpyHostToDevice, 0));
-            CK(cudaEventRecord(pin_done[b], 0));
+            CK(cudaMemcpyAsync(static_cast<uint8_t *>(dst) + done, pin[b], n, cudaMemcpyHostToDevice, st));
+            CK(cudaEventRecord(pin_done[b], st));
             done += n;
             b ^= 1;
         }
@@ -255,6 +272,7 @@ struct GpuLayers::Impl {
             stage_bytes = lazy_max;
             svec = pl.take<uint8_t>(vec_bytes);
             stage = pl.take<uint8_t>(stage_bytes);
+            stage2 = pl.take<uint8_t>(stage_bytes);
             s_conv = pl.take<float>(static_cast<size_t>(kConvCh) * (kConvK - 1));
             s_ssm = pl.take<float>(static_cast<size_t>(kVH) * kDH * kDH);
             s_kc = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kKVW);
@@ -278,6 +296,7 @@ struct GpuLayers::Impl {
         kproj = pl.take<float>(Tm * kKVW);
         kout = pl.take<float>(Tm * kKVW);
         vproj = pl.take<float>(Tm * kKVW);
+        pos_dev = pl.take<int>(64);
     }
 
     bool use_dp4a(const WMat & W) const { return W.type != GT_Q8_0 && gemv_dp4a_supported(W.type) && ((cfg.dp4a_mask >> W.type) & 1u); }
@@ -285,71 +304,116 @@ struct GpuLayers::Impl {
     // Quantizes `x` once for all the listed matrices that take the dp4a path (nothing happens when none does).
     void quant(const float * x, int64_t in, int T, std::initializer_list<const WMat *> mats) {
         for (const WMat * w : mats) {
-            if (use_dp4a(*w)) { CK(actq8_quantize(x, in, T, act, 0)); return; }
+            if (use_dp4a(*w)) { CK(actq8_quantize(x, in, T, act, st)); return; }
         }
     }
 
     // The caller must have run quant() for the same `in` buffer when use_dp4a(W) is true.
     void gemv(const WMat & W0, const float * in, int T, float * out) {
         WMat W = W0;
-        if (W.src) {  // streamed layer: bring this matrix into the staging buffer (stream order keeps the previous GEMV safe)
+        int b = -1;
+        if (W.src && registered) {   // overlapped: the matrix was (or is being) uploaded by the copy stream
+            if (cur >= seq.size() || seq[cur] != W.src) throw std::runtime_error("streamed GEMV order differs from the upload order");
+            b = static_cast<int>(cur & 1);
+            CK(cudaStreamWaitEvent(st, up_done[b], 0));
+            W.p = b ? stage2 : stage;
+        } else if (W.src) {  // fallback: synchronous upload into the staging buffer
             upload_tensor(stage, *W.src);
             W.p = stage;
         }
-        if (W.type == GT_Q8_0) CK(q8_0_gemv_dp4a(W.p, W.in, W.out, in, T, out, q8, 0));
-        else if (use_dp4a(W)) CK(gemv_dp4a(W.type, W.p, W.in, W.out, act, T, out, 0));
-        else CK(gemv_fp32(W.type, W.p, W.in, W.out, in, T, out, 0));
+        if (W.type == GT_Q8_0) CK(q8_0_gemv_dp4a(W.p, W.in, W.out, in, T, out, q8, st));
+        else if (use_dp4a(W)) CK(gemv_dp4a(W.type, W.p, W.in, W.out, act, T, out, st));
+        else CK(gemv_fp32(W.type, W.p, W.in, W.out, in, T, out, st));
+        if (b >= 0) {
+            CK(cudaEventRecord(comp_done[b], st));
+            ++cur;
+            issue_uploads();
+        }
+    }
+
+    // Keeps up to two uploads ahead of the multiplications. Upload k reuses buffer k & 1 once GEMV k - 2 has finished.
+    void issue_uploads() {
+        while (issued < seq.size() && issued < cur + 2) {
+            const int b = static_cast<int>(issued & 1);
+            CK(cudaStreamWaitEvent(cp, comp_done[b], 0));
+            const GgufTensor & t = *seq[issued];
+            CK(cudaMemcpyAsync(b ? stage2 : stage, ix.data(t), t.nbytes, cudaMemcpyHostToDevice, cp));
+            CK(cudaEventRecord(up_done[b], cp));
+            ++issued;
+        }
+    }
+
+    void build_seq() {
+        seq.clear();
+        for (int il = cfg.n_layers; il < 64; ++il) {
+            const std::string b = "blk." + std::to_string(il) + ".";
+            const char * attn[] = {"attn_q", "attn_k", "attn_v", "attn_output"};
+            const char * dn[] = {"attn_qkv", "attn_gate", "ssm_alpha", "ssm_beta", "ssm_out"};
+            if (il % 4 == 3) for (const char * n : attn) seq.push_back(&ix.get(b + n + ".weight"));
+            else for (const char * n : dn) seq.push_back(&ix.get(b + n + ".weight"));
+            for (const char * n : {"ffn_gate", "ffn_up", "ffn_down"}) seq.push_back(&ix.get(b + n + ".weight"));
+        }
+    }
+
+    void run_layers(int T, int pos0) {
+        for (int il = 0; il < cfg.n_layers; ++il) {
+            const LayerD & l = L[static_cast<size_t>(il)];
+            if (l.is_attn) attention(l, T, pos0, cfg.kv_iso3);
+            else deltanet(l, T);
+            ffn(l, T);
+        }
     }
 
     void ffn(const LayerD & l, int T) {
-        CK(op_rmsnorm_rows(x, l.post_norm, xn, kHidden, T, eps, 0));
+        CK(op_rmsnorm_rows(x, l.post_norm, xn, kHidden, T, eps, st));
         quant(xn, kHidden, T, {&l.ffn_gate, &l.ffn_up});
         gemv(l.ffn_gate, xn, T, fg);
         gemv(l.ffn_up, xn, T, fu);
-        CK(op_silu_mul(fg, fu, static_cast<int64_t>(T) * kFFN, 0));
+        CK(op_silu_mul(fg, fu, static_cast<int64_t>(T) * kFFN, st));
         quant(fg, kFFN, T, {&l.ffn_down});
         gemv(l.ffn_down, fg, T, proj);
-        CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, 0));
+        CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
 
     void deltanet(const LayerD & l, int T) {
         if (saving) {
-            CK(cudaMemcpyAsync(l.snap_conv, l.conv_state, sizeof(float) * kConvCh * (kConvK - 1), cudaMemcpyDeviceToDevice, 0));
-            CK(cudaMemcpyAsync(l.snap_ssm, l.ssm_state, sizeof(float) * kVH * kDH * kDH, cudaMemcpyDeviceToDevice, 0));
+            CK(cudaMemcpyAsync(l.snap_conv, l.conv_state, sizeof(float) * kConvCh * (kConvK - 1), cudaMemcpyDeviceToDevice, st));
+            CK(cudaMemcpyAsync(l.snap_ssm, l.ssm_state, sizeof(float) * kVH * kDH * kDH, cudaMemcpyDeviceToDevice, st));
         }
-        CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, 0));
+        CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, st));
         quant(xn, kHidden, T, {&l.qkv, &l.gate_z});
         gemv(l.qkv, xn, T, bufA);
         gemv(l.gate_z, xn, T, bufB);
         gemv(l.alpha, xn, T, alpha);
         gemv(l.beta, xn, T, betar);
-        CK(op_dn_prep(alpha, betar, l.ssm_dt, l.ssm_a, gate, beta, T, 0));
+        CK(op_dn_prep(alpha, betar, l.ssm_dt, l.ssm_a, gate, beta, T, st));
         if (saving) {
-            CK(cudaMemcpyAsync(l.sv_qkv, bufA, sizeof(float) * T * kConvCh, cudaMemcpyDeviceToDevice, 0));
-            CK(cudaMemcpyAsync(l.sv_gate, gate, sizeof(float) * T * kVH, cudaMemcpyDeviceToDevice, 0));
-            CK(cudaMemcpyAsync(l.sv_beta, beta, sizeof(float) * T * kVH, cudaMemcpyDeviceToDevice, 0));
-            CK(cudaMemcpyAsync(l.sv_z, bufB, sizeof(float) * T * kInner, cudaMemcpyDeviceToDevice, 0));
+            CK(cudaMemcpyAsync(l.sv_qkv, bufA, sizeof(float) * T * kConvCh, cudaMemcpyDeviceToDevice, st));
+            CK(cudaMemcpyAsync(l.sv_gate, gate, sizeof(float) * T * kVH, cudaMemcpyDeviceToDevice, st));
+            CK(cudaMemcpyAsync(l.sv_beta, beta, sizeof(float) * T * kVH, cudaMemcpyDeviceToDevice, st));
+            CK(cudaMemcpyAsync(l.sv_z, bufB, sizeof(float) * T * kInner, cudaMemcpyDeviceToDevice, st));
         }
-        CK(op_dn_conv(bufA, l.conv_w, l.conv_state, conv, T, 0));
-        CK(op_dn_rec(conv, gate, beta, bufB, l.ssm_norm, l.ssm_state, attn_o, T, eps, 0));
+        CK(op_dn_conv(bufA, l.conv_w, l.conv_state, conv, T, st));
+        CK(op_dn_rec(conv, gate, beta, bufB, l.ssm_norm, l.ssm_state, attn_o, T, eps, st));
         quant(attn_o, kInner, T, {&l.ssm_out});
         gemv(l.ssm_out, attn_o, T, proj);
-        CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, 0));
+        CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
 
     void attention(const LayerD & l, int T, int pos0, bool iso3) {
-        CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, 0));
+        CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, st));
         quant(xn, kHidden, T, {&l.wq, &l.wk, &l.wv});
         gemv(l.wq, xn, T, bufA);
         gemv(l.wk, xn, T, kproj);
         gemv(l.wv, xn, T, vproj);
-        CK(op_qk_prep(bufA, kproj, l.q_norm, l.k_norm, qbuf, kout, T, pos0, theta_scale, eps, 0));
-        CK(op_kv_store(kout, l.kcache, T, pos0, iso3, 0));
-        CK(op_kv_store(vproj, l.vcache, T, pos0, iso3, 0));
-        CK(op_attention(qbuf, bufA, l.kcache, l.vcache, attn_o, T, pos0, iso3, cfg.ctx_max, 0));
+        const int * pd = in_graph ? pos_dev : nullptr;
+        CK(op_qk_prep(bufA, kproj, l.q_norm, l.k_norm, qbuf, kout, T, pos0, theta_scale, eps, st, pd));
+        CK(op_kv_store(kout, l.kcache, T, pos0, iso3, st, pd));
+        CK(op_kv_store(vproj, l.vcache, T, pos0, iso3, st, pd));
+        CK(op_attention(qbuf, bufA, l.kcache, l.vcache, attn_o, T, pos0, iso3, cfg.ctx_max, st, pd));
         quant(attn_o, kInner, T, {&l.wo});
         gemv(l.wo, attn_o, T, proj);
-        CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, 0));
+        CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
 };
 
@@ -359,6 +423,8 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     if (cfg.ctx_max > 4096) throw std::runtime_error("ctx_max above 4096 is not supported");
     m.theta_scale = std::pow(10000000.0f, -2.0f / static_cast<float>(kRope));
 
+    CK(cudaStreamCreate(&m.st));
+    CK(cudaHostAlloc(reinterpret_cast<void **>(&m.h_pos), sizeof(int), cudaHostAllocDefault));
     Planner count;
     m.plan(count, false);
     m.arena_bytes = count.off;
@@ -369,6 +435,36 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     m.plan(real, true);
     CK(cudaDeviceSynchronize());
     if (!m.stage) m.pin_free();   // kept for the streamed prefill uploads otherwise
+    if (m.stage) {
+        CK(cudaStreamCreateWithFlags(&m.cp, cudaStreamNonBlocking));
+        for (int i = 0; i < 2; ++i) {
+            CK(cudaEventCreateWithFlags(&m.up_done[i], cudaEventDisableTiming));
+            CK(cudaEventCreateWithFlags(&m.comp_done[i], cudaEventDisableTiming));
+        }
+        // Register the file pages of the streamed layers as pinned read-only host memory, so the DMA reads the page cache directly.
+        uintptr_t lo = UINTPTR_MAX, hi = 0;
+        for (const auto & kv : ix.tensors) {
+            if (kv.first.compare(0, 4, "blk.") != 0) continue;
+            const int il = std::atoi(kv.first.c_str() + 4);
+            if (il < cfg.n_layers || il >= 64) continue;
+            const uintptr_t a = reinterpret_cast<uintptr_t>(ix.data(kv.second));
+            lo = std::min(lo, a);
+            hi = std::max(hi, a + static_cast<uintptr_t>(kv.second.nbytes));
+        }
+        const uintptr_t pg = 4096;
+        lo = lo / pg * pg;
+        hi = (hi + pg - 1) / pg * pg;
+        const bool want = cfg.pin_stream;
+        if (want && hi > lo && cudaHostRegister(reinterpret_cast<void *>(lo), hi - lo, cudaHostRegisterReadOnly) == cudaSuccess) {
+            m.registered = true;
+            m.reg_ptr = reinterpret_cast<void *>(lo);
+            std::fprintf(stderr, "stream: %.2f GiB of CPU-layer weights registered as pinned memory (overlapped uploads)\n",
+                         static_cast<double>(hi - lo) / (1024.0 * 1024.0 * 1024.0));
+        } else {
+            if (want) std::fprintf(stderr, "stream: cudaHostRegister failed (%s), synchronous uploads\n", cudaGetErrorString(cudaGetLastError()));
+            cudaGetLastError();
+        }
+    }
     CK(q8_scratch_alloc(m.q8, cfg.t_max, kHidden));
     CK(actq8_alloc(m.act, cfg.t_max, kFFN));
     CK(cudaHostAlloc(reinterpret_cast<void **>(&m.h_stage), std::max(static_cast<size_t>(cfg.t_max) * kHidden, static_cast<size_t>(kVH) * kDH * kDH) * sizeof(float), cudaHostAllocDefault));
@@ -379,6 +475,15 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
 GpuLayers::~GpuLayers() {
     if (!p_) return;
     p_->pin_free();
+    for (cudaGraphExec_t g : p_->gexec) if (g) cudaGraphExecDestroy(g);
+    if (p_->registered) cudaHostUnregister(p_->reg_ptr);
+    for (int i = 0; i < 2; ++i) {
+        if (p_->up_done[i]) cudaEventDestroy(p_->up_done[i]);
+        if (p_->comp_done[i]) cudaEventDestroy(p_->comp_done[i]);
+    }
+    if (p_->cp) cudaStreamDestroy(p_->cp);
+    if (p_->h_pos) cudaFreeHost(p_->h_pos);
+    if (p_->st) cudaStreamDestroy(p_->st);
     q8_scratch_free(p_->q8);
     actq8_free(p_->act);
     if (p_->h_stage) cudaFreeHost(p_->h_stage);
@@ -398,6 +503,25 @@ void GpuLayers::forward(float * x_host, int T, int pos0, const std::function<voi
     if (m.saving && T > m.cfg.roll_t) throw std::runtime_error("GpuLayers::forward: batch larger than roll_t with snapshots on");
     const size_t bytes = static_cast<size_t>(T) * kHidden * sizeof(float);
     CK(cudaMemcpy(m.x, x_host, bytes, cudaMemcpyHostToDevice));
+    if (m.cfg.use_graph && !tap && T <= 5) {
+        // One CUDA graph per (T, snapshots on/off) holds every kernel launch of the layer stack; replaying it costs one launch.
+        const int key = (T - 1) * 2 + (m.saving ? 1 : 0);
+        *m.h_pos = pos0;
+        CK(cudaMemcpyAsync(m.pos_dev, m.h_pos, sizeof(int), cudaMemcpyHostToDevice, m.st));
+        if (!m.gexec[key]) {
+            cudaGraph_t g = nullptr;
+            CK(cudaStreamBeginCapture(m.st, cudaStreamCaptureModeThreadLocal));
+            m.in_graph = true;
+            try { m.run_layers(T, pos0); } catch (...) { m.in_graph = false; cudaGraph_t dead; cudaStreamEndCapture(m.st, &dead); throw; }
+            m.in_graph = false;
+            CK(cudaStreamEndCapture(m.st, &g));
+            CK(cudaGraphInstantiate(&m.gexec[key], g, 0));
+            CK(cudaGraphDestroy(g));
+        }
+        CK(cudaGraphLaunch(m.gexec[key], m.st));
+        CK(cudaMemcpy(x_host, m.x, bytes, cudaMemcpyDeviceToHost));
+        return;
+    }
     for (int il = 0; il < m.cfg.n_layers; ++il) {
         const LayerD & l = m.L[static_cast<size_t>(il)];
         if (l.is_attn) m.attention(l, T, pos0, m.cfg.kv_iso3);
@@ -421,10 +545,10 @@ void GpuLayers::rollback(int keep) {
     if (m.cfg.roll_t <= 0 || keep < 1 || keep > m.cfg.roll_t) throw std::runtime_error("GpuLayers::rollback: bad keep or no snapshot buffers");
     for (const LayerD & l : m.L) {
         if (l.is_attn) continue;
-        CK(cudaMemcpyAsync(l.conv_state, l.snap_conv, sizeof(float) * kConvCh * (kConvK - 1), cudaMemcpyDeviceToDevice, 0));
-        CK(cudaMemcpyAsync(l.ssm_state, l.snap_ssm, sizeof(float) * kVH * kDH * kDH, cudaMemcpyDeviceToDevice, 0));
-        CK(op_dn_conv(l.sv_qkv, l.conv_w, l.conv_state, m.conv, keep, 0));
-        CK(op_dn_rec(m.conv, l.sv_gate, l.sv_beta, l.sv_z, l.ssm_norm, l.ssm_state, m.attn_o, keep, m.eps, 0));
+        CK(cudaMemcpyAsync(l.conv_state, l.snap_conv, sizeof(float) * kConvCh * (kConvK - 1), cudaMemcpyDeviceToDevice, m.st));
+        CK(cudaMemcpyAsync(l.ssm_state, l.snap_ssm, sizeof(float) * kVH * kDH * kDH, cudaMemcpyDeviceToDevice, m.st));
+        CK(op_dn_conv(l.sv_qkv, l.conv_w, l.conv_state, m.conv, keep, m.st));
+        CK(op_dn_rec(m.conv, l.sv_gate, l.sv_beta, l.sv_z, l.ssm_norm, l.ssm_state, m.attn_o, keep, m.eps, m.st));
     }
     CK(cudaDeviceSynchronize());
 }
@@ -437,6 +561,12 @@ void GpuLayers::stream_begin(const float * x_host, int T) {
     g_up_s = g_comp_s = g_fetch_s = g_pread_s = g_wait_s = 0;
     if (T < 1 || T > m.cfg.t_max) throw std::runtime_error("stream_begin: T out of range");
     CK(cudaMemcpy(m.x, x_host, static_cast<size_t>(T) * kHidden * sizeof(float), cudaMemcpyHostToDevice));
+    if (m.registered) {
+        m.build_seq();
+        m.cur = m.issued = 0;
+        for (int i = 0; i < 2; ++i) CK(cudaEventRecord(m.comp_done[i], m.st));
+        m.issue_uploads();
+    }
 }
 
 void GpuLayers::stream_layer(int il, int T, int pos0, float * conv_state_host, float * ssm_state_host, float * k_host, float * v_host) {
@@ -477,7 +607,7 @@ void GpuLayers::stream_layer(int il, int T, int pos0, float * conv_state_host, f
         m.deltanet(l, T);
     }
     m.ffn(l, T);
-    CK(cudaDeviceSynchronize());
+    CK(cudaStreamSynchronize(m.st));   // the copy stream keeps uploading the next layer's matrices meanwhile
     g_comp_s += now_s() - t0;
     if (l.is_attn) {
         CK(cudaMemcpy(k_host + static_cast<size_t>(pos0) * kKVW, m.s_kc + static_cast<size_t>(pos0) * kKVW,
@@ -496,12 +626,52 @@ void GpuLayers::stream_layer(int il, int T, int pos0, float * conv_state_host, f
     }
 }
 
+void GpuLayers::mtp_kv(const float * concat_host, int T, int pos0, float * k_host, float * v_host) {
+    Impl & m = *p_;
+    if (!m.stage) throw std::runtime_error("mtp_kv needs prefill streaming buffers");
+    if (T < 1 || T > m.cfg.t_max || pos0 < 0 || pos0 + T > m.cfg.ctx_max) throw std::runtime_error("mtp_kv: T or position out of range");
+    LayerD l;
+    WMat eh;
+    {
+        Planner pl;
+        pl.base = m.svec;   // small vectors
+        l.attn_norm = m.vec(pl, "blk.64.attn_norm.weight", kHidden, true);
+        l.q_norm = m.vec(pl, "blk.64.attn_q_norm.weight", kHD, true);
+        l.k_norm = m.vec(pl, "blk.64.attn_k_norm.weight", kHD, true);
+    }
+    auto load = [&](const char * name, uint8_t * dst) {
+        const GgufTensor & t = m.ix.get(name);
+        if (static_cast<size_t>(t.nbytes) > m.stage_bytes) throw std::runtime_error(std::string("staging buffer too small for ") + name);
+        m.upload_tensor(dst, t);   // legacy stream: ordered after the earlier work on the blocking stream st
+        return WMat{dst, static_cast<int>(t.type), t.ne[0], t.ne[1], nullptr};
+    };
+    CK(cudaMemcpy(m.conv, concat_host, static_cast<size_t>(T) * 2 * kHidden * sizeof(float), cudaMemcpyHostToDevice));
+    eh = load("blk.64.nextn.eh_proj.weight", m.stage);
+    m.quant(m.conv, 2 * kHidden, T, {&eh});
+    m.gemv(eh, m.conv, T, m.x);
+    CK(op_rmsnorm_rows(m.x, l.attn_norm, m.xn, kHidden, T, m.eps, m.st));
+    const WMat wk = load("blk.64.attn_k.weight", m.stage2);
+    const WMat wv = load("blk.64.attn_v.weight", m.stage);   // after eh_proj finished (legacy-stream copy waits for st)
+    m.quant(m.xn, kHidden, T, {&wk, &wv});
+    m.gemv(wk, m.xn, T, m.kproj);
+    m.gemv(wv, m.xn, T, m.vproj);
+    // q is not needed; qk_prep also writes qbuf from bufA (unused here).
+    CK(op_qk_prep(m.bufA, m.kproj, l.q_norm, l.k_norm, m.qbuf, m.kout, T, pos0, m.theta_scale, m.eps, m.st));
+    CK(cudaStreamSynchronize(m.st));
+    CK(cudaMemcpy(k_host + static_cast<size_t>(pos0) * kKVW, m.kout, static_cast<size_t>(T) * kKVW * sizeof(float), cudaMemcpyDeviceToHost));
+    CK(cudaMemcpy(v_host + static_cast<size_t>(pos0) * kKVW, m.vproj, static_cast<size_t>(T) * kKVW * sizeof(float), cudaMemcpyDeviceToHost));
+}
+
 void GpuLayers::stream_peek(float * x_host, int T) {
     CK(cudaMemcpy(x_host, p_->x, static_cast<size_t>(T) * kHidden * sizeof(float), cudaMemcpyDeviceToHost));
 }
 
 void GpuLayers::stream_end(float * x_host, int T) {
     stream_peek(x_host, T);
+    if (p_->registered) {
+        if (p_->cur != p_->seq.size()) throw std::runtime_error("streamed prefill ended before every matrix was used");
+        CK(cudaStreamSynchronize(p_->cp));
+    }
     if (std::getenv("QWEN_STREAM_DEBUG")) std::fprintf(stderr, "stream: layers %.2f s (pread %.2f, dma wait %.2f)\n", g_comp_s, g_pread_s, g_wait_s);
     g_up_s = g_comp_s = g_fetch_s = g_pread_s = g_wait_s = 0;
 }

@@ -149,7 +149,8 @@ __global__ void dn_rec_kernel(const float * conv_out, const float * gate, const 
 
 // grid (T, 28), block 256 (one thread per dimension). Blocks 0..23 prepare a query head, blocks 24..27 a key head.
 __global__ void qk_prep_kernel(const float * qfull, const float * kproj, const float * qnorm, const float * knorm, float * qbuf,
-                               float * kout, int pos0, float theta_scale, float eps) {
+                               float * kout, int pos0, const int * pos_dev, float theta_scale, float eps) {
+    if (pos_dev) pos0 = *pos_dev;   // CUDA graph replay: the position lives in device memory
     __shared__ float yv[HD], red[8];
     const int t = blockIdx.x, h = blockIdx.y, d = threadIdx.x;
     const float * src;
@@ -202,7 +203,8 @@ __device__ __forceinline__ float iso3_norm(const uint8_t * blk) {
 // grid T * 24 (one block per token and query head), block 256. Scores live in dynamic shared memory (ctx_max floats).
 template <bool ISO3>
 __global__ void attention_kernel(const float * qbuf, const float * qfull, const uint8_t * kc, const uint8_t * vc, float * attn_o,
-                                 int pos0) {
+                                 int pos0, const int * pos_dev) {
+    if (pos_dev) pos0 = *pos_dev;
     extern __shared__ float sc[];
     __shared__ float qs[HD], red[8];
     const int t = blockIdx.x / NH, h = blockIdx.x % NH, g = h / (NH / NKV);
@@ -297,20 +299,20 @@ cudaError_t op_dn_rec(const float * conv_out, const float * gate, const float * 
     return cudaGetLastError();
 }
 cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * qnorm, const float * knorm, float * qbuf,
-                       float * kout, int T, int pos0, float theta_scale, float eps, cudaStream_t s) {
-    qk_prep_kernel<<<dim3(T, NH + NKV), HD, 0, s>>>(qfull, kproj, qnorm, knorm, qbuf, kout, pos0, theta_scale, eps);
+                       float * kout, int T, int pos0, float theta_scale, float eps, cudaStream_t s, const int * pos_dev) {
+    qk_prep_kernel<<<dim3(T, NH + NKV), HD, 0, s>>>(qfull, kproj, qnorm, knorm, qbuf, kout, pos0, pos_dev, theta_scale, eps);
     return cudaGetLastError();
 }
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
-                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s) {
+                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev) {
     const size_t smem = static_cast<size_t>(ctx_max) * sizeof(float);
     const dim3 grid(T * NH);
     if (iso3) {
         attention_kernel<true><<<grid, 256, smem, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
-                                                       static_cast<const uint8_t *>(vcache), attn_o, pos0);
+                                                       static_cast<const uint8_t *>(vcache), attn_o, pos0, pos_dev);
     } else {
         attention_kernel<false><<<grid, 256, smem, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
-                                                        static_cast<const uint8_t *>(vcache), attn_o, pos0);
+                                                        static_cast<const uint8_t *>(vcache), attn_o, pos0, pos_dev);
     }
     return cudaGetLastError();
 }

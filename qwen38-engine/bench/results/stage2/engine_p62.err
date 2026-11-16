@@ -1,6 +1,6 @@
 loaded in 0.48 s; arena 597.7 MiB; resident layers 53 (10.81 GiB), streamed 2.64 GiB
 prompt tokens: 62
-	Command being timed: "taskset -c 0-3 ./build/qwen38-engine -m /home/ivan/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p  
+	Command being timed: "taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p  
  = Robert Boulter = 
  
  Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was perfor -n 8 --temp 0 --seed 42 --resident-gib 11.0"

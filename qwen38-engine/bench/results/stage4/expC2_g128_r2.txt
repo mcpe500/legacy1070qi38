@@ -1,0 +1,7 @@
+
+prompt: The capital of France is
+generated:  Paris.
+The capital of Germany is Berlin.
+The capital of Italy is Rome.
+The capital of Spain is
+{"prompt_tokens":5,"generated_tokens":24,"ids":[11751,13,198,760,6511,314,9564,369,19241,13,198,760,6511,314,14898,369,21047,13,198,760,6511,314,17163,369],"text":" Paris.\nThe capital of Germany is Berlin.\nThe capital of Italy is Rome.\nThe capital of Spain is","load_s":43.07,"prefill_s":1.48,"prefill_tok_s":3.379,"decode_s":8.69,"decode_tok_s":2.7629,"heap_allocs_in_decode_forward":0,"peak_rss_kb":8806344,"rss_anon_kb":281348,"rss_file_kb":8438980,"swap_used_kb_before":641768,"swap_used_kb_after":641768,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":32,"gpu_arena_mib":7118.6,"gpu_weights_mib":6646.2,"gpu_kv_mib":25.0,"vram_used_mib":7258.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":1.019,"decode_cpu_layers_s":6.891,"decode_head_s":0.773,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0],"mtp_adaptive":0,"mtp_prefill_s":0.000,"prefill_main_s":1.463,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"ttft_s":1.480,"finish":"length","temperature":0.000}

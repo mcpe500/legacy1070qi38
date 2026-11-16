@@ -1,5 +1,5 @@
 Command exited with non-zero status 1
-	Command being timed: "taskset -c 0-3 ./build/layer01_parity /home/ivan/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf tests/ref_tensors"
+	Command being timed: "taskset -c 0-3 ./build/layer01_parity ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf tests/ref_tensors"
 	User time (seconds): 4.49
 	System time (seconds): 2.36
 	Percent of CPU this job got: 85%

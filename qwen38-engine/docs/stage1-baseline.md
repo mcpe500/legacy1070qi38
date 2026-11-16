@@ -1,7 +1,7 @@
 # Stage 1: reference and baseline
 
 Date: 2026-11-15. Hardware: GTX 1070 Ti (sm_61), Ryzen 5 2400G (CPUs 0-3 = four physical cores), 15905 MiB RAM, 4 GiB swap.
-Model: `/home/ivan/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf`.
+Model: `~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf`.
 Runtime: llama.cpp `3549c27` + iso3 patch (fork `mcpe500/llama.cpp` `feat/iso3-kv` @ `36dbad3`), built in `~/llama.cpp/build-iso3`.
 
 ## Verified inputs

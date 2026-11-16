@@ -19,7 +19,7 @@ description: "Architecture facts and per-layer computation for Qwen3.8-27B, a hy
 | Layer types in GGUF | full_attention_interval 4 | run-001 header check |
 | output.weight | separate tensor from token_embd | run-001 |
 
-Local files: `/home/ivan/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf` (16 GB) is the reference quant.
+Local files: `~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf` (16 GB) is the reference quant.
 The vision projector is a separate file, `mmproj-BF16.gguf` (931146432 bytes, 0.87 GiB),
 and is not part of the LM GGUF.
 

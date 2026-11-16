@@ -1,7 +1,7 @@
 loaded in 29.41 s; CPU arena 597.7 MiB; CPU resident layers 40 (8.70 GiB), streamed 0.00 GiB
 GPU: layers 0..23, KV iso3, arena 5121.9 MiB (weights 4869.2 MiB, KV 9.4 MiB), device memory in use 5232.2 MiB
 prompt tokens: 5
-	Command being timed: "taskset -c 0-3 ./build/qwen38-engine -m /home/ivan/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p The capital of France is -n 24 --temp 0 --seed 42 --gpu-layers 24 --kv iso3 --resident-gib 11.0"
+	Command being timed: "taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p The capital of France is -n 24 --temp 0 --seed 42 --gpu-layers 24 --kv iso3 --resident-gib 11.0"
 	User time (seconds): 50.65
 	System time (seconds): 8.29
 	Percent of CPU this job got: 112%

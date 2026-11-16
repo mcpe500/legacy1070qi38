@@ -17,7 +17,7 @@ and are linked from `.opencode/skills/` and `.claude/skills/`.
 | RAM | 16 GB DDR4, 15905 MiB visible to Linux. Channel layout unknown (needs `sudo dmidecode -t memory`) | section 2 |
 | memlock | 1.94 GiB limit. Cannot lock the whole model without root | section 2 |
 | Swap | 4 GiB file `/swap.img` | section 2 |
-| Model | Qwen3.8-27B. Reference GGUF: `/home/ivan/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf` (16 GB) | section 10 |
+| Model | Qwen3.8-27B. Reference GGUF: `~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf` (16 GB) | section 10 |
 | Reference runtime | llama.cpp `3549c27` plus the iso3 patch, `~/llama.cpp/build-iso3/bin/` | section 10 |
 
 Budgets (from the brief): VRAM at most 7.2 GB, system RAM at most 14.2 GB (decimal units, 13.2 GiB).

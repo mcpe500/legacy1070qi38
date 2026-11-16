@@ -14,4 +14,4 @@ llama_nomtp_ngl25 {'tag': 'llama_nomtp_ngl25', 'engine': 'llama-server', 'ngl': 
 engine_mtp2 {'tag': 'engine_mtp2', 'engine': 'qwen38-engine', 'mtp': 2, 'ok': True, 'pp_tok_s': 13.419456894278936, 'tg_tok_s': 2.5779, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 37930.0, 'ttft_ms': 37930.0, 'draft_n': 176, 'draft_acc': 169, 'peak_rss_mib': 9213.77734375, 'rss_anon_mib': 554.3203125, 'heap_allocs': 0, 'gpu_layers': 32, 'kv': 'iso3', 'load_s': 11.68, 'peak_vram_mib': 7245}
 [09:48:22] qwen38-engine engine_mtp0 (--mtp-steps 0)
 engine_mtp0 {'tag': 'engine_mtp0', 'engine': 'qwen38-engine', 'mtp': 0, 'ok': True, 'pp_tok_s': 16.972324108036013, 'tg_tok_s': 2.4388, 'prompt_n': 509, 'predicted_n': 256, 'prompt_ms': 29990.0, 'ttft_ms': 29990.0, 'draft_n': 0, 'draft_acc': 0, 'peak_rss_mib': 8642.765625, 'rss_anon_mib': 320.05078125, 'heap_allocs': 0, 'gpu_layers': 32, 'kv': 'iso3', 'load_s': 42.63, 'peak_vram_mib': 7163}
-wrote /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/final_comparison.md
+wrote ~/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/final_comparison.md

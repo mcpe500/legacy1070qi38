@@ -23,6 +23,10 @@ struct GpuConfig {
     bool stream_prefill = false;
     // DeltaNet rollback (MTP verification): largest batch whose DeltaNet state can be rolled back (0 = no buffers).
     int roll_t = 0;
+    // Replay the whole layer stack as a CUDA graph for batches of 1..4 tokens (decode and MTP verification).
+    bool use_graph = false;
+    // Streamed prefill: register the CPU-layer weights of the mmap as pinned memory and overlap upload with compute.
+    bool pin_stream = true;
 };
 
 // "all", "none", or a comma list of ggml type ids or names (q4_k, q5_k, q6_k, q3_k, iq4_nl, iq3_s, iq4_xs).
@@ -54,7 +58,11 @@ public:
     bool stream_ready() const;
     void stream_begin(const float * x_host, int T);
     void stream_layer(int il, int T, int pos0, float * conv_state_host, float * ssm_state_host, float * k_host, float * v_host);
-    void stream_peek(float * x_host, int T);   // copies the current stream to the host (parity taps)
+    void stream_peek(float * x_host, int T);
+    // MTP prefill on the GPU (needs prefill streaming): only the MTP KV is needed for later drafts, so this runs eh_proj, attn_norm,
+    // the K and V projections, k_norm and RoPE for T rows of concat_host [T][10240] (= [rmsnorm(emb, enorm) | rmsnorm(h, hnorm)])
+    // and writes FP32 K and V rows pos0 .. pos0+T-1 into k_host / v_host ([pos][4][256]).
+    void mtp_kv(const float * concat_host, int T, int pos0, float * k_host, float * v_host);   // copies the current stream to the host (parity taps)
     void stream_end(float * x_host, int T);
 
     size_t vram_bytes() const;     // device bytes owned by this object (arena plus the Q8 scratch)
