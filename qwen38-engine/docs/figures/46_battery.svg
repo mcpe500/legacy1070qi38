@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="430" viewBox="0 0 1000 430" role="img"><defs></defs>
+<rect x="0" y="0" width="1000" height="430" rx="0" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="24" y="38" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#1f2328" text-anchor="start">Battery 13 run: tg tok/s per panjang prompt × mode MTP</text>
+<text x="24" y="62" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#57606a" text-anchor="start">Harness sama dengan baseline pre_* · taskset -c 0-3 · baseline pre-round (MTP 0): pre_p5 2,711 · pre_p512 2,494</text>
+
+<line x1="84" y1="281" x2="660" y2="281" stroke="#d0d7de" stroke-width="1"/>
+<line x1="84" y1="217" x2="660" y2="217" stroke="#d0d7de" stroke-width="1"/>
+<line x1="84" y1="153" x2="660" y2="153" stroke="#d0d7de" stroke-width="1"/>
+<text x="76" y="285" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#6e7781" text-anchor="end">1</text>
+<text x="76" y="221" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#6e7781" text-anchor="end">2</text>
+<text x="76" y="157" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#6e7781" text-anchor="end">3</text>
+
+<rect x="108" y="165" width="30" height="180" fill="#8c959f" stroke="none" stroke-width="1.5"/>
+<rect x="144" y="183" width="30" height="162" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<rect x="180" y="184" width="30" height="161" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<rect x="216" y="159" width="30" height="186" fill="#9a6700" stroke="none" stroke-width="1.5"/>
+<rect x="300" y="175" width="30" height="170" fill="#8c959f" stroke="none" stroke-width="1.5"/>
+<rect x="336" y="140" width="30" height="205" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<rect x="372" y="129" width="30" height="216" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<rect x="408" y="134" width="30" height="211" fill="#9a6700" stroke="none" stroke-width="1.5"/>
+<rect x="488" y="165" width="27" height="180" fill="#8c959f" stroke="none" stroke-width="1.5"/>
+<rect x="520" y="134" width="27" height="211" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<rect x="552" y="133" width="27" height="212" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<rect x="584" y="174" width="27" height="171" fill="#9a6700" stroke="none" stroke-width="1.5"/>
+<rect x="616" y="153" width="27" height="192" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+
+<text x="123" y="161" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">2,81</text>
+<text x="159" y="179" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">2,53</text>
+<text x="195" y="180" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">2,52</text>
+<text x="231" y="155" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">2,92</text>
+<text x="315" y="171" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">2,66</text>
+<text x="351" y="136" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">3,20</text>
+<text x="387" y="125" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">3,37</text>
+<text x="423" y="130" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">3,31</text>
+<text x="501" y="161" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">2,81</text>
+<text x="533" y="130" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">3,30</text>
+<text x="565" y="129" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">3,32</text>
+<text x="597" y="170" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">2,67</text>
+<text x="629" y="149" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9.5" font-weight="400" fill="#1f2328" text-anchor="middle">3,01</text>
+
+<line x1="104" y1="172" x2="250" y2="172" stroke="#cf222e" stroke-width="1.5" stroke-dasharray="4 3"/>
+<line x1="484" y1="186" x2="648" y2="186" stroke="#cf222e" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+<line x1="84" y1="345" x2="660" y2="345" stroke="#6e7781" stroke-width="1.5"/>
+<line x1="84" y1="115" x2="84" y2="345" stroke="#6e7781" stroke-width="1.5"/>
+<text x="180" y="363" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="middle">p5 (24 tok)</text>
+<text x="372" y="363" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="middle">p64 (64 tok)</text>
+<text x="564" y="363" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="middle">p512 (16 tok)</text>
+
+<rect x="84" y="379" width="12" height="12" fill="#8c959f" stroke="none" stroke-width="1.5"/>
+<text x="102" y="389" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">MTP 0</text>
+<rect x="170" y="379" width="12" height="12" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<text x="188" y="389" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">MTP 2</text>
+<rect x="256" y="379" width="12" height="12" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<text x="274" y="389" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">MTP 3</text>
+<rect x="342" y="379" width="12" height="12" fill="#9a6700" stroke="none" stroke-width="1.5"/>
+<text x="360" y="389" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">adaptif</text>
+<rect x="440" y="379" width="12" height="12" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="458" y="389" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">headline 256 tok (p512)</text>
+
+<rect x="700" y="98" width="276" height="296" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="712" y="118" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="13" font-weight="700" fill="#1f2328" text-anchor="start">Bacaan</text>
+<text x="712" y="142" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">MTP 0: 2,494 → 2,814 (+13%) =</text>
+<text x="712" y="167" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">efek B+C (baca K/V murah +</text>
+<text x="712" y="192" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">tabel RoPE di jalur decode)</text>
+<text x="712" y="230" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">MTP 2/3 di p64/p512: 3,21–3,37</text>
+<text x="712" y="255" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">(+33% vs baseline) — MTP kini</text>
+<text x="712" y="280" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">menang saat accept 100%</text>
+<text x="712" y="318" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">p5 tetap MTP-hostile (67–75%):</text>
+<text x="712" y="343" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">adaptif 2,918 terbaik di situ</text>
+<text x="712" y="381" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">pp/VRAM tidak berubah</text>
+
+<text x="24" y="416" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10.5" font-weight="400" fill="#57606a" text-anchor="start">Garis putus-putus merah = baseline pre-round (MTP 0); grup p64 tanpa baseline (run pre p62 gagal: prompt kosong). Batang hijau = headline post_p512_256.</text>
+</svg>
