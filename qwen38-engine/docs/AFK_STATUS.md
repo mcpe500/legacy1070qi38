@@ -480,7 +480,8 @@ All five stages are done. Open points, in order of value:
 
 ## Experiment `exp/ternary-bonsai-27b-eval` (2026-11-17): Ternary Bonsai 2 27B on the GTX 1070 Ti
 
-Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/results/bonsai/`.
+Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/results/bonsai/`. All 27 steps with reason, command, output and decision:
+`bench/results/bonsai/EXPERIMENT-LOG.md`; every run with exact peak VRAM: `bench/results/bonsai/RUNS.md` (`bench/bonsai_ledger.py`). Figure: `docs/figures/50_ternary_bonsai.svg`.
 
 - **Model.** `prism-ml/Ternary-Bonsai-2-27B-gguf` (Apache-2.0): the Qwen3.8-27B hybrid architecture (64 blocks, 48 Gated DeltaNet + 16 GQA, 24/4 heads, head_dim 256,
   vocabulary 248320) with ternary weights in a Hadamard-rotated basis (`prism.hadamard`, block 1024, explicit signs) and **no MTP head**. Packings: `PTQ1_0` 5.95 GB (1.75 bpw),
@@ -497,5 +498,11 @@ Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/re
   Synthetic test PASS (decode = libggml, rotation 8.6e-8, GEMV 8-10e-8 vs same-activation reference, batch-size independent); real-weight test: cosine **1.000000** against llama.cpp on
   layer-0 `ffn_up`, `ffn_gate`, `ffn_down`; SASS gate PASS (IDP.4A x464, 0 half arithmetic). Not wired into the forward pass (list of missing pieces in the comparison file).
 - **Quality sanity.** 6/6 checks for both models (including a reasoning question with thinking on).
+- **Results by context (best fit under 7373 MiB, tg tok/s and peak VRAM).** `PTQ1_0`: 19.64 (6579) / 15.19 (6633) / 11.70 (6861) / 7.51 (7165) / 3.36 (7361, `-ngl 62`) /
+  2.24 (7303, `-ngl 48`, short depth) at 512 / 4K / 16K / 32K / 64K / 128K. `Q2_0`: 17.13 (7371) / 12.43 (7337) / 7.20 (7339) / 3.57 (7355) / 2.04 (7351, iso3 `-ngl 56`) / 3.98 (7327, short depth).
+  Qwen Q4_K_M on qwen38-engine: 2.947 (3.130 adaptive) at 512, 2.245 (2.446) at 4K; stock llama.cpp Qwen: 2.26 / 2.00 / 1.35 at 512 / 4K / 16K.
+- **Failures (root cause).** F1 all-GPU `Q2_0` at ubatch 512: 7791 MiB (compute buffer; fixed with `-ub 128`, 7371 MiB). F2 f16 KV at 32K: `cudaMalloc failed: out of memory` for 1920 MiB.
+  F3 64K prompt of 69447 tokens > 65536 (prompt now sized with `/tokenize`). F4 1 token generated (greedy end token; `ignore_eos`). F5 128K `-ngl` 51 / 52 / 48 at 7739 / 7847 / 7899 MiB
+  (overhead grows 6.1 KiB per token). F6 `PTQ1_0` 64K all-GPU at 7471 / 7595 MiB (fork allocates about 350 MiB at the first request; `-ngl 62` 7361 MiB). No kernel test failed.
 - **Decision for the engine.** On this card the bottleneck of Qwen Q4_K_M is the 7 GiB of CPU-layer weights read from DDR4 per token; Bonsai removes it. The next engineering step with the
   largest payoff is to wire the ternary path into the engine with every layer on the GPU (PTQ1_0 or PQ2_0 needs its own unpack kernel; Q2_0 leaves almost no VRAM for the engine's buffers).
