@@ -1,0 +1,21 @@
+0.00.097.589 I srv  llama_server: initializing ...
+0.00.097.605 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.098.176 W srv  server_setup: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.099.696 I srv    load_model: loading model '~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf'
+0.08.376.068 I cmn          init: llama threadpool init, n_threads = 4
+0.11.636.220 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 32768, kv_unified = 'false'
+0.11.642.166 W srv          init: chat template supports preserving reasoning, it is enabled by default (may use more tokens, disable via --no-reasoning-preserve)
+0.11.642.209 I srv  server_run_i: model loaded
+0.11.642.216 I srv  server_on_li: listening on http://127.0.0.1:8097
+0.12.527.021 I slot get_availabl: id  0 | task -1 | selected slot by LRU, n_tokens = 0, t_last = -1
+0.12.527.081 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.19.369.073 I slot print_timing: id  0 | task 0 | prompt processing, n_tokens =    355, progress = 0.73, t =   6.84 s / 51.89 tokens per second
+0.22.247.955 I slot print_timing: id  0 | task 0 | prompt processing, n_tokens =    483, progress = 0.99, t =   9.72 s / 49.69 tokens per second
+0.29.046.394 I slot print_timing: id  0 | task 0 | n_gen =    100, tg =  18.91 t/s, tg_3s =  19.10 t/s
+0.30.526.601 I slot print_timing: id  0 | task 0 | prompt eval time =   11283.14 ms /   487 tokens (   23.17 ms per token,    43.16 tokens per second)
+0.30.526.605 I slot print_timing: id  0 | task 0 |        eval time =    6716.34 ms /   128 tokens (   52.88 ms per token,    18.91 tokens per second)
+0.30.526.606 I slot print_timing: id  0 | task 0 |       total time =   17999.48 ms /   615 tokens
+0.30.526.612 I slot print_timing: id  0 | task 0 |    graphs reused =        125
+0.30.526.613 I slot print_timing: id  0 | task 0 |   graph reallocs =          0    /     0        (same size) / (changed size)
+0.30.526.655 I slot      release: id  0 | task 0 | stop processing: n_tokens = 614, truncated = 0
+0.30.529.209 I srv    operator(): operator(): cleaning up before exit...

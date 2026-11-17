@@ -477,3 +477,25 @@ All five stages are done. Open points, in order of value:
 - Full comparison: `bench/results/experiment_comparison.md`
 - Rollback bit-exact: `bench/results/stage4/exp_pld_rollback_bitident.txt`
 - Rollback default: `bench/results/stage4/exp_pld_rollback_default_mtdot.txt`
+
+## Experiment `exp/ternary-bonsai-27b-eval` (2026-11-17): Ternary Bonsai 2 27B on the GTX 1070 Ti
+
+Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/results/bonsai/`.
+
+- **Model.** `prism-ml/Ternary-Bonsai-2-27B-gguf` (Apache-2.0): the Qwen3.8-27B hybrid architecture (64 blocks, 48 Gated DeltaNet + 16 GQA, 24/4 heads, head_dim 256,
+  vocabulary 248320) with ternary weights in a Hadamard-rotated basis (`prism.hadamard`, block 1024, explicit signs) and **no MTP head**. Packings: `PTQ1_0` 5.95 GB (1.75 bpw),
+  `PQ2_0` 7.21 GB (2.125 bpw), `Q2_0` 7.63 GB (2.25 bpw, stock llama.cpp). The headers were read remotely first (`tests/tools/gguf_remote_header.py`, HTTP range requests);
+  `Q2_0` and `PTQ1_0` were then downloaded (13.6 GB, sha256 verified against the Hugging Face LFS ids), `PQ2_0` and the 53.8 GB F16 file were not.
+- **Runtimes.** `Q2_0` on our stock llama.cpp build (`fc9437a`, has the Hadamard runtime and our iso3 KV); `PTQ1_0` on the PrismML fork release `prism-b12128` (sha256 verified),
+  which runs on sm_61 through PTX JIT. The engine itself does not load Bonsai yet.
+- **Speed.** Short context: Bonsai decodes 17.1 (`Q2_0`, every layer on the GPU at `-ub 128`) to 19.6 tok/s (`PTQ1_0`) against 2.95 tok/s for Qwen Q4_K_M on qwen38-engine (MTP 2) and
+  2.26 on llama.cpp: about **6x**. 4K: 15.2 (`PTQ1_0`) vs 2.25. 16K: 11.7 vs 1.35 (llama.cpp Qwen). 32K: 7.5 (`PTQ1_0`, every layer on the GPU).
+- **Capacity under 7373 MiB (measured).** `PTQ1_0` holds every layer on the GPU up to 32K (q4_0 KV, 7165 MiB). 64K needs 6-8 CPU layers (`Q2_0` + iso3 `-ngl 56`, `PTQ1_0` + q4_0 `-ngl 62`),
+  128K needs 16 (`-ngl 48`, 7327 / 7303 MiB). The runtime overhead grows by about 6 KiB per context token (320 MiB at 4K, 1080 MiB at 128K), which dominates at long context.
+  Model prediction: `PTQ1_0` with iso3 KV would keep every layer on the GPU up to about 84K tokens (needs our iso3 patch in the fork).
+- **Ternary kernel path (prepared).** `src/cuda/ternary_gemv.cu`: Q2_0 GEMV with `lop3.b32` unpack + `prmt.b32` lane gather + `__dp4a`, and the FP32 Hadamard rotation.
+  Synthetic test PASS (decode = libggml, rotation 8.6e-8, GEMV 8-10e-8 vs same-activation reference, batch-size independent); real-weight test: cosine **1.000000** against llama.cpp on
+  layer-0 `ffn_up`, `ffn_gate`, `ffn_down`; SASS gate PASS (IDP.4A x464, 0 half arithmetic). Not wired into the forward pass (list of missing pieces in the comparison file).
+- **Quality sanity.** 6/6 checks for both models (including a reasoning question with thinking on).
+- **Decision for the engine.** On this card the bottleneck of Qwen Q4_K_M is the 7 GiB of CPU-layer weights read from DDR4 per token; Bonsai removes it. The next engineering step with the
+  largest payoff is to wire the ternary path into the engine with every layer on the GPU (PTQ1_0 or PQ2_0 needs its own unpack kernel; Q2_0 leaves almost no VRAM for the engine's buffers).

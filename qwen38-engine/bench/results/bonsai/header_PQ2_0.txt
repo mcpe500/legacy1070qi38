@@ -1,0 +1,67 @@
+file: Ternary-Bonsai-2-27B-PQ2_0.gguf
+  size 7.206 GB, GGUF v3, 851 tensors, 49 metadata keys, header 16.0 MiB read
+  general.architecture                             qwen35
+  general.file_type                                141
+  general.name                                     Hf
+  general.quantization_version                     2
+  qwen35.attention.head_count                      24
+  qwen35.attention.head_count_kv                   4
+  qwen35.attention.key_length                      256
+  qwen35.attention.layer_norm_rms_epsilon          9.999999974752427e-07
+  qwen35.attention.value_length                    256
+  qwen35.block_count                               64
+  qwen35.context_length                            262144
+  qwen35.embedding_length                          5120
+  qwen35.feed_forward_length                       17408
+  qwen35.full_attention_interval                   4
+  qwen35.rope.dimension_count                      64
+  qwen35.rope.dimension_sections                   [11, 11, 10, 0]
+  qwen35.rope.freq_base                            10000000.0
+  qwen35.ssm.conv_kernel                           4
+  qwen35.ssm.group_count                           16
+  qwen35.ssm.inner_size                            6144
+  qwen35.ssm.state_size                            128
+  qwen35.ssm.time_step_rank                        48
+  prism.hadamard.axis                              input-last-dimension
+  prism.hadamard.block_size                        1024
+  prism.hadamard.gdn_v_grouped                     True
+  prism.hadamard.inverse_weight_names              ['token_embd.weight']
+  prism.hadamard.sign_mode                         explicit
+  prism.hadamard.sign_values                       <array of 28672>
+  prism.hadamard.sign_widths                       [5120, 6144, 17408]
+  prism.hadamard.transform                         normalized-sylvester-walsh-hadamard
+  prism.hadamard.version                           1
+  prism.hadamard.weight_names                      <401 strings>
+  tensor types (count, MiB, bits/weight):
+    type142      402     6806.6   2.125
+    BF16          96       45.0  16.000
+    F32          353       10.1  32.000
+  blocks 64, block bytes MiB min 94.3 max 98.1 total 6217.6; non-block MiB 644.2
+    output.weight                            type142  [5120, 248320]              322.07 MiB
+    output_norm.weight                       F32      [5120]                        0.02 MiB
+    token_embd.weight                        type142  [5120, 248320]              322.07 MiB
+    blk.0.attn_gate.weight                   type142  [5120, 6144]                  7.97 MiB
+    blk.0.attn_norm.weight                   F32      [5120]                        0.02 MiB
+    blk.0.attn_qkv.weight                    type142  [5120, 10240]                13.28 MiB
+    blk.0.ffn_down.weight                    type142  [17408, 5120]                22.58 MiB
+    blk.0.ffn_gate.weight                    type142  [5120, 17408]                22.58 MiB
+    blk.0.ffn_up.weight                      type142  [5120, 17408]                22.58 MiB
+    blk.0.post_attention_norm.weight         F32      [5120]                        0.02 MiB
+    blk.0.ssm_a                              F32      [48]                          0.00 MiB
+    blk.0.ssm_alpha.weight                   BF16     [5120, 48]                    0.47 MiB
+    blk.0.ssm_beta.weight                    BF16     [5120, 48]                    0.47 MiB
+    blk.0.ssm_conv1d.weight                  F32      [4, 10240]                    0.16 MiB
+    blk.0.ssm_dt.bias                        F32      [48]                          0.00 MiB
+    blk.0.ssm_norm.weight                    F32      [128]                         0.00 MiB
+    blk.0.ssm_out.weight                     type142  [6144, 5120]                  7.97 MiB
+    blk.3.attn_k.weight                      type142  [5120, 1024]                  1.33 MiB
+    blk.3.attn_k_norm.weight                 F32      [256]                         0.00 MiB
+    blk.3.attn_norm.weight                   F32      [5120]                        0.02 MiB
+    blk.3.attn_output.weight                 type142  [6144, 5120]                  7.97 MiB
+    blk.3.attn_q.weight                      type142  [5120, 12288]                15.94 MiB
+    blk.3.attn_q_norm.weight                 F32      [256]                         0.00 MiB
+    blk.3.attn_v.weight                      type142  [5120, 1024]                  1.33 MiB
+    blk.3.ffn_down.weight                    type142  [17408, 5120]                22.58 MiB
+    blk.3.ffn_gate.weight                    type142  [5120, 17408]                22.58 MiB
+    blk.3.ffn_up.weight                      type142  [5120, 17408]                22.58 MiB
+    blk.3.post_attention_norm.weight         F32      [5120]                        0.02 MiB

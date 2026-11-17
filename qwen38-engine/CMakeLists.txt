@@ -90,7 +90,7 @@ set_target_properties(foundation_test PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin
 
 # Stage 3 CUDA kernels (sm_61): quantized GEMV, FP32 operators, iso3 KV store, and the GPU layer runner.
 add_library(gpu_cuda STATIC
-  src/cuda/gemv.cu src/cuda/dp4a_gemv.cu src/cuda/ops.cu src/cuda/iso3_quant.cu src/cuda/q8_gemv.cu src/cuda/gpu_layers.cu)
+  src/cuda/gemv.cu src/cuda/dp4a_gemv.cu src/cuda/ops.cu src/cuda/iso3_quant.cu src/cuda/q8_gemv.cu src/cuda/gpu_layers.cu src/cuda/ternary_gemv.cu)
 target_include_directories(gpu_cuda PUBLIC src/cuda src/common src/packer)
 target_link_libraries(gpu_cuda PUBLIC CUDA::cudart)
 # The iso3 quantizer must reproduce the CPU bytes exactly, so fused multiply-add contraction is off in that file only.
@@ -112,3 +112,14 @@ set_target_properties(gpu_layers_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/b
 
 add_executable(iso3_gpu_test tests/cuda/iso3_gpu_test.cu)
 target_link_libraries(iso3_gpu_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
+
+# Prepared ternary path (Ternary Bonsai 2 27B, Q2_0 + Hadamard activations): kernel test against libggml and a double reference.
+add_executable(ternary_test tests/cuda/ternary_test.cu)
+target_include_directories(ternary_test PRIVATE "${LLAMA_SRC}/ggml/include")
+target_link_libraries(ternary_test PRIVATE gpu_cuda ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart)
+set_target_properties(ternary_test PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
+
+add_executable(ternary_real_test tests/cuda/ternary_real_test.cu)
+target_include_directories(ternary_real_test PRIVATE "${LLAMA_SRC}/ggml/include")
+target_link_libraries(ternary_real_test PRIVATE gpu_cuda gguf_index ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart)
+set_target_properties(ternary_real_test PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")

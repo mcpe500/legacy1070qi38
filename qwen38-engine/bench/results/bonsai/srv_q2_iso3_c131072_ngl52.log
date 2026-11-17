@@ -1,0 +1,23 @@
+0.00.019.760 I srv  llama_server: initializing ...
+0.00.019.776 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.020.341 W srv  server_setup: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.022.359 I srv    load_model: loading model '~/models/27b-bonsai/Ternary-Bonsai-2-27B-Q2_0.gguf'
+0.09.034.233 I cmn          init: llama threadpool init, n_threads = 4
+0.09.187.830 W ggml_cuda_flash_attn_ext_vec: iso3 has no FlashAttention vector kernel, converting K and V to f16 instead
+0.09.518.674 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 131072, kv_unified = 'false'
+0.09.522.547 W srv          init: chat template supports preserving reasoning, it is enabled by default (may use more tokens, disable via --no-reasoning-preserve)
+0.09.522.588 I srv  server_run_i: model loaded
+0.09.522.594 I srv  server_on_li: listening on http://127.0.0.1:8097
+0.10.158.059 I slot get_availabl: id  0 | task -1 | selected slot by LRU, n_tokens = 0, t_last = -1
+0.10.158.140 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.17.570.040 I slot print_timing: id  0 | task 0 | prompt processing, n_tokens =    355, progress = 0.73, t =   7.41 s / 47.90 tokens per second
+0.20.342.983 I slot print_timing: id  0 | task 0 | prompt processing, n_tokens =    483, progress = 0.99, t =  10.18 s / 47.42 tokens per second
+0.42.130.901 I slot print_timing: id  0 | task 0 | n_gen =    100, tg =   4.81 t/s, tg_3s =   4.86 t/s
+0.45.266.682 I slot print_timing: id  0 | task 0 | n_gen =    115, tg =   4.80 t/s, tg_3s =   4.78 t/s
+0.47.975.709 I slot print_timing: id  0 | task 0 | prompt eval time =   11380.66 ms /   487 tokens (   23.37 ms per token,    42.79 tokens per second)
+0.47.975.715 I slot print_timing: id  0 | task 0 |        eval time =   26436.86 ms /   128 tokens (  208.16 ms per token,     4.80 tokens per second)
+0.47.975.716 I slot print_timing: id  0 | task 0 |       total time =   37817.52 ms /   615 tokens
+0.47.975.721 I slot print_timing: id  0 | task 0 |    graphs reused =        125
+0.47.975.722 I slot print_timing: id  0 | task 0 |   graph reallocs =          3    /     0        (same size) / (changed size)
+0.47.975.765 I slot      release: id  0 | task 0 | stop processing: n_tokens = 614, truncated = 0
+0.47.977.629 I srv    operator(): operator(): cleaning up before exit...
