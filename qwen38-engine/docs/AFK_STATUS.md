@@ -536,6 +536,9 @@ Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/re
   Synthetic test PASS (decode = libggml, rotation 8.6e-8, GEMV 8-10e-8 vs same-activation reference, batch-size independent); real-weight test: cosine **1.000000** against llama.cpp on
   layer-0 `ffn_up`, `ffn_gate`, `ffn_down`; SASS gate PASS (IDP.4A x464, 0 half arithmetic). Not wired into the forward pass (list of missing pieces in the comparison file).
 - **Quality sanity.** 6/6 checks for both models (including a reasoning question with thinking on).
+- **Intelligence (measured, `bench/results/bonsai/intel/INTEL.md`).** WikiText-2 PPL: Qwen Q4_K_M 5.916, Bonsai 7.995 (`Q2_0`) / 8.000 (`PTQ1_0`); KL divergence vs Qwen 0.356,
+  same top-1 token 76.5 %. Matched subsets (same items): HellaSwag 83.0 vs 72.0 (paired McNemar p = 0.001), Winogrande 77.5 vs 73.5 (p 0.27), ARC-Challenge 52 vs 48 (p 0.48),
+  MMLU 43.3 vs 46.7 (p 0.38). Bonsai is clearly weaker at next-token prediction; knowledge/reasoning gaps are within noise at N 100-200. Both packings score the same.
 - **Results by context (best fit under 7373 MiB, tg tok/s and peak VRAM).** `PTQ1_0`: 19.64 (6579) / 15.19 (6633) / 11.70 (6861) / 7.51 (7165) / 3.36 (7361, `-ngl 62`) /
   2.24 (7303, `-ngl 48`, short depth) at 512 / 4K / 16K / 32K / 64K / 128K. `Q2_0`: 17.13 (7371) / 12.43 (7337) / 7.20 (7339) / 3.57 (7355) / 2.04 (7351, iso3 `-ngl 56`) / 3.98 (7327, short depth).
   Qwen Q4_K_M on qwen38-engine: 2.947 (3.130 adaptive) at 512, 2.245 (2.446) at 4K; stock llama.cpp Qwen: 2.26 / 2.00 / 1.35 at 512 / 4K / 16K.

@@ -1,0 +1,182 @@
+Read 762276 bytes from binary file ~/datasets/mmlu-validation.bin
+0.01.386.317 W model has unused tensor blk.64.attn_norm.weight (size = 20480 bytes) -- ignoring
+0.01.386.326 W model has unused tensor blk.64.post_attention_norm.weight (size = 20480 bytes) -- ignoring
+0.01.386.339 W model has unused tensor blk.64.attn_q.weight (size = 51609600 bytes) -- ignoring
+0.01.386.343 W model has unused tensor blk.64.attn_k.weight (size = 5570560 bytes) -- ignoring
+0.01.386.348 W model has unused tensor blk.64.attn_v.weight (size = 5570560 bytes) -- ignoring
+0.01.386.364 W model has unused tensor blk.64.attn_output.weight (size = 25804800 bytes) -- ignoring
+0.01.386.369 W model has unused tensor blk.64.attn_q_norm.weight (size = 1024 bytes) -- ignoring
+0.01.386.374 W model has unused tensor blk.64.attn_k_norm.weight (size = 1024 bytes) -- ignoring
+0.01.386.378 W model has unused tensor blk.64.ffn_gate.weight (size = 73113600 bytes) -- ignoring
+0.01.386.383 W model has unused tensor blk.64.ffn_down.weight (size = 73113600 bytes) -- ignoring
+0.01.386.388 W model has unused tensor blk.64.ffn_up.weight (size = 73113600 bytes) -- ignoring
+0.01.386.394 W model has unused tensor blk.64.nextn.eh_proj.weight (size = 43008000 bytes) -- ignoring
+0.01.386.399 W model has unused tensor blk.64.nextn.enorm.weight (size = 20480 bytes) -- ignoring
+0.01.386.404 W model has unused tensor blk.64.nextn.hnorm.weight (size = 20480 bytes) -- ignoring
+0.01.386.418 W model has unused tensor blk.64.nextn.shared_head_norm.weight (size = 20480 bytes) -- ignoring
+0.49.357.933 W resolve_fused_ops: layer 43 is assigned to device CUDA0 but Flash Attention over K/V rows is assigned to device CPU (usually due to missing support)
+0.49.357.938 W resolve_fused_ops: Flash Attention over K/V rows not supported, set to disabled
+0.49.405.442 I cmn          init: llama threadpool init, n_threads = 4
+1.30.713.045 I 
+1.30.797.665 I system_info: n_threads = 4 (n_threads_batch = 4) / 8 | CUDA : ARCHS = 610 | USE_GRAPHS = 1 | FA_QUANTS = q4_0-q4_0,q8_0-q8_0,f16-f16,bf16-bf16,f8_e4m3-f8_e4m3 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+1.30.810.521 I multiple_choice_score: there are 1548 tasks in prompt
+1.30.810.535 I multiple_choice_score: selecting 150 random tasks from 1548 tasks available
+1.30.818.153 I multiple_choice_score: preparing task data......................................................................................................................................................done
+1.31.036.537 I multiple_choice_score : calculating TruthfulQA score over 150 tasks.
+
+task	acc_norm
+1	100.00000000
+2	50.00000000
+3	66.66666667
+4	75.00000000
+5	60.00000000
+6	50.00000000
+7	57.14285714
+8	50.00000000
+9	44.44444444
+10	50.00000000
+11	45.45454545
+12	50.00000000
+13	53.84615385
+14	50.00000000
+15	53.33333333
+16	56.25000000
+17	58.82352941
+18	55.55555556
+19	57.89473684
+20	55.00000000
+21	52.38095238
+22	50.00000000
+23	47.82608696
+24	45.83333333
+25	48.00000000
+26	46.15384615
+27	44.44444444
+28	46.42857143
+29	48.27586207
+30	50.00000000
+31	51.61290323
+32	53.12500000
+33	51.51515152
+34	52.94117647
+35	54.28571429
+36	52.77777778
+37	51.35135135
+38	52.63157895
+39	51.28205128
+40	50.00000000
+41	48.78048780
+42	47.61904762
+43	48.83720930
+44	47.72727273
+45	48.88888889
+46	47.82608696
+47	46.80851064
+48	47.91666667
+49	48.97959184
+50	48.00000000
+51	47.05882353
+52	48.07692308
+53	47.16981132
+54	46.29629630
+55	47.27272727
+56	46.42857143
+57	47.36842105
+58	46.55172414
+59	47.45762712
+60	46.66666667
+61	45.90163934
+62	45.16129032
+63	44.44444444
+64	45.31250000
+65	44.61538462
+66	43.93939394
+67	43.28358209
+68	42.64705882
+69	42.02898551
+70	42.85714286
+71	43.66197183
+72	43.05555556
+73	42.46575342
+74	43.24324324
+75	44.00000000
+76	44.73684211
+77	45.45454545
+78	46.15384615
+79	45.56962025
+80	46.25000000
+81	46.91358025
+82	46.34146341
+83	46.98795181
+84	46.42857143
+85	45.88235294
+86	45.34883721
+87	45.97701149
+88	46.59090909
+89	46.06741573
+90	45.55555556
+91	45.05494505
+92	44.56521739
+93	44.08602151
+94	44.68085106
+95	44.21052632
+96	44.79166667
+97	44.32989691
+98	43.87755102
+99	44.44444444
+100	44.00000000
+101	44.55445545
+102	44.11764706
+103	43.68932039
+104	44.23076923
+105	44.76190476
+106	44.33962264
+107	43.92523364
+108	43.51851852
+109	44.03669725
+110	44.54545455
+111	45.04504505
+112	44.64285714
+113	44.24778761
+114	44.73684211
+115	45.21739130
+116	44.82758621
+117	44.44444444
+118	44.91525424
+119	44.53781513
+120	44.16666667
+121	44.62809917
+122	44.26229508
+123	43.90243902
+124	43.54838710
+125	44.00000000
+126	43.65079365
+127	43.30708661
+128	42.96875000
+129	42.63565891
+130	42.30769231
+131	42.74809160
+132	42.42424242
+133	42.10526316
+134	41.79104478
+135	41.48148148
+136	41.17647059
+137	40.87591241
+138	40.57971014
+139	41.00719424
+140	41.42857143
+141	41.13475177
+142	41.54929577
+143	41.95804196
+144	42.36111111
+145	42.75862069
+146	43.15068493
+147	42.85714286
+148	43.24324324
+149	43.62416107
+150	43.33333333
+
+49.03.844.756 I Final result: 43.3333 +/- 4.0596
+49.03.844.757 I Random chance: 25.0000 +/- 3.5474
+49.03.844.757 I 
+

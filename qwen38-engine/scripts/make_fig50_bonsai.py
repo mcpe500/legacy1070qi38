@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Draws docs/figures/50_ternary_bonsai.svg (style of 48_cascade.svg).
-Every number comes from bench/results/bonsai/RUNS.md and bench/results/ternary_bonsai_comparison.md.
+Every number comes from bench/results/bonsai/RUNS.md, bench/results/ternary_bonsai_comparison.md and (panel C)
+bench/results/bonsai/intel/intel.json (written by bench/bonsai_intel_summary.py).
 Usage: python3 scripts/make_fig50_bonsai.py   (with cairosvg installed also writes /tmp/fig_50_ternary_bonsai.png)"""
+import json
 import math
 import os
 import sys
@@ -9,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from make_pr_figures import C, Svg  # noqa: E402
 
-W, H = 1000, 720
+W, H = 1000, 980
 CAP = 7373
 CTX = [512, 4096, 16384, 32768, 65536, 131072]
 CTX_LABEL = ["512", "4K", "16K", "32K", "64K", "128K"]
@@ -174,11 +176,80 @@ def panel_curve(s):
     s.text(gx - 40, vy + vh + 45, "Ungu Q2_0: 7327-7371 MiB di semua titik; ngl 99 / 64 / 62 / 59 / 56 / 48.", size=10, color=PURPLE)
 
 
+INTEL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bench", "results", "bonsai", "intel", "intel.json")
+
+
+def panel_intel(s):
+    x0, y0, pw, ph = 24, 712, 952, 252
+    s.rect(x0, y0, pw, ph, C["soft"], rx=6)
+    s.text(x0 + 16, y0 + 28, "C. Kecerdasan: skor log-likelihood llama-perplexity (tanpa sampling), subset tugas identik untuk semua model", size=14, weight="700")
+    r = json.load(open(INTEL))["results"]
+    cols = {"qwen": C["cpu"], "q2": PURPLE, "ptq1": C["gpu"]}
+    names = {"qwen": "Qwen Q4_K_M", "q2": "Bonsai Q2_0", "ptq1": "Bonsai PTQ1_0"}
+    # left: perplexity and agreement with Qwen
+    lx, ly = x0 + 16, y0 + 52
+    s.text(lx, ly, "WikiText-2, 20.480 token (PPL, lebih rendah lebih baik)", size=12, weight="700")
+    bw, vmax = 210, 9.0
+    for i, k in enumerate(("qwen", "q2", "ptq1")):
+        v = r["ppl"].get(k)
+        if not v:
+            continue
+        yy = ly + 12 + i * 24
+        s.text(lx + 92, yy + 13, names[k], size=11, anchor="end")
+        s.rect(lx + 100, yy, bw * v[0] / vmax, 17, cols[k], rx=3)
+        s.text(lx + 106 + bw * v[0] / vmax, yy + 13, "%.2f ± %.2f" % tuple(v), size=11, weight="700", color=cols[k])
+    yy = ly + 100
+    for k in ("q2", "ptq1"):
+        d = r["kld"].get(k)
+        if d:
+            s.text(lx, yy, "%s vs Qwen: KLD %.3f · token top-1 sama %.1f %%" % (names[k], d["kld"], d["top1"]), size=11, weight="700", color=cols[k])
+            yy += 17
+    s.text(lx, yy + 4, "Tokenizer sama (vocab 248320): PPL dan KLD sebanding langsung.", size=10, color=C["dim"])
+    s.text(lx, yy + 18, "Referensi KLD = Qwen Q4_K_M (baseline proyek), bukan FP16.", size=10, color=C["dim"])
+    # right: accuracy on matched subsets
+    gx, gy, gw, gh = x0 + 470, y0 + 56, 462, 124
+
+    def Y(v):
+        return gy + gh - v / 100 * gh
+
+    for v in (0, 25, 50, 75, 100):
+        s.line(gx, Y(v), gx + gw, Y(v), color=C["line"], sw=1)
+        s.text(gx - 6, Y(v) + 4, str(v), size=10, color=C["dim"], anchor="end")
+    s.text(gx - 30, gy - 10, "akurasi %", size=10, weight="700", color=C["dim"])
+    tasks = [("hellaswag", "HellaSwag"), ("winogrande", "Winogrande"), ("arc", "ARC-Challenge"), ("mmlu", "MMLU")]
+    gwid = gw / len(tasks)
+    for ti, (t, tn) in enumerate(tasks):
+        row = r["mc"].get(t, {})
+        ks = [k for k in ("qwen", "q2", "ptq1") if k in row]
+        cx = gx + gwid * ti + gwid / 2
+        bwid = 26
+        start = cx - len(ks) * (bwid + 4) / 2 + 2
+        for j, k in enumerate(ks):
+            a, e = row[k]["acc"], row[k]["se"]
+            bx = start + j * (bwid + 4)
+            s.rect(bx, Y(a), bwid, Y(0) - Y(a), cols[k], rx=2)
+            s.line(bx + bwid / 2, Y(min(100, a + e)), bx + bwid / 2, Y(max(0, a - e)), color=C["ink"], sw=1.2)
+            s.text(bx + bwid / 2, Y(min(100, a + e)) - 4, "%.0f" % a, size=10, weight="700", color=cols[k], anchor="middle")
+        s.text(cx, Y(0) + 13, tn, size=11, anchor="middle")
+        pr = row.get("paired")
+        s.text(cx, Y(0) + 25, "N = %d" % row.get("n", 0), size=10, color=C["dim"], anchor="middle")
+        if pr:
+            s.text(cx, Y(0) + 37, "McNemar p = %.3f" % pr["p"], size=10, weight="700" if pr["p"] < 0.05 else "400",
+                   color=C["bad"] if pr["p"] < 0.05 else C["dim"], anchor="middle")
+    lg = gx
+    for k in ("qwen", "q2", "ptq1"):
+        s.rect(lg, gy + gh + 50, 12, 10, cols[k], rx=2)
+        s.text(lg + 16, gy + gh + 59, names[k], size=10)
+        lg += 104
+    s.text(gx + gw, gy + gh + 59, "garis = ±1 SE", size=10, color=C["dim"], anchor="end")
+
+
 def main():
     s = Svg(W, H, "")
     head(s)
     panel_arch(s)
     panel_curve(s)
+    panel_intel(s)
     s.save("50_ternary_bonsai.svg")
 
 

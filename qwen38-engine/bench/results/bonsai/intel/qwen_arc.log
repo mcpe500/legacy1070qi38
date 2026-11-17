@@ -1,0 +1,133 @@
+Read 95309 bytes from binary file ~/datasets/arc-challenge-validation.bin
+0.01.036.660 W common_fit_params: failed to fit params to free device memory: n_gpu_layers already set by user to 25, abort
+0.01.472.236 W model has unused tensor blk.64.attn_norm.weight (size = 20480 bytes) -- ignoring
+0.01.472.245 W model has unused tensor blk.64.post_attention_norm.weight (size = 20480 bytes) -- ignoring
+0.01.472.258 W model has unused tensor blk.64.attn_q.weight (size = 51609600 bytes) -- ignoring
+0.01.472.263 W model has unused tensor blk.64.attn_k.weight (size = 5570560 bytes) -- ignoring
+0.01.472.268 W model has unused tensor blk.64.attn_v.weight (size = 5570560 bytes) -- ignoring
+0.01.472.284 W model has unused tensor blk.64.attn_output.weight (size = 25804800 bytes) -- ignoring
+0.01.472.289 W model has unused tensor blk.64.attn_q_norm.weight (size = 1024 bytes) -- ignoring
+0.01.472.294 W model has unused tensor blk.64.attn_k_norm.weight (size = 1024 bytes) -- ignoring
+0.01.472.298 W model has unused tensor blk.64.ffn_gate.weight (size = 73113600 bytes) -- ignoring
+0.01.472.303 W model has unused tensor blk.64.ffn_down.weight (size = 73113600 bytes) -- ignoring
+0.01.472.308 W model has unused tensor blk.64.ffn_up.weight (size = 73113600 bytes) -- ignoring
+0.01.472.314 W model has unused tensor blk.64.nextn.eh_proj.weight (size = 43008000 bytes) -- ignoring
+0.01.472.319 W model has unused tensor blk.64.nextn.enorm.weight (size = 20480 bytes) -- ignoring
+0.01.472.324 W model has unused tensor blk.64.nextn.hnorm.weight (size = 20480 bytes) -- ignoring
+0.01.472.338 W model has unused tensor blk.64.nextn.shared_head_norm.weight (size = 20480 bytes) -- ignoring
+0.46.227.587 W resolve_fused_ops: layer 43 is assigned to device CUDA0 but Flash Attention over K/V rows is assigned to device CPU (usually due to missing support)
+0.46.227.594 W resolve_fused_ops: Flash Attention over K/V rows not supported, set to disabled
+0.46.277.028 I cmn          init: llama threadpool init, n_threads = 4
+1.31.633.443 I 
+1.31.722.349 I system_info: n_threads = 4 (n_threads_batch = 4) / 8 | CUDA : ARCHS = 610 | USE_GRAPHS = 1 | FA_QUANTS = q4_0-q4_0,q8_0-q8_0,f16-f16,bf16-bf16,f8_e4m3-f8_e4m3 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+1.31.723.146 I multiple_choice_score: there are 299 tasks in prompt
+1.31.723.153 I multiple_choice_score: selecting 100 random tasks from 299 tasks available
+1.31.723.503 I multiple_choice_score: preparing task data....................................................................................................done
+1.31.919.638 I multiple_choice_score : calculating TruthfulQA score over 100 tasks.
+
+task	acc_norm
+1	0.00000000
+2	50.00000000
+3	66.66666667
+4	50.00000000
+5	60.00000000
+6	66.66666667
+7	71.42857143
+8	75.00000000
+9	77.77777778
+10	70.00000000
+11	63.63636364
+12	66.66666667
+13	69.23076923
+14	71.42857143
+15	66.66666667
+16	68.75000000
+17	64.70588235
+18	61.11111111
+19	57.89473684
+20	55.00000000
+21	52.38095238
+22	50.00000000
+23	52.17391304
+24	50.00000000
+25	48.00000000
+26	50.00000000
+27	48.14814815
+28	46.42857143
+29	48.27586207
+30	46.66666667
+31	48.38709677
+32	46.87500000
+33	45.45454545
+34	44.11764706
+35	45.71428571
+36	44.44444444
+37	45.94594595
+38	44.73684211
+39	43.58974359
+40	42.50000000
+41	41.46341463
+42	40.47619048
+43	41.86046512
+44	43.18181818
+45	42.22222222
+46	41.30434783
+47	42.55319149
+48	43.75000000
+49	44.89795918
+50	46.00000000
+51	47.05882353
+52	48.07692308
+53	49.05660377
+54	50.00000000
+55	49.09090909
+56	50.00000000
+57	49.12280702
+58	48.27586207
+59	49.15254237
+60	48.33333333
+61	47.54098361
+62	46.77419355
+63	47.61904762
+64	48.43750000
+65	49.23076923
+66	50.00000000
+67	50.74626866
+68	51.47058824
+69	50.72463768
+70	50.00000000
+71	49.29577465
+72	48.61111111
+73	47.94520548
+74	48.64864865
+75	49.33333333
+76	50.00000000
+77	50.64935065
+78	50.00000000
+79	50.63291139
+80	51.25000000
+81	51.85185185
+82	52.43902439
+83	51.80722892
+84	51.19047619
+85	50.58823529
+86	51.16279070
+87	50.57471264
+88	51.13636364
+89	51.68539326
+90	52.22222222
+91	52.74725275
+92	53.26086957
+93	52.68817204
+94	52.12765957
+95	52.63157895
+96	52.08333333
+97	51.54639175
+98	52.04081633
+99	52.52525253
+100	52.00000000
+
+29.31.609.008 I Final result: 52.0000 +/- 5.0212
+29.31.609.009 I Random chance: 25.0627 +/- 4.3556
+29.31.609.010 I 
+

@@ -1,0 +1,35 @@
+0.00.720.200 W common_fit_params: failed to fit params to free device memory: n_gpu_layers already set by user to 60, abort
+0.10.348.590 W resolve_fused_ops: layer 7 is assigned to device CUDA0 but Flash Attention over K/V rows is assigned to device CPU (usually due to missing support)
+0.10.348.595 W resolve_fused_ops: Flash Attention over K/V rows not supported, set to disabled
+0.10.403.972 I cmn          init: llama threadpool init, n_threads = 4
+0.10.700.593 I 
+0.10.700.735 I system_info: n_threads = 4 (n_threads_batch = 4) / 8 | CUDA : ARCHS = 610 | USE_GRAPHS = 1 | FA_QUANTS = q4_0-q4_0,q8_0-q8_0,f16-f16,bf16-bf16,f8_e4m3-f8_e4m3 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.10.713.139 I hellaswag_score : loaded 10042 tasks from prompt.
+0.10.713.146 I ================================= is_spm = 0
+0.10.713.148 I hellaswag_score : selecting 20 randomized tasks.
+0.10.730.476 I hellaswag_score : calculating hellaswag score over selected tasks.
+
+task	acc_norm	95% confidence interval
+1	100.00000000%	[20.6549%, 100.0000%]
+2	100.00000000%	[34.2380%, 100.0000%]
+3	100.00000000%	[43.8503%, 100.0000%]
+4	100.00000000%	[51.0109%, 100.0000%]
+5	100.00000000%	[56.5518%, 100.0000%]
+6	83.33333333%	[43.6497%, 96.9947%]
+7	85.71428571%	[48.6872%, 97.4320%]
+8	75.00000000%	[40.9275%, 92.8521%]
+9	66.66666667%	[35.4202%, 87.9416%]
+10	60.00000000%	[31.2674%, 83.1820%]
+11	54.54545455%	[28.0092%, 78.7287%]
+12	50.00000000%	[25.3782%, 74.6218%]
+13	46.15384615%	[23.2061%, 70.8562%]
+14	42.85714286%	[21.3808%, 67.4094%]
+15	46.66666667%	[24.8095%, 69.8830%]
+16	50.00000000%	[27.9996%, 72.0004%]
+17	52.94117647%	[30.9632%, 73.8349%]
+18	55.55555556%	[33.7164%, 75.4405%]
+19	57.89473684%	[36.2759%, 76.8581%]
+20	60.00000000%	[38.6582%, 78.1193%]
+
+
+1.50.654.295 W ~llama_context:  CUDA_Host compute buffer size of  29.9839 MiB, does not match expectation of  25.7503 MiB

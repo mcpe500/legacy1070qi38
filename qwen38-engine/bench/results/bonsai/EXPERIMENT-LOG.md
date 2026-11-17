@@ -23,7 +23,7 @@ Variables used below: `M2=~/models/27b-bonsai/Ternary-Bonsai-2-27B-Q2_0.gguf`, `
 `STOCK=~/llama.cpp/build-iso3/bin`, `PRISM=~/llama-prism/llama-prism-b12128-d7b2896` (with `LD_LIBRARY_PATH=$PRISM CUDA_CACHE_MAXSIZE=4294967296`).
 `probe` = `bench/bonsai_bench.sh probe MODEL BIN TAG KV DEPTH NGL` (llama-bench pp512 + tg128 at depth), `server` = `bench/bonsai_bench.sh server MODEL BIN TAG KV CTX NGL PROMPT_TOKENS`.
 
-## 1. All steps
+## 1. All steps (1-27 speed and capacity, 28-37 intelligence)
 
 | # | Reason | Command | Output (exact) | Decision |
 |---|---|---|---|---|
@@ -54,6 +54,16 @@ Variables used below: `M2=~/models/27b-bonsai/Ternary-Bonsai-2-27B-Q2_0.gguf`, `
 | 25 | PTQ1_0 capacity | server: q4_0 64K `-ngl 99` (ub 128 / 512), `-ngl 64` ub 128, `-ngl 62` ub 512; q8_0 32K; f16 16K; q4_0 128K `-ngl 48` | 7471 / 7595 / 7405 (over), **7361** OK; 7271 OK; 7089 OK; **7303** OK | see F6 |
 | 26 | PTQ1_0 64K full prompt | `server $M1 $PRISM srv_ptq1_q4_0_c65536_ngl62_full q4_0 65536 62 65000` | 64,988 tokens, **pp 59.11, tg 3.36**, 7361 MiB | kept |
 | 27 | Overhead model | `bench/bonsai_overhead.py --md overhead.md` (19 server runs) | overhead = peak - weights - KV - state: 320 MiB at 4K, 590-633 at 32K, 763-898 at 64K, 1078-1124 at 128K (stock); fork 520-1615 | calculator updated (F7) |
+| 28 | Measure intelligence, not only 6 sanity answers | downloaded the llama.cpp evaluation sets (HellaSwag val, Winogrande debiased, ARC-Challenge and MMLU validation; sha256 `d5725393...` / `6726173e...` / `19af3dbe...` / `470af3a7...`); new `bench/bonsai_intel.sh` | 7.8 MB in total | log-likelihood scoring with `llama-perplexity` |
+| 29 | Perplexity, Q2_0 | `UB=128 KV=q4_0 bench/bonsai_intel.sh $M2 $STOCK q2_ppl 99 ppl 40` | **PPL 7.9955 ± 0.2041**, 7371 MiB, 147 s | |
+| 30 | Perplexity, PTQ1_0 | same on the fork, ub 512 / 128 / 8 | ub 512 and 128: OOM (F10); **ub 8: PPL 7.9996 ± 0.2042**, 5691 MiB | `-ub 8` for PTQ1_0 |
+| 31 | Task suite, Q2_0 | `bench/bonsai_intel_all.sh q2` | HellaSwag 400 at every layer: 7847 MiB (F11), stopped; with `-ngl 60`: HellaSwag 200 **76.5 %**, Winogrande 500 **72.0 ± 2.0**, MMLU 500 **43.6 ± 2.2**; ARC stopped at task 210 (F12) | Qwen would need about 5 h for the same N |
+| 32 | Matched smaller N for Qwen | read `perplexity.cpp`: subsets drawn with `mt19937(1)` without replacement, so N tasks = first N of a larger run; logs print the running score per task | prefix property confirmed in code; per-item results reconstructable | Qwen on HellaSwag 100, Winogrande 200, ARC 100, MMLU 150 |
+| 33 | KL divergence against the baseline | `bench/bonsai_intel_plan.sh`: Qwen `--kl-divergence-base` (40 chunks, 5.07 GB logits file outside the repo), then Q2_0 and PTQ1_0 `--kl-divergence` | Qwen **PPL 5.9163 ± 0.1399**; Q2_0 KLD **0.3561**, same top-1 **76.48 %**; PTQ1_0 KLD 0.3561, 76.45 % | |
+| 34 | ARC fix | `-np 5`, `-ngl 59`, N = 298 | Q2_0 **50.67 ± 2.90 %**, 7307 MiB | |
+| 35 | Qwen task runs | `-ngl 25`, q4_0 | HellaSwag 100 **83.0 %** (3624 s), Winogrande 200 **77.5 ± 3.0** (2152 s), ARC 100 **52.0 ± 5.0** (1776 s), MMLU 150 **43.3 ± 4.1** (2947 s); 7093-7159 MiB | |
+| 36 | PTQ1_0 equivalence | HellaSwag 100, Winogrande 200 | 72.0 %, 73.5 ± 3.1 (same as Q2_0), 6185 MiB | packing does not change quality |
+| 37 | Paired significance | `bench/bonsai_intel_summary.py` (per-item results from the running score, exact McNemar) | HellaSwag 11 / 0, p = 0.001; Winogrande 24 / 16, p = 0.268; ARC 11 / 7, p = 0.481; MMLU 8 / 13, p = 0.383 | `intel/INTEL.md`, figure 50 panel C |
 
 ## 2. Failed and rejected attempts: root cause and fix
 
@@ -68,8 +78,12 @@ Variables used below: `M2=~/models/27b-bonsai/Ternary-Bonsai-2-27B-Q2_0.gguf`, `
 | F7 | Calculator v1 (zero overhead) | predicted Q2_0 + iso3 up to 24.7K tokens with every layer on the GPU | overhead ignored | v2 with the measured overhead: about 400 tokens; matches F1 |
 | F8 | Benchmarks during downloads | (avoided) | downloads write into the page cache and can evict the CPU layers of Qwen and of partly offloaded Bonsai runs | Qwen runs waited for the download; the PTQ1_0 download was paused with SIGSTOP during sensitive runs and resumed with SIGCONT |
 | F9 | 128K full prompt | not run | about 1 hour of prefill at 33-41 tok/s | 128K reported as capacity plus speed at a short depth |
+| F10 | `PTQ1_0` perplexity, ubatch 512 and 128 | `CUDA error: out of memory` in `cuMemCreate` on the first batch (peak 6579 / 6163 MiB) | perplexity needs logits for every token; for a batch the fork dequantizes the 248320 x 5120 output matrix to F16 (2.37 GiB) | `-ub 8` keeps the batched mat-vec path: 5691 MiB, 8.3 s per chunk |
+| F11 | `Q2_0` HellaSwag with every layer on the GPU | peak 7847 MiB | the multiple-choice modes run 4 sequences in parallel, each with a 150 MiB DeltaNet state | `-ngl 60`: 7279 MiB |
+| F12 | `Q2_0` ARC-Challenge, 299 tasks | `task 210 requires a higher -np|--parallel value (at least 5)`, no final score | some ARC items have 5 answer choices | `-np 5`, `-ngl 59` and N = 298 (random draw, so the prefix property holds): 7307 MiB |
+| F13 | VRAM samples after stopping a run early | `nvidia-smi` samplers kept running and wrote into later runs' files | killing the bench script did not stop its background sampler | `trap ... EXIT` in `bench/bonsai_intel.sh`; peaks taken from the line each run prints when it ends (`intel/run_lines.txt`) |
 
-No kernel test failed; the ternary kernel passed on the first build.
+No kernel test failed; the ternary kernel passed on the first build. F10-F13 are from the intelligence runs (steps 28-37).
 
 ## 3. Results matrix (best configuration under 7373 MiB at each context; full list in `RUNS.md`)
 
@@ -81,6 +95,16 @@ No kernel test failed; the ternary kernel passed on the first build.
 | 32K | pp 59.11, tg 3.57, 7355 MiB (`-ngl 59`) | pp 66.00, tg **7.51**, 7165 MiB (`-ngl 99`) | | |
 | 64K (full prompt) | pp 49.05, tg 2.04, 7351 MiB (`-ngl 56`, iso3) | pp 59.11, tg **3.36**, 7361 MiB (`-ngl 62`, q4_0) | | |
 | 128K (loads; speed at a 487-token depth) | 7327 MiB (`-ngl 48`, iso3), tg 3.98 | 7303 MiB (`-ngl 48`, q4_0), tg 2.24 | | |
+
+### Intelligence (matched subsets; `intel/INTEL.md`)
+| Measure | Qwen Q4_K_M | Bonsai `Q2_0` | Bonsai `PTQ1_0` | Paired p |
+|---|---|---|---|---|
+| WikiText-2 PPL (20,480 tokens) | 5.916 | 7.995 | 8.000 | |
+| KLD vs Qwen / same top-1 | reference | 0.3561 / 76.48 % | 0.3561 / 76.45 % | |
+| HellaSwag (N 100) | 83.0 | 72.0 | 72.0 | 0.001 |
+| Winogrande (N 200) | 77.5 | 73.5 | 73.5 | 0.268 |
+| ARC-Challenge (N 100) | 52.0 | 48.0 | - | 0.481 |
+| MMLU (N 150) | 43.3 | 46.7 | - | 0.383 |
 
 ## 4. Kernel status (`src/cuda/ternary_gemv.cu`)
 | Check | Result |
@@ -99,4 +123,5 @@ No kernel test failed; the ternary kernel passed on the first build.
 | `*.json`, `*.log` | raw llama-bench / llama-server outputs (VRAM samples `*.vram.csv` stay local, summarised in `RUNS.md`) |
 | `ternary_test.txt`, `ternary_real_test.txt`, `ternary_sass_counts.txt`, `sass_gate.txt` | kernel verification |
 | `sanity_bonsai.json`, `sanity_qwen.json` | quality sanity answers |
+| `intel/INTEL.md`, `intel/intel.json`, `intel/*.log`, `intel/run_lines*.txt` | intelligence runs (logs with per-task running scores) |
 | `../stage4/qwen_p4k_{2,adapt}.txt` | qwen38-engine runs on the 4K prompt |

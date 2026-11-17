@@ -16,7 +16,11 @@ Every step in order (27 steps, reason / command / output / decision): `bench/res
 - **Longest usable contexts under 7373 MiB** (measured): 32K with every `PTQ1_0` layer on the GPU (7.5 tok/s at 32K depth),
   64K (`Q2_0` + iso3, 56 GPU layers, 2.0 tok/s at 64K depth; `PTQ1_0` + q4_0, 62 GPU layers, 3.4 tok/s), and 128K (capacity only: loads and runs at
   7219-7327 MiB with 46-48 GPU layers; a full 128K prefill was not run, about 1 hour).
-- Answer quality: 6/6 checks passed for both models (arithmetic, facts, word problem, translation into Indonesian, code, one reasoning question).
+- **Intelligence (measured, section 5)**: Bonsai is measurably weaker than the Qwen Q4_K_M baseline at language modelling and on a matched benchmark subset:
+  WikiText-2 perplexity 8.00 vs 5.92 (+35 %), top-1 next-token agreement with Qwen 76.5 %, HellaSwag 72 vs 83 % (paired McNemar p = 0.001).
+  On Winogrande (73.5 vs 77.5), ARC-Challenge (48 vs 52) and MMLU (46.7 vs 43.3) the paired differences are not significant (p 0.27-0.48).
+  `Q2_0` and `PTQ1_0` score the same (PPL 7.995 vs 8.000, KLD 0.3561 vs 0.3561): the packing does not change quality.
+- Generation sanity: 6/6 checks passed for both models (arithmetic, facts, word problem, translation into Indonesian, code, one reasoning question).
 - Architecture is the Qwen3.8-27B hybrid (48 Gated DeltaNet + 16 GQA attention layers) with ternary weights and a Hadamard-rotated basis; **no MTP head**.
 - In qwen38-engine a ternary GEMV path (Q2_0 unpack with `lop3.b32`, activation lanes gathered with `prmt.b32`, `__dp4a`, FP32 Hadamard rotation) was built and
   verified: cosine 1.000000 against llama.cpp on real Bonsai weights, SASS gate PASS. It is **not yet wired into the engine forward pass** (see "Not done").
@@ -112,7 +116,42 @@ about 12,000 positions; the engine stays at 4096 on purpose. llama.cpp's flash-a
 | `tests/cuda/ternary_real_test.cu` (real Bonsai `Q2_0` weights, layer 0, llama.cpp's own input and output tensors) | `ffn_up`, `ffn_gate`, `ffn_down`: **cosine 1.000000 against llama.cpp**, 0.99999 against a double reference |
 | SASS gate | PASS: `ternary_gemv` IDP.4A x464, LOP3 x112, PRMT x976, HFMA2/HMUL2/HADD2 x0 |
 
-## 5. Answer quality (sanity, `bench/results/bonsai/sanity_*.json`)
+## 5. Intelligence (log-likelihood benchmarks, `bench/results/bonsai/intel/INTEL.md`)
+
+Scored with `llama-perplexity` (no sampling). Both models share the tokenizer (vocabulary 248320), so perplexity and KL divergence compare directly.
+Subsets: llama.cpp draws tasks with `mt19937(1)` without replacement, so the first N tasks of a larger run are exactly the N-task subset. Qwen (30 s per HellaSwag
+task with 39 of 64 layers in DDR4) was run on smaller N, and Bonsai's running score at the same N (printed per task in its log) is compared item for item.
+Scripts: `bench/bonsai_intel.sh`, `bench/bonsai_intel_all.sh`, `bench/bonsai_intel_plan.sh`, summary `bench/bonsai_intel_summary.py`.
+
+### 5.1 Language modelling (WikiText-2 test, 40 x 512 = 20,480 tokens)
+| Model | PPL ↓ | KL divergence vs Qwen Q4_K_M ↓ | Same top-1 token as Qwen ↑ | GPU layers / peak VRAM |
+|---|---:|---:|---:|---|
+| Qwen3.8-27B Q4_K_M (stock llama.cpp) | **5.916 ± 0.140** | reference | reference | 25 / 6945 MiB |
+| Bonsai `Q2_0` (stock) | 7.995 ± 0.204 | 0.3561 ± 0.0059 | 76.48 ± 0.42 % | 99 / 7371 MiB |
+| Bonsai `PTQ1_0` (fork) | 8.000 ± 0.204 | 0.3561 ± 0.0059 | 76.45 ± 0.42 % | 99 / 5691 MiB |
+
+The KL reference is the Q4_K_M baseline we run, not the FP16 model.
+
+### 5.2 Task accuracy on matched subsets (%, ± binomial standard error) and paired test
+| Task | N | Qwen Q4_K_M | Bonsai `Q2_0` | Bonsai `PTQ1_0` | only Qwen correct / only Bonsai correct | McNemar p | Bonsai `Q2_0` on the larger run |
+|---|---:|---:|---:|---:|---:|---:|---|
+| HellaSwag (acc_norm) | 100 | **83.0 ± 3.8** | 72.0 ± 4.5 | 72.0 ± 4.5 | 11 / 0 | **0.001** | 76.5 % at N = 200 |
+| Winogrande | 200 | 77.5 ± 3.0 | 73.5 ± 3.1 | 73.5 ± 3.1 | 24 / 16 | 0.268 | 72.0 % at N = 500 |
+| ARC-Challenge | 100 | 52.0 ± 5.0 | 48.0 ± 5.0 | - | 11 / 7 | 0.481 | 50.7 % at N = 298 |
+| MMLU | 150 | 43.3 ± 4.0 | 46.7 ± 4.1 | - | 8 / 13 | 0.383 | 43.6 % at N = 500 |
+
+**Reading.**
+- The clearest loss is in next-token prediction: perplexity +35 %, and Bonsai picks a different top token than Qwen at 23.5 % of positions. HellaSwag, which scores
+  sentence continuations by likelihood, follows it (11 items lost, none gained; p = 0.001).
+- On the knowledge and reasoning sets (ARC-Challenge, MMLU) and Winogrande the gaps are within noise at these sample sizes; MMLU even goes the other way (not significant).
+  These samples can detect differences of roughly 8-10 points, not the 1.5-point gap the model card reports (84.78 vs 86.32 for FP16 Qwen on 14 thinking-mode benchmarks).
+- llama.cpp's multiple-choice mode scores the answer text by likelihood without showing the letter options, so absolute ARC/MMLU numbers are lower than published
+  letter-choice scores for both models; the comparison between the two is still fair because both see the same items in the same format.
+- `PTQ1_0` and `Q2_0` give the same perplexity, KL divergence and task results (HellaSwag 72/72, Winogrande 73.5/73.5): the choice between them is speed and VRAM only.
+- Runs: multiple-choice modes evaluate 4 sequences in parallel (5 for ARC), each with its own DeltaNet state (about 150 MiB), so `Q2_0` used 60 (59 for ARC) GPU layers there;
+  every run stayed at or under 7373 MiB (`intel/INTEL.md` section 3).
+
+### 5.3 Generation sanity (`bench/results/bonsai/sanity_*.json`)
 | Prompt | Bonsai `Q2_0` (llama-server, 64 GPU layers, iso3) | Qwen Q4_K_M (qwen38-engine server) |
 |---|---|---|
 | 17 x 23 | 391 | 391 |
@@ -136,6 +175,10 @@ This is a sanity check, not a benchmark; the model card reports 84.78 vs 86.32 (
 | F7 | capacity calculator v1 | predicted 24.7K tokens for `Q2_0` + iso3 all on the GPU | overhead set to zero | v2 with measured overhead: about 400 tokens |
 | F8 | benchmarks while downloading | avoided | page-cache pressure evicts CPU-layer weights | Qwen runs waited; download paused with SIGSTOP |
 | F9 | 128K full prompt | not run | about 1 hour of prefill | capacity + short-depth speed only |
+| F10 | `PTQ1_0` perplexity, ubatch 512 and 128 | `CUDA error: out of memory` in `cuMemCreate` on the first batch (peak 6579 / 6163 MiB) | perplexity needs logits for every token; for a batch the fork dequantizes the 248320 x 5120 output matrix to F16 (2.37 GiB) | `-ub 8` keeps the batched mat-vec path: 5691 MiB, 8.3 s per chunk |
+| F11 | `Q2_0` HellaSwag with every layer on the GPU | peak 7847 MiB | the multiple-choice modes run 4 sequences in parallel, each with a 150 MiB DeltaNet state | `-ngl 60`: 7279 MiB |
+| F12 | `Q2_0` ARC-Challenge, 299 tasks | `task 210 requires a higher -np|--parallel value (at least 5)`, no final score | some ARC items have 5 answer choices | `-np 5`, `-ngl 59` and N = 298 (random draw, so the prefix property holds): 7307 MiB |
+| F13 | VRAM samples after stopping a run early | `nvidia-smi` samplers kept running and wrote into later runs' files | killing the bench script did not stop its background sampler | `trap ... EXIT` in `bench/bonsai_intel.sh`; peaks taken from the line each run prints when it ends (`intel/run_lines.txt`) |
 
 No kernel test failed: `ternary_test` 15/15 and `ternary_real_test` cosine 1.000000 on the first build.
 
