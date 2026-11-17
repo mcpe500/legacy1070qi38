@@ -16,6 +16,7 @@
 
 #include "httplib.h"
 #include "nlohmann/json.hpp"
+#include "stop_filter.hpp"
 
 extern const unsigned char kWebuiIndex[];
 extern const size_t kWebuiIndexSize;
@@ -165,6 +166,7 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
                     {"kv", cfg.kv_iso3 ? "iso3" : "f32"},
                     {"mtp_available", eng.has_mtp()},
                     {"mtp_steps_default", cfg.mtp_steps},
+                    {"mtp_adaptive_default", true},
                     {"uptime_s", secs(t_boot, Clock::now())},
                     {"requests", n_requests.load()}};
     };
@@ -175,7 +177,8 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
                     {"pp_tok_s", st.prefill_s > 0 ? fresh / st.prefill_s : 0.0}, {"prefill_s", st.prefill_s},
                     {"tg_tok_s", live_tg}, {"ttft_ms", st.ttft_s * 1000.0}, {"mtp_steps", st.mtp_steps},
                     {"draft_n", st.draft_n}, {"draft_accepted", st.draft_acc},
-                    {"accept_pct", st.draft_n > 0 ? 100.0 * st.draft_acc / st.draft_n : 0.0}};
+                    {"accept_pct", st.draft_n > 0 ? 100.0 * st.draft_acc / st.draft_n : 0.0},
+                    {"pld_hits", st.pld_hits}, {"pld_candidates", st.pld_candidates}, {"mtp_fills", st.mtp_fills}, {"cycles", st.cycles}};
     };
 
     svr.Get("/", [](const httplib::Request &, httplib::Response & res) {
@@ -231,7 +234,26 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
         gp.sp.seed = body.contains("seed") && body["seed"].is_number_integer() ? body["seed"].get<long long>() : -1;
         gp.max_tokens = static_cast<int>(num("max_tokens", num("max_completion_tokens", 512)));
         gp.mtp_steps = static_cast<int>(num("mtp_steps", cfg.mtp_steps));
-        gp.mtp_adaptive = body.contains("mtp_adaptive") && body["mtp_adaptive"].is_boolean() && body["mtp_adaptive"].get<bool>();
+        auto flag = [&](const char * k, bool d) { return body.contains(k) && body[k].is_boolean() ? body[k].get<bool>() : d; };
+        gp.mtp_adaptive = flag("mtp_adaptive", true);    // default on; "mtp_adaptive": false restores the fixed mtp_steps
+        gp.pld_enabled = flag("pld", false);              // prompt lookup decoding (n-gram drafts), off by default
+        gp.pld_max = static_cast<int>(num("pld_max", 4));
+        if (gp.pld_max < 1 || gp.pld_max > 4) { fail(400, "pld_max must be 1..4"); return; }
+        // OpenAI `stop`: a string or an array of up to 4 non-empty strings of at most 128 bytes each.
+        std::vector<std::string> stops;
+        if (body.contains("stop") && !body["stop"].is_null()) {
+            const json & sj = body["stop"];
+            if (sj.is_string()) stops.push_back(sj.get<std::string>());
+            else if (sj.is_array()) {
+                for (const auto & e : sj) {
+                    if (!e.is_string()) { fail(400, "stop must be a string or an array of strings"); return; }
+                    stops.push_back(e.get<std::string>());
+                }
+            } else { fail(400, "stop must be a string or an array of strings"); return; }
+            if (stops.size() > 4) { fail(400, "at most 4 stop strings"); return; }
+            for (const std::string & s : stops)
+                if (s.empty() || s.size() > 128) { fail(400, "each stop string must have 1..128 bytes"); return; }
+        }
         gp.reuse = !(body.contains("cache_prompt") && body["cache_prompt"].is_boolean() && !body["cache_prompt"].get<bool>());
         if (gp.sp.temperature < 0 || gp.sp.top_k < 0 || gp.sp.top_p <= 0 || gp.sp.top_p > 1 || gp.sp.min_p < 0 || gp.sp.min_p > 1 ||
             gp.sp.repeat_penalty <= 0 || gp.max_tokens < 1 || gp.mtp_steps < 0 || gp.mtp_steps > 3) {
@@ -271,17 +293,18 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
             busy = true;
             GenStats st;
             std::string text, pending;
+            StopFilter sf(stops, thinking);
             try {
                 gen.run(ids, gp, [&](int32_t t) {
                     pending += eng.tok.piece(t, true);
                     const size_t n = utf8_complete_prefix(pending);
-                    text += pending.substr(0, n);
+                    text += sf.push(pending.substr(0, n));
                     pending.erase(0, n);
-                    return true;
+                    return !sf.hit();
                 }, st);
             } catch (const std::exception & e) { busy = false; fail(500, e.what(), "server_error"); return; }
             busy = false;
-            text += pending;
+            if (!sf.hit()) text += sf.push(pending) + sf.flush();
             std::string full = thinking ? "<think>\n" + text : text;
             json msg = {{"role", "assistant"}};
             const size_t e = full.find("</think>");
@@ -293,8 +316,11 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
             }
             json x = stats_of(st, st.decode_s > 0 ? st.generated / st.decode_s : 0.0);
             x.update(stats_json());
+            x["stop_matched"] = sf.hit() ? json(sf.matched()) : json(nullptr);
+            x["mtp_adaptive"] = gp.mtp_adaptive;
+            x["pld"] = gp.pld_enabled;
             res.set_content(dump(json{{"id", id}, {"object", "chat.completion"}, {"created", created}, {"model", kModelName},
-                                      {"choices", json::array({json{{"index", 0}, {"message", msg}, {"finish_reason", st.finish == "stop" ? "stop" : "length"}}})},
+                                      {"choices", json::array({json{{"index", 0}, {"message", msg}, {"finish_reason", (st.finish == "stop" || sf.hit()) ? "stop" : "length"}}})},
                                       {"usage", {{"prompt_tokens", st.prompt_tokens}, {"completion_tokens", st.generated}, {"total_tokens", st.prompt_tokens + st.generated}}},
                                       {"x_stats", x}}),
                             "application/json");
@@ -303,7 +329,7 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
 
         res.set_header("Cache-Control", "no-cache");
         res.set_header("X-Accel-Buffering", "no");
-        res.set_chunked_content_provider("text/event-stream", [&, ids, gp, id, created, thinking](size_t, httplib::DataSink & sink) {
+        res.set_chunked_content_provider("text/event-stream", [&, ids, gp, id, created, thinking, stops](size_t, httplib::DataSink & sink) {
             std::lock_guard<std::mutex> lk(gen_mtx);
             busy = true;
             bool open = true;
@@ -323,6 +349,7 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
             if (thinking) chunk(json{{"content", "<think>\n"}}, nullptr, nullptr);   // the template already put it into the prompt
             GenStats st;
             std::string pending;
+            StopFilter sf(stops, thinking);
             const auto t0 = Clock::now();
             auto t_last = t0;
             Clock::time_point t_first = t0;
@@ -347,12 +374,17 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
                         extra = {{"phase", "decode"}, {"completion_tokens", n_tok},
                                  {"tg_tok_s", secs(t_first, now) > 0 ? (n_tok - 1) / secs(t_first, now) : 0.0},
                                  {"ttft_ms", live.ttft_s * 1000.0}};
-                        extra.update(json{{"vram_mib", eng.vram_used_mib()}, {"rss_mib", static_cast<double>(status_kb("VmRSS:")) / 1024.0}});
+                        extra.update(json{{"vram_mib", eng.vram_used_mib()}, {"rss_mib", static_cast<double>(status_kb("VmRSS:")) / 1024.0},
+                                          {"draft_n", st.draft_n}, {"draft_accepted", st.draft_acc},
+                                          {"accept_pct", st.draft_n > 0 ? 100.0 * st.draft_acc / st.draft_n : 0.0},
+                                          {"pld_hits", st.pld_hits}, {"mtp_fills", st.mtp_fills}, {"cycles", st.cycles}});
                         ex = &extra;
                     }
-                    const bool ok = chunk(json{{"content", pending.substr(0, n)}}, nullptr, ex);
+                    const std::string out = sf.push(pending.substr(0, n));
                     pending.erase(0, n);
-                    return ok;
+                    bool ok = open;
+                    if (!out.empty() || ex) ok = chunk(out.empty() ? json::object() : json{{"content", out}}, nullptr, ex);
+                    return ok && !sf.hit();
                 }, st, [&](int done, int total) {
                     json p = {{"phase", "prefill"}, {"prefill_done", done}, {"prefill_total", total}};
                     chunk(json::object(), nullptr, &p);
@@ -360,13 +392,19 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
             } catch (const std::exception & e) {
                 send(error_body(e.what(), "server_error"));
             }
-            if (!pending.empty()) chunk(json{{"content", pending}}, nullptr, nullptr);
+            if (!sf.hit()) {
+                const std::string rest = sf.push(pending) + sf.flush();
+                if (!rest.empty()) chunk(json{{"content", rest}}, nullptr, nullptr);
+            }
             busy = false;
             json x = stats_of(st, st.decode_s > 0 ? st.generated / st.decode_s : 0.0);
             x.update(stats_json());
             x["phase"] = "done";
+            x["stop_matched"] = sf.hit() ? json(sf.matched()) : json(nullptr);
+            x["mtp_adaptive"] = gp.mtp_adaptive;
+            x["pld"] = gp.pld_enabled;
             json last = {{"id", id}, {"object", "chat.completion.chunk"}, {"created", created}, {"model", kModelName},
-                         {"choices", json::array({json{{"index", 0}, {"delta", json::object()}, {"finish_reason", st.finish == "stop" ? "stop" : "length"}}})},
+                         {"choices", json::array({json{{"index", 0}, {"delta", json::object()}, {"finish_reason", (st.finish == "stop" || sf.hit()) ? "stop" : "length"}}})},
                          {"usage", {{"prompt_tokens", st.prompt_tokens}, {"completion_tokens", st.generated}, {"total_tokens", st.prompt_tokens + st.generated}}},
                          {"x_stats", x}};
             send(last);

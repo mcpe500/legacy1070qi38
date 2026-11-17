@@ -16,9 +16,10 @@ struct GenParams {
     // MTP prefill: run the MTP block only on the last `mtp_window` prompt tokens (0 = all of them). Only the draft quality changes;
     // the output never does (every draft is verified by the main model).
     int mtp_window = 0;
-    // Adaptive drafting: draft step 0 is kept when the MTP head's top-1 probability is >= p_keep, and drafting continues while it
-    // stays >= p_cont, up to 4 drafts. mtp_steps is ignored (except 0 = MTP off) when adaptive is on.
-    bool mtp_adaptive = false;
+    // Adaptive drafting (default since 2026-11-17): draft step 0 is kept when the MTP head's top-1 probability is >= p_keep, and
+    // drafting continues while it stays >= p_cont, up to 4 drafts. mtp_steps is ignored (except 0 = MTP off) when adaptive is on.
+    // Output is identical with and without it (every draft is verified); it only changes speed. CLI --mtp-adaptive 0 turns it off.
+    bool mtp_adaptive = true;
     float mtp_p_keep = 0.5f, mtp_p_cont = 0.85f;
     // Prompt Lookup Decoding (PLD): deterministic n-gram suffix match over prompt + generated history.
     // When enabled, up to pld_max candidates (3-gram + 4-gram) are added to the verify batch before MTP drafts.

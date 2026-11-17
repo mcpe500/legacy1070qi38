@@ -37,6 +37,11 @@ Both are targets with open conflicts. See "Open conflicts".
 8. **Every .cu compile passes the SASS gate:** `IDP.4A` present, zero `HFMA2`/`HMUL2`.
 9. **No push, merge, or release without the user's explicit instruction.** Skills are not pushed
    until the user says so.
+10. **Always run shell commands through RTK (MUST, user requirement).** `rtk` = Rust Token Killer (rtk-ai/rtk, `~/.local/bin/rtk`).
+    Use the subcommand when one exists (`rtk git`, `rtk gh`, `rtk ls`, `rtk find`, `rtk grep`, `rtk read`, `rtk diff`, `rtk log`, `rtk curl`),
+    `rtk err <cmd>` for builds (`rtk err ninja -C build -j4`), `rtk test <cmd>` for tests, and `rtk run <argv>` or `rtk run -c '<cmd>'` for
+    everything else. For benchmark numbers and parity lines use `rtk bypass <cmd>` (unfiltered) or `rtk read` on the result file:
+    a measurement must never be quoted from filtered or elided output (`rtk recall <hash>` restores an elided part).
 
 ## Read before you modify a module
 

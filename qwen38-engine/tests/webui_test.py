@@ -101,6 +101,17 @@ s2 = dict(s, seed="7", mtp_steps="9", max_tokens="0", enable_thinking=False)
 b = json.loads(ctx.eval("req(%s, [])" % json.dumps(s2)))
 check("buildRequest: seed, clamps", b["seed"] == 7 and b["mtp_steps"] == 3 and b["max_tokens"] == 1 and b["enable_thinking"] is False)
 
+# ---- stop strings, adaptive MTP and PLD in the request
+ctx.eval("function stops(t) { return JSON.stringify(parseStops(t)); }")
+check("parseStops: one per line, empty lines dropped", json.loads(ctx.eval("stops(%s)" % json.dumps("###\n\nEND\n"))) == ["###", "END"])
+check("parseStops: \\n and \\t escapes", json.loads(ctx.eval("stops(%s)" % json.dumps("a\\nb\nc\\td"))) == ["a\nb", "c\td"])
+check("parseStops: at most 4", len(json.loads(ctx.eval("stops(%s)" % json.dumps("1\n2\n3\n4\n5\n6")))) == 4)
+check("parseStops: non-string -> []", json.loads(ctx.eval("stops(undefined)")) == [])
+b0 = json.loads(ctx.eval("req(%s, [])" % json.dumps(s)))
+check("buildRequest: adaptive MTP on and PLD off by default, no stop field", b0["mtp_adaptive"] is True and b0["pld"] is False and "stop" not in b0)
+b1 = json.loads(ctx.eval("req(%s, [])" % json.dumps(dict(s, mtp_adaptive=False, pld=True, stop="###\n\\n\\nUser:"))))
+check("buildRequest: toggles and stop array", b1["mtp_adaptive"] is False and b1["pld"] is True and b1["stop"] == ["###", "\n\nUser:"])
+
 # ---- the UI script compiles (syntax) and only touches elements that exist in the page
 try:
     quickjs.Context().eval("(function(){" + ui + "\n})")
@@ -112,7 +123,7 @@ html_ids = set(re.findall(r'id="([A-Za-z_]+)"', html))
 missing = sorted(i for i in ids if i not in html_ids)
 check("every $('id') used by the UI exists in the page", not missing, str(missing))
 for k in ["temperature", "top_k", "top_p", "min_p", "repeat_penalty", "presence_penalty", "seed", "max_tokens", "mtp_steps",
-          "t_pp", "t_tg", "t_ttft", "t_acc", "t_vram", "t_rss"]:
+          "t_pp", "t_tg", "t_ttft", "t_acc", "t_vram", "t_rss", "t_pld", "t_fill", "pld", "mtp_adaptive", "stop"]:
     check("control / telemetry element #%s exists" % k, k in html_ids)
 no_ext = not re.search(r'(src|href)\s*=\s*["\']https?://', html) and "cdn" not in html.lower() and "@import" not in html
 check("no external dependency (no CDN, no remote src/href)", no_ext)
