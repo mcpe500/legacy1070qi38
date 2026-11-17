@@ -104,7 +104,7 @@ struct GpuLayers::Impl {
     int * pos_dev = nullptr;
     int * h_pos = nullptr;
     bool in_graph = false;
-    cudaGraphExec_t gexec[10] = {};
+    cudaGraphExec_t gexec[10] = {};   // T=1..5 × (saving off/on) = 10 entries
     int n_graphs = 0;
 
     Impl(const GgufIndex & i, const GpuConfig & c, float e) : ix(i), cfg(c), eps(e) {}
@@ -423,7 +423,9 @@ struct GpuLayers::Impl {
 GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps) : p_(new Impl(ix, cfg, rms_eps)) {
     Impl & m = *p_;
     if (cfg.n_layers < 1 || cfg.n_layers > 64) throw std::runtime_error("n_layers out of range");
-    if (cfg.ctx_max > 4096) throw std::runtime_error("ctx_max above 4096 is not supported");
+    // The attention kernel keeps its scores in dynamic shared memory (ctx_max * 4 bytes): 8192 positions = 32 KiB,
+    // still under the 48 KiB per-block limit of sm_61.
+    if (cfg.ctx_max > 8192) throw std::runtime_error("ctx_max above 8192 is not supported (attention shared memory)");
     m.theta_scale = std::pow(10000000.0f, -2.0f / static_cast<float>(kRope));
 
     CK(cudaStreamCreate(&m.st));

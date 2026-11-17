@@ -19,7 +19,7 @@
 
 struct EngineConfig {
     std::string gguf;
-    int ctx_max = 4096;          // KV cache positions (<= 4096)
+    int ctx_max = 4096;          // KV cache positions (hard cap 8192; raise with --ctx, VRAM grows ~59 MiB per doubling)
     int t_max = 512;             // largest batch of tokens in one forward call
     int threads = 4;
     double resident_gib = 11.0;  // CPU layers kept resident, in GiB of file bytes (layers beyond it are streamed)
