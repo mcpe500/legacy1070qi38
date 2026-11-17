@@ -9,6 +9,8 @@
 
 ---
 
+![Cascaded PLD + MTP — arsitektur priority routing, gate verifikasi, dan hasil](../docs/figures/48_cascade.svg)
+
 ## Executive summary
 
 | Goal | Result |
