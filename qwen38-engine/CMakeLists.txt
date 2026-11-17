@@ -112,3 +112,7 @@ set_target_properties(gpu_layers_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/b
 
 add_executable(iso3_gpu_test tests/cuda/iso3_gpu_test.cu)
 target_link_libraries(iso3_gpu_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
+
+# Stop-string filter of the server (header-only), unit test.
+add_executable(stop_filter_test tests/stop_filter_test.cpp)
+target_include_directories(stop_filter_test PRIVATE src/engine)

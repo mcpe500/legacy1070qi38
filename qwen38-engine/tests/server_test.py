@@ -209,7 +209,7 @@ try:
             assert st == 200, j
             return j["choices"][0]["message"]["content"], j["x_stats"]
         g0, s0 = run(temperature=0, mtp_steps=0)
-        g2, s2 = run(temperature=0, mtp_steps=2)
+        g2, s2 = run(temperature=0, mtp_steps=2, mtp_adaptive=False)
         check("temperature 0: mtp_steps 2 output == mtp_steps 0 output", g0 == g2 and len(g0) > 10, repr(g2[:80]))
         check("mtp_steps 0 drafts nothing, mtp_steps 2 drafts and accepts", s0["draft_n"] == 0 and s2["draft_n"] > 0 and s2["draft_accepted"] > 0 and s2["mtp_steps"] == 2,
               "draft_n %s accepted %s" % (s2["draft_n"], s2["draft_accepted"]))
@@ -230,6 +230,62 @@ try:
         check("repeat/presence penalty changes the greedy text", rp != g0, repr(rp[:60]))
         rp2, _ = run(temperature=0, repeat_penalty=1.8, presence_penalty=1.0, mtp_steps=2)
         check("penalties: output identical with mtp_steps 2", rp == rp2)
+
+        # ---- adaptive MTP is the default; output identical to fixed MTP and to MTP off
+        ga, sa = run(temperature=0)
+        check("adaptive MTP is on by default (x_stats.mtp_adaptive)", sa.get("mtp_adaptive") is True and s2.get("mtp_adaptive") is False, sa.get("mtp_adaptive"))
+        check("adaptive MTP: greedy output identical to MTP off and to fixed MTP 2", ga == g0 == g2, repr(ga[:60]))
+        check("adaptive MTP drafts and accepts", sa["draft_n"] > 0 and sa["draft_accepted"] > 0, "draft_n %s accepted %s" % (sa["draft_n"], sa["draft_accepted"]))
+        gs, _ = run(temperature=0.9, seed=5)
+        check("adaptive MTP: same seed -> same sampled text as MTP off", gs == a, repr(gs[:60]))
+
+        # ---- PLD (prompt lookup decoding): opt-in, output identical, live telemetry fields
+        rep_prompt = [{"role": "user", "content": "Repeat the following line exactly three times, nothing else:\nThe quick brown fox jumps over the lazy dog near the river bank."}]
+        st, jp0 = post("/v1/chat/completions", chat(rep_prompt, max_tokens=60, pld=False))
+        st, jp1 = post("/v1/chat/completions", chat(rep_prompt, max_tokens=60, pld=True))
+        t0_, t1_ = jp0["choices"][0]["message"]["content"], jp1["choices"][0]["message"]["content"]
+        x1 = jp1["x_stats"]
+        check("PLD on: output identical to PLD off", t0_ == t1_ and len(t1_) > 20, repr(t1_[:80]))
+        check("PLD on: x_stats.pld is true and PLD drafts were used (pld_hits > 0)", x1.get("pld") is True and x1.get("pld_hits", 0) > 0,
+              "pld_hits %s pld_candidates %s mtp_fills %s" % (x1.get("pld_hits"), x1.get("pld_candidates"), x1.get("mtp_fills")))
+        check("PLD off: no PLD drafts", jp0["x_stats"].get("pld_hits") == 0 and jp0["x_stats"].get("pld") is False)
+        st, _, evp, dp, _ = stream(chat(rep_prompt, max_tokens=60, pld=True))
+        live = [e["x_stats"] for e in evp if isinstance(e, dict) and e.get("x_stats", {}).get("phase") == "decode"]
+        check("stream: live telemetry carries pld_hits and mtp_fills", len(live) > 0 and all("pld_hits" in x and "mtp_fills" in x for x in live), len(live))
+        check("stream with PLD: text identical to non-stream", "".join(dp).strip() == t1_.strip())
+        st, j = post("/v1/chat/completions", chat(rep_prompt, max_tokens=8, pld=True, pld_max=9))
+        check("pld_max out of range -> 400", st == 400)
+
+        # ---- stop strings (OpenAI `stop`): cut before the first match, finish_reason "stop", never leaked across chunks
+        st, jb = post("/v1/chat/completions", chat(prompt, max_tokens=30, temperature=0))
+        base, bx, bfin = jb["choices"][0]["message"]["content"], jb["x_stats"], jb["choices"][0]["finish_reason"]
+        k = len(base) // 2
+        stop_s = base[k:k + 5]
+        expect = base[:base.find(stop_s)]
+        st, js = post("/v1/chat/completions", chat(prompt, max_tokens=30, stop=[stop_s, "ZZZ_never"]))
+        cs = js["choices"][0]["message"]["content"]
+        check("stop: non-stream content ends right before the stop string", cs == expect.strip() or cs == expect, repr(cs[-30:]) + " | stop " + repr(stop_s))
+        check("stop: finish_reason stop and x_stats.stop_matched", js["choices"][0]["finish_reason"] == "stop" and js["x_stats"].get("stop_matched") == stop_s)
+        check("stop: fewer completion tokens than without stop", js["usage"]["completion_tokens"] < bx["completion_tokens"], "%s vs %s" % (js["usage"]["completion_tokens"], bx["completion_tokens"]))
+        st, _, evs, ds, _ = stream(chat(prompt, max_tokens=30, stop=stop_s))
+        joined = "".join(ds)
+        fin = [e for e in evs if isinstance(e, dict) and e.get("usage")]
+        check("stop: stream text identical to non-stream and the stop string never appears", joined.strip() == cs.strip() and stop_s not in joined, repr(joined[-30:]))
+        check("stop: stream finish_reason stop", len(fin) == 1 and fin[0]["choices"][0]["finish_reason"] == "stop")
+        st, jn = post("/v1/chat/completions", chat(prompt, max_tokens=30, stop=["ZZZ_never"]))
+        check("stop that never matches: same text and finish_reason as without stop", jn["choices"][0]["message"]["content"] == base and jn["choices"][0]["finish_reason"] == bfin,
+              repr(jn["choices"][0]["finish_reason"]) + " vs " + repr(bfin))
+        for bad, why in [(["a", "b", "c", "d", "e"], "5 strings"), ([""], "empty string"), (7, "number"), (["x" * 129], "129 bytes"), ([1], "non-string item")]:
+            st, j = post("/v1/chat/completions", chat(prompt, max_tokens=4, stop=bad))
+            check("stop invalid (%s) -> 400" % why, st == 400, st)
+        st, _, evt, dt, _ = stream({"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "What is 17 + 25? Think briefly."}],
+                                    "temperature": 0, "max_tokens": args.think_tokens, "enable_thinking": True, "reasoning_effort": "low", "stop": ["42"]})
+        rt = "".join(dt)
+        if "</think>" in rt:
+            ans = rt.split("</think>", 1)[1]
+            check("stop with thinking: applied to the answer only (reasoning kept, answer cut before 42)", "42" not in ans and len(rt.split("</think>", 1)[0]) > 20, repr(ans[-40:]))
+        else:
+            print("INFO  stop+thinking: </think> not reached within %d tokens, check skipped" % args.think_tokens)
 
         # ---- thinking block through the stream, parsed by the real JavaScript of the WebUI
         st, ct, ev, deltas, t_first = stream({"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "What is 17 + 25? Think briefly."}],
