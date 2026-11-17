@@ -478,6 +478,44 @@ All five stages are done. Open points, in order of value:
 - Rollback bit-exact: `bench/results/stage4/exp_pld_rollback_bitident.txt`
 - Rollback default: `bench/results/stage4/exp_pld_rollback_default_mtdot.txt`
 
+## Serving round on `exp/knapsack-ctx16k-webui` (2026-11-17)
+
+Figure: `docs/figures/49_serving_webui.svg` (cache boundary at `<|im_end|>`, StopFilter holdback, live PLD/MTP telemetry; drawn by `scripts/make_fig49_serving.py`).
+
+**Scope change by the user.** The 0-1 knapsack layer placement and the 16K context plan were cancelled and fully reverted before any of it was committed:
+layers 0-31 stay contiguous on the GPU, `ctx_max` stays 4096, `ops.cu` and the 2 GiB arena are unchanged (the source tree equals `main` except for the files below).
+The reverted work is kept outside the repository as a patch (`~/kiro-backups/knapsack-ctx16k-full-1117-1129.patch`). Two findings from it, for the record:
+- Upper bound of the idea, computed from the GGUF sizes: the best knapsack subset moves only 62 MiB more weight to the GPU than layers 0-31
+  (6708 vs 6646 MiB), i.e. the CPU reads 0.87 % fewer bytes per token. The "35-38 layers" target is not reachable: the 64 layers are 181-269 MiB each and the cap leaves room for about 32.
+- The interrupted implementation did not compile (`Pool::next_slot_` missing, `on_gpu` used outside `Impl`) and had a stale-stream bug for GPU segments inside streamed prefill.
+
+### What changed
+| Item | Change |
+|---|---|
+| Adaptive MTP default | `GenParams::mtp_adaptive = true` (CLI and server). `--mtp-adaptive 0` or `"mtp_adaptive": false` restores fixed `mtp_steps`; `mtp_steps 0` still turns MTP off |
+| Stop strings | `POST /v1/chat/completions` accepts `stop` (string or array, at most 4, 1..128 bytes each). `src/engine/stop_filter.hpp` holds back any output suffix that is a prefix of a stop string, so a stop string split across tokens or SSE chunks is never sent. With thinking on, the filter starts after `</think>` (stops apply to the answer). `finish_reason` becomes `"stop"`, `x_stats.stop_matched` names the string |
+| PLD in the server | `"pld": true` (and `pld_max` 1..4) enables prompt lookup decoding per request; `x_stats` (live and final) carries `pld_hits`, `pld_candidates`, `mtp_fills`, `cycles`, `draft_n`, `accept_pct`, `mtp_adaptive`, `pld` |
+| WebUI | toggles "adaptive MTP" (on) and "PLD" (off), a stop-strings box (one per line, `\n` escape), live telemetry "PLD hits" and "MTP drafts" |
+| Bug fix (generator) | an accepted end token now ends the acceptance: drafts after `<|im_end|>` used to enter the model state, so the cache no longer matched the next turn and multi-turn prefix reuse silently fell back to a full prefill (found because adaptive MTP accepts up to 4 drafts) |
+
+### Verification
+| Gate | Result |
+|---|---|
+| SASS gate | PASS: IDP.4A x1632, HFMA2/HMUL2/HADD2 x0 (`bench/results/stage5b/sass_gate.txt`) |
+| Rollback test, `QWEN_MT_DOT=0` | PASS, bit-identical, keep 1..4 (`rollback_mtdot0.txt`) |
+| Greedy parity, 509 + 256 tokens | adaptive (new default) = MTP 0 = `main` MTP 2: **256/256 identical** |
+| `tests/stop_filter_test.cpp` | 36/36 (every 1/2/3-piece split and byte-by-byte equals the reference) |
+| `tests/webui_test.py` | PASS (new: parseStops, toggles, stop array, new elements) |
+| `tests/server_test.py` with `QWEN_MT_DOT=0` | **69/69 PASS** (`server_test_mtdot0.out`) |
+| `tests/server_test.py` default (`mt_dot` on) | 66/69: the three checks "same seed -> same sampled text with and without MTP", "penalties: output identical with mtp_steps 2" and the adaptive variant fail. They pass with `QWEN_MT_DOT=0`: the `mt_dot` batch kernel of `main` (PR #47) is not bit-identical to the single-token kernel, so with temperature > 0 or penalties the MTP setting can change the text. Plain greedy output is unaffected. Not changed here (it is `main` behaviour); the checks were left strict |
+
+### Speed (509 + 256 tokens, temp 0, seed 42)
+| Run | pp tok/s | tg tok/s | MTP accept |
+|---|---:|---:|---|
+| `main`, MTP 2 fixed (before this round) | 27.89 | 2.947 | 95 % (168/176) |
+| this branch, adaptive MTP (new default) | 26.76 | **3.130** | 96 % (198/207) |
+| this branch, `--mtp-steps 0` | 27.00 | 2.604 | |
+
 ## Experiment `exp/ternary-bonsai-27b-eval` (2026-11-17): Ternary Bonsai 2 27B on the GTX 1070 Ti
 
 Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/results/bonsai/`. All 27 steps with reason, command, output and decision:
@@ -506,3 +544,4 @@ Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/re
   (overhead grows 6.1 KiB per token). F6 `PTQ1_0` 64K all-GPU at 7471 / 7595 MiB (fork allocates about 350 MiB at the first request; `-ngl 62` 7361 MiB). No kernel test failed.
 - **Decision for the engine.** On this card the bottleneck of Qwen Q4_K_M is the 7 GiB of CPU-layer weights read from DDR4 per token; Bonsai removes it. The next engineering step with the
   largest payoff is to wire the ternary path into the engine with every layer on the GPU (PTQ1_0 or PQ2_0 needs its own unpack kernel; Q2_0 leaves almost no VRAM for the engine's buffers).
+

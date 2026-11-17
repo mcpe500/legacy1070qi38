@@ -60,8 +60,11 @@ button.stop{background:var(--err);color:#200;border-color:var(--err)}
     <div class="ctl"><label>presence_penalty <span id="v_presence_penalty"></span></label><input type="range" id="presence_penalty" min="0" max="2" step="0.05"></div>
     <div class="ctl"><label>seed (empty = random)</label><input type="number" id="seed" step="1" placeholder="random"></div>
     <div class="ctl"><label>max_tokens</label><input type="number" id="max_tokens" min="1" max="4000" step="1"></div>
+    <div class="ctl"><label>stop strings (one per line, \n = new line, max 4)</label><textarea id="stop" rows="2" placeholder="e.g. ###"></textarea></div>
     <h2>Engine</h2>
-    <div class="ctl"><label>mtp_steps (0-3) <span id="v_mtp_steps"></span></label><input type="range" id="mtp_steps" min="0" max="3" step="1"></div>
+    <div class="ctl"><label>mtp_steps (0-3, 0 = MTP off) <span id="v_mtp_steps"></span></label><input type="range" id="mtp_steps" min="0" max="3" step="1"></div>
+    <div class="ctl row"><input type="checkbox" id="mtp_adaptive"><label for="mtp_adaptive">adaptive MTP (1-4 drafts by confidence)</label></div>
+    <div class="ctl row"><input type="checkbox" id="pld"><label for="pld">PLD (n-gram drafts from the history)</label></div>
     <div class="ctl"><label>reasoning effort</label><select id="reasoning_effort"><option>low</option><option>medium</option><option>xhigh</option></select></div>
     <div class="ctl row"><input type="checkbox" id="enable_thinking"><label for="enable_thinking">thinking</label></div>
     <div class="ctl row"><input type="checkbox" id="cache_prompt"><label for="cache_prompt">reuse cached prefix</label></div>
@@ -74,6 +77,8 @@ button.stop{background:var(--err);color:#200;border-color:var(--err)}
     <div><span class="k">tg tok/s</span><span class="v" id="t_tg">–</span></div>
     <div><span class="k">TTFT ms</span><span class="v" id="t_ttft">–</span></div>
     <div><span class="k">MTP accept</span><span class="v" id="t_acc">–</span></div>
+    <div><span class="k">PLD hits</span><span class="v" id="t_pld">–</span></div>
+    <div><span class="k">MTP drafts</span><span class="v" id="t_fill">–</span></div>
     <div><span class="k">VRAM MiB</span><span class="v" id="t_vram">–</span></div>
     <div><span class="k">RSS MiB</span><span class="v" id="t_rss">–</span></div>
     <div><span class="k">tokens</span><span class="v" id="t_tok">–</span></div>
@@ -128,6 +133,17 @@ SSEParser.prototype.push = function (text) {
   return out;
 };
 
+// Stop strings from the text box: one per line, "\\n" and "\\t" are escapes, empty lines are dropped, at most 4.
+function parseStops(text) {
+  if (typeof text !== 'string') return [];
+  var out = [], lines = text.split(/\r?\n/);
+  for (var i = 0; i < lines.length && out.length < 4; i++) {
+    var v = lines[i].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    if (v !== '') out.push(v);
+  }
+  return out;
+}
+
 // Request body for POST /v1/chat/completions from the control values and the chat history.
 function buildRequest(s, messages) {
   var body = {
@@ -135,8 +151,11 @@ function buildRequest(s, messages) {
     temperature: Number(s.temperature), top_k: Math.round(Number(s.top_k)), top_p: Number(s.top_p), min_p: Number(s.min_p),
     repeat_penalty: Number(s.repeat_penalty), presence_penalty: Number(s.presence_penalty),
     max_tokens: Math.max(1, Math.round(Number(s.max_tokens))), mtp_steps: Math.max(0, Math.min(3, Math.round(Number(s.mtp_steps)))),
-    enable_thinking: !!s.enable_thinking, reasoning_effort: s.reasoning_effort, cache_prompt: !!s.cache_prompt
+    enable_thinking: !!s.enable_thinking, reasoning_effort: s.reasoning_effort, cache_prompt: !!s.cache_prompt,
+    mtp_adaptive: s.mtp_adaptive !== false, pld: !!s.pld
   };
+  var stops = parseStops(s.stop);
+  if (stops.length) body.stop = stops;
   if (s.seed !== '' && s.seed !== null && s.seed !== undefined && !isNaN(Number(s.seed))) body.seed = Math.round(Number(s.seed));
   return body;
 }
@@ -167,7 +186,8 @@ ReplyState.prototype.push = function (chunk, final) {
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var DEFAULTS = { temperature: 0.7, top_k: 20, top_p: 0.95, min_p: 0, repeat_penalty: 1, presence_penalty: 0, seed: '', max_tokens: 1024,
-                   mtp_steps: 2, reasoning_effort: 'low', enable_thinking: true, cache_prompt: true, autocollapse: true };
+                   mtp_steps: 2, reasoning_effort: 'low', enable_thinking: true, cache_prompt: true, autocollapse: true,
+                   mtp_adaptive: true, pld: false, stop: '' };
   var NUM = ['temperature', 'top_k', 'top_p', 'min_p', 'repeat_penalty', 'presence_penalty', 'mtp_steps'];
   var settings = {};
   try { settings = JSON.parse(localStorage.getItem('qwen38.settings') || '{}'); } catch (e) { settings = {}; }
@@ -213,6 +233,8 @@ ReplyState.prototype.push = function (chunk, final) {
     if (typeof x.tg_tok_s === 'number') $('t_tg').textContent = fmt(x.tg_tok_s, 2);
     if (typeof x.ttft_ms === 'number' && x.ttft_ms > 0) $('t_ttft').textContent = fmt(x.ttft_ms, 0);
     if (typeof x.accept_pct === 'number' && (x.draft_n > 0 || x.phase === 'done')) $('t_acc').textContent = x.draft_n > 0 ? fmt(x.accept_pct, 0) + ' %' : 'off';
+    if (typeof x.pld_hits === 'number') $('t_pld').textContent = String(x.pld_hits);
+    if (typeof x.mtp_fills === 'number') $('t_fill').textContent = String(x.mtp_fills);
     if (typeof x.vram_mib === 'number') $('t_vram').textContent = fmt(x.vram_mib, 0);
     if (typeof x.rss_mib === 'number') $('t_rss').textContent = fmt(x.rss_mib, 0);
     if (typeof x.completion_tokens === 'number') $('t_tok').textContent = (x.prompt_tokens !== undefined ? x.prompt_tokens + ' in / ' : '') + x.completion_tokens + ' out';

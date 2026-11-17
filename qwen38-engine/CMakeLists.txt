@@ -123,3 +123,7 @@ add_executable(ternary_real_test tests/cuda/ternary_real_test.cu)
 target_include_directories(ternary_real_test PRIVATE "${LLAMA_SRC}/ggml/include")
 target_link_libraries(ternary_real_test PRIVATE gpu_cuda gguf_index ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart)
 set_target_properties(ternary_real_test PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
+
+# Stop-string filter of the server (header-only), unit test.
+add_executable(stop_filter_test tests/stop_filter_test.cpp)
+target_include_directories(stop_filter_test PRIVATE src/engine)

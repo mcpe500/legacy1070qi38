@@ -374,7 +374,14 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
             for (int j = 0; j < verify_T; ++j) {
                 const int t = sampler_.sample(lrows_.data() + static_cast<size_t>(j) * V);
                 sampler_.accept(t);
-                if (j + 1 < verify_T && t == vt[j + 1]) { k = j + 1; cur_new = t; continue; }
+                if (j + 1 < verify_T && t == vt[j + 1]) {
+                    k = j + 1;
+                    cur_new = t;
+                    // An accepted end token ends the reply: drafts after it are never part of the conversation, so they must not
+                    // enter the model state (otherwise the cached prefix no longer matches the next turn's prompt).
+                    if (is_stop(t)) break;
+                    continue;
+                }
                 cur_new = t;
                 break;
             }
