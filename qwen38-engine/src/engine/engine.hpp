@@ -86,7 +86,7 @@ public:
 
     // DeltaNet state snapshot and rollback (GPU and CPU layers). With the snapshot on, a forward() of at most kRollT tokens keeps
     // the state from before the call; dn_rollback(keep) leaves the state as if only the first `keep` tokens had been processed.
-    static constexpr int kRollT = 8;   // verification batch of up to 7 drafts + 1 (PLD + MTP cascade)
+    static constexpr int kRollT = 5;   // verification batch of up to 4 drafts + 1
     void dn_snapshot(bool on);
     void dn_rollback(int keep);
 

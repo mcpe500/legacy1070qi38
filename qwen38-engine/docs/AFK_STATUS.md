@@ -428,61 +428,52 @@ All five stages are done. Open points, in order of value:
    section above.
 4. Decide the MTP default (0 or 1 are faster on low-acceptance text) and whether long contexts should default to `--kv f32` (fits the cap at 7319 MiB).
 
-## Experiment `exp/cascaded-pld-mtp` (2026-11-17)
-**Branch**: `exp/cascaded-pld-mtp` from `main` @ 28e9bb2 (commit a5a63cf)  
-**Goal**: Cascaded Speculative Decoding — PLD (3/4-gram suffix match) + Adaptive MTP, T≤8 verify batch.
+## Experiment `exp/cascaded-pld-mtp` (2026-11-17, architecture fix)
 
-### Implementation
-- `engine.hpp`: `kRollT = 8` (was 5)
-- `gpu_layers.cu`: `gexec[16]`, `T <= 8` graph condition
-- `generator.cpp`: buffers 8 rows, PLD 3/4-gram open-address hash tables, cascade verify batch = `[cur] + MTP_drafts + PLD_candidates`
-- `main.cpp`: `--pld`, `--pld-max`, `--pld-min-len` flags
+**Branch**: `exp/cascaded-pld-mtp` from `main` @ 28e9bb2  
+**Goal**: Cascaded Speculative Decoding — PLD (3/4-gram suffix match) + Adaptive MTP, inside the T≤5 batch limit.
 
-### Fixes Applied (commit a5a63cf)
-1. **Verify batch order**: `[cur] + MTP_drafts + PLD_candidates` (was `[cur] + PLD + MTP`)
-   - MTP drafts at contiguous positions 1..De preserving `hm`/`hm2` chain
-2. **Acceptance loop fixed**: `cur_new` from position after last accepted draft (`lrows_[k]`)
-   - Matches main branch logic, not always `lrows_[0]`
-3. **PLD candidates appended after MTP drafts** in verify batch
+### Architecture
+- `engine.hpp`: `kRollT = 5` (the experiment's `8` was reverted)
+- `gpu_layers.cu`: `gexec[10]`, graph condition `T <= 5`
+- `generator.cpp`: 5-row buffers (`hv_`/`hv_next_` 5×H, `lrows_` 5×V, `bt(6)`/`vt(5)`/`dr(4)`)
+- **pure priority routing** per cycle: PLD 3/4-gram matcher first; on a match (1..4 tokens) the verify batch is `[cur] + PLD_candidates` and MTP is skipped; with no PLD candidate the standard MTP path `[cur] + MTP_drafts` runs exactly as main
+- **PLD suffix fixed** (root cause): the suffix must end at `cur`, not at the last cached token
+- **PLD chain extraction**: the matched entry keeps the position of its suffix; `query()` walks the history forward from there
+- **consistency gate `kMinRepeat = 4`**: a match is trusted only when the previous occurrence continued identically for at least 4 tokens
+- `main.cpp`: rollback test extended to `TB = 5`, `keep = 1..4`
+- CLI: `--pld 1 --pld-max 4` (default `--pld 0` leaves the main MTP path untouched)
 
-### Verification Gates
-| Gate | Result | Notes |
-|------|--------|-------|
-| SASS (HFMA2/HMUL2) | ✅ PASS | 0 half arithmetic |
-| Greedy parity (free-text, 509→256) | ✅ PASS | 256/256 tokens identical |
-| Greedy parity (code/repetitive) | ❌ FAIL | Diverges at ~token 60 |
-| Rollback T≤8 bit-identical | ❌ FAIL (both branches) | Pre-existing batch vs sequential numerics issue |
+### Verification gates (32 GPU layers)
+| Gate | Result | Detail |
+|------|--------|--------|
+| SASS gate | **PASS** | 0 HFMA2/HMUL2/HADD2 |
+| Rollback T≤5, TB=5, keep=1..4 (`QWEN_MT_DOT=0`) | **PASS** | batch rows 0/5, post-rollback steps 0/7,6,5,4 |
+| Rollback default (`mt_dot` on) | last-bit differences | pre-existing: `mt_dot` (point A) sums a batch in a different order than the per-token kernels; main behaves identically |
+| Greedy parity free-text 509→256 | **PASS** | 256/256 ids identical (MTP 0, MTP 2, MTP 2+PLD) |
+| Greedy parity code 524→256 | **PASS** | 256/256 ids identical (with and without PLD) |
+| VRAM @ 32 GPU layers | **PASS** | 7202.0 MiB arena / 7330.2 MiB in use, identical to main |
 
-### Benchmarks (16 GPU layers, MTP 1/2, temp=0 seed=42)
+### Benchmarks (32 GPU layers, MTP 2 adaptive, temp 0, seed 42)
+| Benchmark | main (MTP only) | experimental PLD off | experimental PLD on |
+|---|---:|---:|---:|
+| free text 509→256, tg tok/s | 3.139 | 3.130 | 2.992 |
+| free text accept | 96 % (198/207) | 96 % (198/207) | 89 % (195/219) |
+| code 524→256, tg tok/s | 3.179 | 3.162 | 2.949 |
+| code accept | 99 % (192/194) | 99 % (192/194) | 84 % (192/228) |
+| repeated text 60→64, tg tok/s | 3.315 | — | **3.846** |
+| repeated text accept | 100 % (52/52) | — | **100 % (52/52)** |
+| repeated text mtp_draft_s | 2.71 s | — | **0.00 s** |
 
-| Metric | Main | Experimental | Δ |
-|--------|------|--------------|---|
-| **Free-text (16 tok, MTP 1 non-adaptive) tok/s** | 1.16 | 0.57 | -51% |
-| Free-text MTP accept | 100% | 0% | -100 pp |
-| **Free-text (16 tok, MTP 2 adaptive) tok/s** | 0.92 | 0.40 | -57% |
-| Free-text MTP accept | 75% | 0% | -75 pp |
-| **Free-text (256 tok, MTP 2 adaptive) tok/s** | 2.67 | 0.40 | -85% |
-| Free-text MTP accept | 96% | 0% | -96 pp |
-| **Code (256 tok, MTP 2 adaptive) tok/s** | 2.75 | 0.68 | -75% |
-| Code MTP accept | 100% | 0% | -100 pp |
-| **Greedy parity (free-text)** | ✅ | ✅ | PASS |
-| **Greedy parity (code)** | ✅ | ❌ | FAIL (diverges ~token 60) |
-
-### Root Cause
-MTP head produces drafts that never match main model's greedy predictions, despite:
-- Identical MTP drafting logic copied from main branch
-- Correct verify batch structure (`[cur] + MTP + PLD`) and acceptance loop
-- Correct `hm`/`hm2` pointer handling (preserved by contiguous MTP positions)
-- Greedy parity holding on free-text (main model output identical)
-
-The MTP head's predictions diverge from main model's. Possible causes:
-- MTP KV cache state difference (subtle initialization)
-- Hidden state passed to MTP forward differs (`hv`/`hm`/`hm2` chain)
-- Memory layout difference from 8-row buffers (`hv_` 8×H vs 5×H)
+### Reading
+- The T≤5 revert **fixed the MTP acceptance regression**: with PLD off the branch reproduces main exactly (same tok/s, same accept counts, same cycles, same tokens).
+- PLD is a **selective win**: +16 % over main with 100 % acceptance and zero drafting cost on genuinely repeated blocks; on semi-repetitive text the `kMinRepeat` gate limits the waste (free text 2.86 → 2.99, code 2.69 → 2.95 without losing a repeated-block hit).
+- Greedy parity holds on every configuration because every draft is still verified by the main model and the sampler stream is untouched.
 
 ### Status
-**Experimental — not ready for merge**. Core infrastructure (T≤8, PLD matcher, cascade framework, acceptance loop) works; MTP acceptance regression blocks performance. Needs debug of MTP head prediction divergence.
+**Experimental — working as designed, not merged.** Main goal reached (parity restored, 32 GPU layers, SASS, rollback bit-exact via the bit-exact path, greedy parity on both prompt types). PLD wins on repeated text and is gated elsewhere.
 
 ### Artifacts
 - Full comparison: `bench/results/experiment_comparison.md`
-- Branch: `exp/cascaded-pld-mtp` @ a5a63cf (pushed to origin)
+- Rollback bit-exact: `bench/results/stage4/exp_pld_rollback_bitident.txt`
+- Rollback default: `bench/results/stage4/exp_pld_rollback_default_mtdot.txt`

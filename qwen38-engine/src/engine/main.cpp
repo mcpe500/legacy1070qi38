@@ -203,11 +203,14 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "prompt tokens: %d\n", n_prompt);
 
         if (rollback_test) {
-            // DeltaNet rollback test. Reference: greedy single-token steps g[0..5] with their logits. Then, for keep = 1, 2, 3:
-            // fresh state, prefill, snapshot, one batch of g[0..3], rollback(keep), and the following single steps must give
-            // logits that are bit-identical to the reference, and so must the logits rows of the batch itself.
+            // DeltaNet rollback test. Reference: greedy single-token steps g[0..NG-1] with their logits. Then, for every
+            // keep = 1..TB-1 (the whole kRollT range): fresh state, prefill, snapshot, one batch of TB tokens,
+            // rollback(keep), and the following single steps must give logits bit-identical to the reference, and so
+            // must the logits rows of the batch itself. Run with QWEN_MT_DOT=0 for the bit-exact path: the mt_dot
+            // multi-token kernel (point A) sums a batch in a different order than the per-token kernels, so the batch
+            // rows differ in the last bits by design while every single step stays bit-identical.
             const size_t V = static_cast<size_t>(eng.n_vocab);
-            const int NG = 6, TB = 4;
+            const int NG = 8, TB = 5;   // TB = kRollT: the largest batch the snapshot buffers hold
             std::vector<int32_t> g(NG);
             std::vector<float> ref(static_cast<size_t>(NG) * V), rows(static_cast<size_t>(TB) * V), lg(V);
             eng.forward(ids.data(), n_prompt, 0, logits.data());
@@ -217,7 +220,7 @@ int main(int argc, char ** argv) {
                 if (i + 1 < NG) g[i + 1] = argmax(ref.data() + static_cast<size_t>(i) * V, eng.n_vocab);
             }
             int bad = 0;
-            for (int keep = 1; keep <= 3; ++keep) {
+            for (int keep = 1; keep <= TB - 1; ++keep) {
                 eng.reset();
                 eng.forward(ids.data(), n_prompt, 0, lg.data());
                 eng.dn_snapshot(true);

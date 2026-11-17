@@ -104,7 +104,7 @@ struct GpuLayers::Impl {
     int * pos_dev = nullptr;
     int * h_pos = nullptr;
     bool in_graph = false;
-    cudaGraphExec_t gexec[16] = {};   // T=1..8 × (saving off/on) = 16 entries
+    cudaGraphExec_t gexec[10] = {};   // T=1..5 × (saving off/on) = 10 entries
     int n_graphs = 0;
 
     Impl(const GgufIndex & i, const GpuConfig & c, float e) : ix(i), cfg(c), eps(e) {}
@@ -509,7 +509,7 @@ void GpuLayers::forward(float * x_host, int T, int pos0, const std::function<voi
     if (m.saving && T > m.cfg.roll_t) throw std::runtime_error("GpuLayers::forward: batch larger than roll_t with snapshots on");
     const size_t bytes = static_cast<size_t>(T) * kHidden * sizeof(float);
     CK(cudaMemcpy(m.x, x_host, bytes, cudaMemcpyHostToDevice));
-    if (m.cfg.use_graph && !tap && T <= 8) {
+    if (m.cfg.use_graph && !tap && T <= 5) {
         // One CUDA graph per (T, snapshots on/off) holds every kernel launch of the layer stack; replaying it costs one launch.
         const int key = (T - 1) * 2 + (m.saving ? 1 : 0);
         *m.h_pos = pos0;
