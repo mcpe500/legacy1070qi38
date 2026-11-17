@@ -480,6 +480,8 @@ All five stages are done. Open points, in order of value:
 
 ## Serving round on `exp/knapsack-ctx16k-webui` (2026-11-17)
 
+Figure: `docs/figures/49_serving_webui.svg` (cache boundary at `<|im_end|>`, StopFilter holdback, live PLD/MTP telemetry; drawn by `scripts/make_fig49_serving.py`).
+
 **Scope change by the user.** The 0-1 knapsack layer placement and the 16K context plan were cancelled and fully reverted before any of it was committed:
 layers 0-31 stay contiguous on the GPU, `ctx_max` stays 4096, `ops.cu` and the 2 GiB arena are unchanged (the source tree equals `main` except for the files below).
 The reverted work is kept outside the repository as a patch (`~/kiro-backups/knapsack-ctx16k-full-1117-1129.patch`). Two findings from it, for the record:
