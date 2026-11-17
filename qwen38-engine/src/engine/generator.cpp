@@ -338,12 +338,13 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
             }
             const auto q1 = Clock::now();
 
-            // ---- Verify batch: [cur] + PLD candidates + MTP drafts dr[0]..dr[De-1]
-            // Total verify tokens = 1 + n_pld + De <= 8 (kRollT)
+            // ---- Verify batch: [cur] + MTP drafts dr[0]..dr[De-1] + PLD candidates
+            // Total verify tokens = 1 + De + n_pld <= 8 (kRollT)
+            // MTP drafts at contiguous positions 1..De to preserve hm/hm2 chain
             vt[0] = cur;
             int vt_idx = 1;
-            for (int i = 0; i < n_pld && vt_idx < 8; ++i) vt[vt_idx++] = pld_cand[i];
             for (int i = 0; i < De && vt_idx < 8; ++i) vt[vt_idx++] = dr[i];
+            for (int i = 0; i < n_pld && vt_idx < 8; ++i) vt[vt_idx++] = pld_cand[i];
             const int verify_T = vt_idx;
 
             guarded([&] {
@@ -354,19 +355,35 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
             st.dec_gpu += eng_.last_gpu_s; st.dec_cpu += eng_.last_cpu_s; st.dec_head += eng_.last_head_s;
             const auto q2 = Clock::now();
 
-            // ---- Acceptance sampling (original logic adapted for PLD)
+            // ---- Acceptance sampling (matching main branch logic)
+            // verify_T = 1 (cur) + De (MTP drafts) + n_pld (PLD candidates)
+            // lrows_[0] = logits for cur (position pos_new)
+            // lrows_[1..De] = logits for MTP drafts dr[0..De-1] (positions pos_new+1..pos_new+De)
+            // lrows_[De+1..] = logits for PLD candidates
             int k = 0, cur_new = 0;
             for (int j = 0; j < verify_T; ++j) {
                 const int t = sampler_.sample(lrows_.data() + static_cast<size_t>(j) * V);
                 sampler_.accept(t);
-                if (j == 0) {   // actual token
+                if (j == 0) {
+                    // Position pos_new: should match cur (already known)
                     cur_new = t;
-                } else if (j - 1 < n_pld + De && t == vt[j]) {
-                    k = j;   // accepted up to this draft (k = number of accepted drafts)
-                    continue;
+                } else if (j <= De) {
+                    // Position pos_new + j: MTP draft dr[j-1]
+                    if (t == dr[j - 1]) {
+                        k = j;   // accepted j drafts (dr[0]..dr[j-1])
+                        cur_new = t;  // next actual token is from this position
+                        continue;
+                    }
                 } else {
-                    break;
+                    // Position pos_new + De + (j - De - 1): PLD candidates
+                    int pld_idx = j - De - 1;
+                    if (pld_idx < n_pld && t == pld_cand[pld_idx]) {
+                        k = j;
+                        cur_new = t;
+                        continue;
+                    }
                 }
+                break;
             }
             // Note: k is the number of accepted drafts (vt[1]..vt[k] accepted)
             guarded([&] { if (k < n_pld + De) eng_.dn_rollback(k + 1); });
@@ -385,6 +402,9 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
                 if (new_pos >= 0) pld.add(cached_.data(), new_pos - 1, new_pos);
             }
 
+            // The verification hidden states (hvn) are exactly what the next cycle's catch-up needs.
+            // After swap, hv points to hvn data: hv[0]=cur, hv[1]=dr[0], hv[2]=dr[1], ...
+            // Next cycle's catch-up will use hv[0..k] for tokens at positions pos_new..pos_new+k.
             pos_new += k + 1;
             k_prev = k;
             cur = cur_new;
