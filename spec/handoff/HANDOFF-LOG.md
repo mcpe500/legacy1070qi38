@@ -382,3 +382,15 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [OPEN] KV iso3 pada Q3-DOWN-XS (llama-bench menolak -ctk iso3); BF16 tidak diunduh (tidak perlu)
   → Lihat spec/research/reports/2026-11-15-27b-run-004-vulkan-strategy-b.md, CLAIMS C-63..C-68
 ```
+
+### SPEC-008: single-file executable + RFC-004 embedding format (2026-11-18)
+
+```
+[Post-bootstrap] [DECISION] Ide "compile bobot LLM ke dalam executable webserver" dikerjakan sebagai SPEC-008 + RFC-004: append + mmap zero-copy dari /proc/self/exe dipilih; C-array hex (embed.cmake) ditolak (±28 GB source, C-72); .incbin dicatat sebagai cadangan
+[Post-bootstrap] [DECISION] Non-goal eksplisit: embedding bukan optimasi kecepatan. Batas atas decode = bandwidth / bytes bobot per token (C-71); Q4_K_M hybrid tetap 2.85 tok/s (C-54) baik via -m maupun payload. Manfaatnya: satu artefak ter-versi-lock (engine commit + SHA-256 payload), bukan angka tok/s
+[Post-bootstrap] [UPDATE] Payload yang diizinkan dibatasi kelas Bonsai (muat RAM/VRAM): PTQ1_0 5,946,648,928 B, Q2_0 7,626,008,928 B (C-69). Q4_K_M 15.43 GiB tetap lewat override -m
+[Post-bootstrap] [UPDATE] Batas mesin dicatat sebagai klaim baru: mlock 1.94 GiB tanpa root, MemTotal 15,905 MiB (C-70)
+[Post-bootstrap] [OPEN] Baris CLAIMS untuk eksperimen Ternary Bonsai (tok/s, PPL, KLD) belum ada; angka hanya hidup di qwen38-engine/bench/results/bonsai/. Perlu PR dokumentasi terpisah sebelum boleh dikutip sebagai klaim
+[Post-bootstrap] [OPEN] Eksperimen bahasa pemaket (C/C++/Goose) masuk Task 6 SPEC-008 dengan decision gate >10%; ekspektasi ditulis eksplisit: tidak ada harness bahasa yang menembus batas bandwidth RAM
+  → Lihat spec/specs/SPEC-008-single-file-executable/, spec/specs/RFC-004-embed-format.md, CLAIMS C-69..C-72
+```

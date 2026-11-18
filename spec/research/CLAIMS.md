@@ -111,6 +111,11 @@ yang memakai arsitektur `qwen35` (lihat C-20), tetapi itu bukan Qwen3.8-27B dan 
 | C-68 | Q3-DOWN-XS CUDA ctx 4096: KV q4_0 memuat 63/66 layer di GPU (f16: 61) dan memberi 6.51 tok/s (f16 5.54, +17%); KV q8_0 maks ngl 62 5.62; `-fa 1` 5.64 vs 5.54 | `reports/2026-11-15-27b-run-004-vulkan-strategy-b.md` | Terukur | ⚠ 1 run, 16 token; KLD KV q4_0 pada model ini belum diukur; iso3 belum |
 | C-45 | `llama-perplexity` menjalankan 4 sekuens paralel pada ctx 512 (KV 24 MiB = 4 x 6 MiB) | log nyata | Terukur | ✅ |
 
+| C-69 | Ukuran berkas bobot terukur 2026-11-18 (`stat`, mesin ini): Ternary-Bonsai-2-27B-PTQ1_0 5,946,648,928 B (5.54 GiB), Ternary-Bonsai-2-27B-Q2_0 7,626,008,928 B (7.10 GiB), Qwen3.8-27B-UD-Q4_K_M 16,564,259,744 B (15.43 GiB) | `stat -c %s` pada berkas lokal | Terukur | ✅ ukuran berkas; **bukan** klaim kualitas atau kecepatan |
+| C-70 | Batas `mlock` proses 2,035,848 KiB (1.94 GiB) tanpa root; MemTotal 15,905 MiB, MemAvailable 14,560 MiB | `ulimit -l`, `free -m` | Terukur | ✅ |
+| C-71 | Batas atas tok/s decode = bandwidth / bytes bobot per token; menempatkan bobot yang **sama** di dalam executable tidak mengubah byte per token. Turunan dari C-34 (≥18.4 GB/s) dan C-54 (2.85 tok/s): FFN ±9.26 GiB di RAM → 1.6–2.0 tok/s; seluruh bobot di VRAM 256 GB/s memberi batas jauh lebih tinggi, searah dengan angka Bonsai di `bench/results/bonsai/` (baris CLAIMS Bonsai belum ada — `[OPEN]` di HANDOFF-LOG) | turunan dari C-34, C-54, MASTER (bandwidth) | Turunan | ⚠ bukan ukuran langsung; overlap dan batching membuat angka praktis sedikit lebih tinggi dari batas bawah |
+| C-72 | `cmake/embed.cmake` (hex C-array) membengkakan ±5×: tiap byte menjadi 5 karakter `0xNN,`; payload 5.54 GiB → ±28 GB source C++ | turunan dari format keluaran skrip | Turunan | ⚠ rasio deterministik; dibenarkan oleh pemakaian WebUI 18 KB hari ini, belum diuji penuh pada berkas GB |
+
 ## Cara memakai
 
 1. Sebelum menulis klaim faktual di dokumen lain, tambahkan baris di sini dengan ID baru.
