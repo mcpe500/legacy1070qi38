@@ -1,0 +1,11 @@
+[PASS] controls: __dp4a -> IDP.4A x1, __hfma2 -> half arithmetic x1 (patterns are sensitive)
+[PASS] dp4a_gemv: IDP.4A x1624, half arithmetic x0
+[PASS] gemv: IDP.4A x0, half arithmetic x0
+[PASS] gpu_layers: IDP.4A x0, half arithmetic x0
+[PASS] iso3_quant: IDP.4A x0, half arithmetic x0
+[PASS] ops: IDP.4A x0, half arithmetic x0
+[PASS] q8_gemv: IDP.4A x8, half arithmetic x0
+[PASS] ternary_gemv: IDP.4A x493, half arithmetic x0
+[PASS] build/qwen38-engine (linked): IDP.4A x2125, half arithmetic x0
+
+SASS gate: PASS

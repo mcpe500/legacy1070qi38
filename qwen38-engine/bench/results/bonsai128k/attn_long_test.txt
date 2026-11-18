@@ -1,0 +1,17 @@
+[PASS] kv=f32  n=   300 fast(ctx 8192) vs tiled(ctx 16384): max_abs 9.537e-07 rms 9.883e-02 rel 9.650e-06
+[PASS] kv=f32  n=  4096 fast(ctx 8192) vs tiled(ctx 16384): max_abs 4.470e-07 rms 7.641e-02 rel 5.850e-06
+[PASS] kv=f32  n=  6000 fast(ctx 8192) vs tiled(ctx 16384): max_abs 4.694e-07 rms 7.586e-02 rel 6.187e-06
+[PASS] kv=f32  n=  8192 fast(ctx 8192) vs tiled(ctx 16384): max_abs 5.737e-07 rms 7.558e-02 rel 7.591e-06
+[PASS] kv=f32  n=  4096 tiled(ctx 131072) vs double ref: max_abs 4.499e-07 rms 7.641e-02 rel 5.887e-06 (needle out[1][0][0] gpu -0.111540 ref -0.111540)
+[PASS] kv=f32  n= 32768 tiled(ctx 131072) vs double ref: max_abs 2.488e-07 rms 7.502e-02 rel 3.317e-06 (needle out[1][0][0] gpu -0.111540 ref -0.111540)
+[PASS] kv=f32  n= 65536 tiled(ctx 131072) vs double ref: max_abs 1.406e-07 rms 7.494e-02 rel 1.876e-06 (needle out[1][0][0] gpu -0.111540 ref -0.111540)
+[PASS] kv=f32  n=131072 tiled(ctx 131072) vs double ref: max_abs 1.519e-07 rms 7.490e-02 rel 2.028e-06 (needle out[1][0][0] gpu -0.111540 ref -0.111540)
+[PASS] kv=iso3 n=   300 fast(ctx 8192) vs tiled(ctx 16384): max_abs 1.073e-06 rms 1.105e-01 rel 9.706e-06
+[PASS] kv=iso3 n=  4096 fast(ctx 8192) vs tiled(ctx 16384): max_abs 1.714e-06 rms 8.112e-02 rel 2.112e-05
+[PASS] kv=iso3 n=  6000 fast(ctx 8192) vs tiled(ctx 16384): max_abs 1.431e-06 rms 7.944e-02 rel 1.801e-05
+[PASS] kv=iso3 n=  8192 fast(ctx 8192) vs tiled(ctx 16384): max_abs 2.027e-06 rms 7.853e-02 rel 2.581e-05
+[PASS] kv=iso3 n=  4096 tiled(ctx 131072) vs double ref: max_abs 9.821e-07 rms 8.112e-02 rel 1.211e-05 (needle out[1][0][0] gpu -0.097051 ref -0.097051)
+[PASS] kv=iso3 n= 32768 tiled(ctx 131072) vs double ref: max_abs 7.063e-07 rms 7.708e-02 rel 9.163e-06 (needle out[1][0][0] gpu -0.097051 ref -0.097051)
+[PASS] kv=iso3 n= 65536 tiled(ctx 131072) vs double ref: max_abs 8.686e-07 rms 7.694e-02 rel 1.129e-05 (needle out[1][0][0] gpu -0.097051 ref -0.097051)
+[PASS] kv=iso3 n=131072 tiled(ctx 131072) vs double ref: max_abs 4.671e-07 rms 7.688e-02 rel 6.075e-06 (needle out[1][0][0] gpu -0.097051 ref -0.097051)
+attn_long_test: PASS (0 failing cases)

@@ -1,0 +1,5 @@
+state round trip: prefix 3989 tokens, continuation 43 tokens, state 198.3 MiB, save 0.55 s, load 0.33 s
+in-memory: reused 3989, 9 tokens: MAGENTA-FALCON-42
+from file: reused 3989, 9 tokens: MAGENTA-FALCON-42
+state round trip: tokens identical, first logits row bit-identical -> PASS
+{"tag":"state_roundtrip_PTQ1_0_4k","rc":0,"peak_vram_mib":5711,"max_rss_kb":648004}

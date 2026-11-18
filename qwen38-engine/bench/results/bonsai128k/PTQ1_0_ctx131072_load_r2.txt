@@ -1,0 +1,1 @@
+{"tag":"PTQ1_0_ctx131072_load_r2","rc":1,"peak_vram_mib":7281,"max_rss_kb":585800}

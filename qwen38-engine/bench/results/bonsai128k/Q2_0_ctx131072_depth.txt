@@ -1,0 +1,2 @@
+{"depth_bench":131072,"steps":8,"decode_tok_s":0.3786,"ctx":131072,"gpu_layers":53,"load_s":40.46,"cpu_arena_mib":3389.2,"gpu_arena_mib":7160.7,"gpu_kv_mib":1300.0,"vram_used_mib":7284.2,"peak_rss_kb":4983344}
+{"tag":"Q2_0_ctx131072_depth","rc":0,"peak_vram_mib":7285,"max_rss_kb":4983344}
