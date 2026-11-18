@@ -1,0 +1,28 @@
+0.09.055.126 I cmn          init: llama threadpool init, n_threads = 4
+0.09.800.433 I 
+0.09.800.525 I system_info: n_threads = 4 (n_threads_batch = 4) / 8 | CUDA : ARCHS = 500,610,700,750,800,860,890,900 | USE_GRAPHS = 1 | FA_QUANTS = q4_0-q4_0,q8_0-q8_0,f16-f16,bf16-bf16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.09.800.539 I perplexity: tokenizing the input ..
+0.10.509.193 I perplexity: tokenization took 708.641 ms
+0.10.509.415 I perplexity: calculating perplexity over 4 chunks, n_ctx=512, batch_size=512, n_seq=1
+/home/runner/work/llama.cpp/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:111: CUDA error
+0.13.407.614 E CUDA error: out of memory
+0.13.407.619 E   current device: 0, in function alloc at /home/runner/work/llama.cpp/llama.cpp/ggml/src/ggml-cuda/ggml-cuda.cu:631
+0.13.407.619 E   cuMemCreate(&handle, reserve_size, &prop, 0)
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-base.so.0(+0x16e4b)[0x7f5341658e4b]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-base.so.0(+0x172cf)[0x7f53416592cf]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-base.so.0(ggml_abort+0x152)[0x7f53416594a2]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-cuda.so(+0x35b0f6)[0x7f530d7fa0f6]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-cuda.so(_ZN18ggml_cuda_pool_vmm5allocEmPm+0x516)[0x7f530d81e696]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-cuda.so(+0x36420f)[0x7f530d80320f]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-cuda.so(+0x36adb7)[0x7f530d809db7]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-cuda.so(+0x378ad6)[0x7f530d817ad6]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-cuda.so(+0x37b196)[0x7f530d81a196]
+~/llama-prism/llama-prism-b12128-d7b2896/libggml-base.so.0(ggml_backend_sched_graph_compute_async+0x6ee)[0x7f534167979e]
+~/llama-prism/llama-prism-b12128-d7b2896/libllama.so.0(_ZN13llama_context13graph_computeEP11ggml_cgraphb+0xe2)[0x7f5341960af2]
+~/llama-prism/llama-prism-b12128-d7b2896/libllama.so.0(_ZN13llama_context14process_ubatchERK12llama_ubatch14llm_graph_typeP22llama_memory_context_iR11ggml_status+0x1a1)[0x7f5341967261]
+~/llama-prism/llama-prism-b12128-d7b2896/libllama.so.0(_ZN13llama_context6decodeERK15llama_batch_ext+0x50c)[0x7f534196fd8c]
+~/llama-prism/llama-prism-b12128-d7b2896/libllama-perplexity-impl.so(+0xa603)[0x7f534232e603]
+~/llama-prism/llama-prism-b12128-d7b2896/libllama-perplexity-impl.so(_Z16llama_perplexityiPPc+0x71d)[0x7f534233a4cd]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7f534211ad90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7f534211ae40]
+~/llama-prism/llama-prism-b12128-d7b2896/llama-perplexity(+0x1095)[0x55bde34d3095]

@@ -1,0 +1,4 @@
+PASS blk.0.ffn_up.weight      in  5120 out 17408 T 5 | ours vs llama.cpp cos 1.000000 | ours vs double ref 0.999990 | llama.cpp vs double ref 0.999990
+PASS blk.0.ffn_gate.weight    in  5120 out 17408 T 5 | ours vs llama.cpp cos 1.000000 | ours vs double ref 0.999991 | llama.cpp vs double ref 0.999991
+PASS blk.0.ffn_down.weight    in 17408 out  5120 T 5 | ours vs llama.cpp cos 1.000000 | ours vs double ref 0.999998 | llama.cpp vs double ref 0.999998
+ternary_real_test: PASS

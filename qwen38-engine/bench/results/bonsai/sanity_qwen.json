@@ -1,0 +1,63 @@
+{
+ "label": "qwen",
+ "url": "http://127.0.0.1:8098",
+ "results": [
+  {
+   "name": "arith",
+   "thinking": false,
+   "pass": true,
+   "answer": "391",
+   "tokens": 3,
+   "seconds": 14.2,
+   "finish": "stop"
+  },
+  {
+   "name": "capital",
+   "thinking": false,
+   "pass": true,
+   "answer": "Canberra",
+   "tokens": 2,
+   "seconds": 11.0,
+   "finish": "stop"
+  },
+  {
+   "name": "speed",
+   "thinking": false,
+   "pass": true,
+   "answer": "80",
+   "tokens": 2,
+   "seconds": 11.1,
+   "finish": "stop"
+  },
+  {
+   "name": "translate",
+   "thinking": false,
+   "pass": true,
+   "answer": "Rapat dimulai pukul sembilan besok pagi.",
+   "tokens": 8,
+   "seconds": 13.0,
+   "finish": "stop"
+  },
+  {
+   "name": "code",
+   "thinking": false,
+   "pass": true,
+   "answer": "```python\ndef is_prime(n):\n    if n < 2:\n        return False\n    if n == 2:\n        return True\n    if n % 2 == 0:\n        return False\n    for i in range(3, int(n**0.5) + 1, 2):\n        if n % i == 0:\n            return False\n    return True\n```",
+   "tokens": 90,
+   "seconds": 39.9,
+   "finish": "stop"
+  },
+  {
+   "name": "discount",
+   "thinking": true,
+   "pass": true,
+   "answer": "31.25",
+   "reasoning_chars": 257,
+   "tokens": 102,
+   "seconds": 46.5,
+   "finish": "stop"
+  }
+ ],
+ "passed": 6,
+ "total": 6
+}

@@ -1,0 +1,19 @@
+--- in 5120 out 1024 T 11
+PASS Q2_0 decode vs libggml to_float (mismatching values)       0.000e+00 (limit 0.0e+00)
+PASS ternary_rotate vs double Sylvester-Hadamard (rel rms)      8.674e-08 (limit 1.0e-06)
+PASS gemv_q2_0_dp4a vs same-activation double reference         8.259e-08 (limit 2.0e-06)
+PASS gemv_q2_0_dp4a vs FP32-activation reference (8-bit act)    5.287e-03 (limit 1.5e-02)
+PASS T=1 result bit-identical to the same row of T=11           0.000e+00 (limit 0.0e+00)
+--- in 6144 out 512 T 11
+PASS Q2_0 decode vs libggml to_float (mismatching values)       0.000e+00 (limit 0.0e+00)
+PASS ternary_rotate vs double Sylvester-Hadamard (rel rms)      8.624e-08 (limit 1.0e-06)
+PASS gemv_q2_0_dp4a vs same-activation double reference         8.804e-08 (limit 2.0e-06)
+PASS gemv_q2_0_dp4a vs FP32-activation reference (8-bit act)    5.299e-03 (limit 1.5e-02)
+PASS T=1 result bit-identical to the same row of T=11           0.000e+00 (limit 0.0e+00)
+--- in 17408 out 256 T 11
+PASS Q2_0 decode vs libggml to_float (mismatching values)       0.000e+00 (limit 0.0e+00)
+PASS ternary_rotate vs double Sylvester-Hadamard (rel rms)      8.620e-08 (limit 1.0e-06)
+PASS gemv_q2_0_dp4a vs same-activation double reference         9.806e-08 (limit 2.0e-06)
+PASS gemv_q2_0_dp4a vs FP32-activation reference (8-bit act)    5.637e-03 (limit 1.5e-02)
+PASS T=1 result bit-identical to the same row of T=11           0.000e+00 (limit 0.0e+00)
+ternary_test: PASS (0 failed)

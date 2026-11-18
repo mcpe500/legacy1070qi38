@@ -515,3 +515,36 @@ The reverted work is kept outside the repository as a patch (`~/kiro-backups/kna
 | `main`, MTP 2 fixed (before this round) | 27.89 | 2.947 | 95 % (168/176) |
 | this branch, adaptive MTP (new default) | 26.76 | **3.130** | 96 % (198/207) |
 | this branch, `--mtp-steps 0` | 27.00 | 2.604 | |
+
+## Experiment `exp/ternary-bonsai-27b-eval` (2026-11-17): Ternary Bonsai 2 27B on the GTX 1070 Ti
+
+Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/results/bonsai/`. All 27 steps with reason, command, output and decision:
+`bench/results/bonsai/EXPERIMENT-LOG.md`; every run with exact peak VRAM: `bench/results/bonsai/RUNS.md` (`bench/bonsai_ledger.py`). Figure: `docs/figures/50_ternary_bonsai.svg`.
+
+- **Model.** `prism-ml/Ternary-Bonsai-2-27B-gguf` (Apache-2.0): the Qwen3.8-27B hybrid architecture (64 blocks, 48 Gated DeltaNet + 16 GQA, 24/4 heads, head_dim 256,
+  vocabulary 248320) with ternary weights in a Hadamard-rotated basis (`prism.hadamard`, block 1024, explicit signs) and **no MTP head**. Packings: `PTQ1_0` 5.95 GB (1.75 bpw),
+  `PQ2_0` 7.21 GB (2.125 bpw), `Q2_0` 7.63 GB (2.25 bpw, stock llama.cpp). The headers were read remotely first (`tests/tools/gguf_remote_header.py`, HTTP range requests);
+  `Q2_0` and `PTQ1_0` were then downloaded (13.6 GB, sha256 verified against the Hugging Face LFS ids), `PQ2_0` and the 53.8 GB F16 file were not.
+- **Runtimes.** `Q2_0` on our stock llama.cpp build (`fc9437a`, has the Hadamard runtime and our iso3 KV); `PTQ1_0` on the PrismML fork release `prism-b12128` (sha256 verified),
+  which runs on sm_61 through PTX JIT. The engine itself does not load Bonsai yet.
+- **Speed.** Short context: Bonsai decodes 17.1 (`Q2_0`, every layer on the GPU at `-ub 128`) to 19.6 tok/s (`PTQ1_0`) against 2.95 tok/s for Qwen Q4_K_M on qwen38-engine (MTP 2) and
+  2.26 on llama.cpp: about **6x**. 4K: 15.2 (`PTQ1_0`) vs 2.25. 16K: 11.7 vs 1.35 (llama.cpp Qwen). 32K: 7.5 (`PTQ1_0`, every layer on the GPU).
+- **Capacity under 7373 MiB (measured).** `PTQ1_0` holds every layer on the GPU up to 32K (q4_0 KV, 7165 MiB). 64K needs 6-8 CPU layers (`Q2_0` + iso3 `-ngl 56`, `PTQ1_0` + q4_0 `-ngl 62`),
+  128K needs 16 (`-ngl 48`, 7327 / 7303 MiB). The runtime overhead grows by about 6 KiB per context token (320 MiB at 4K, 1080 MiB at 128K), which dominates at long context.
+  Model prediction: `PTQ1_0` with iso3 KV would keep every layer on the GPU up to about 84K tokens (needs our iso3 patch in the fork).
+- **Ternary kernel path (prepared).** `src/cuda/ternary_gemv.cu`: Q2_0 GEMV with `lop3.b32` unpack + `prmt.b32` lane gather + `__dp4a`, and the FP32 Hadamard rotation.
+  Synthetic test PASS (decode = libggml, rotation 8.6e-8, GEMV 8-10e-8 vs same-activation reference, batch-size independent); real-weight test: cosine **1.000000** against llama.cpp on
+  layer-0 `ffn_up`, `ffn_gate`, `ffn_down`; SASS gate PASS (IDP.4A x464, 0 half arithmetic). Not wired into the forward pass (list of missing pieces in the comparison file).
+- **Quality sanity.** 6/6 checks for both models (including a reasoning question with thinking on).
+- **Intelligence (measured, `bench/results/bonsai/intel/INTEL.md`).** WikiText-2 PPL: Qwen Q4_K_M 5.916, Bonsai 7.995 (`Q2_0`) / 8.000 (`PTQ1_0`); KL divergence vs Qwen 0.356,
+  same top-1 token 76.5 %. Matched subsets (same items): HellaSwag 83.0 vs 72.0 (paired McNemar p = 0.001), Winogrande 77.5 vs 73.5 (p 0.27), ARC-Challenge 52 vs 48 (p 0.48),
+  MMLU 43.3 vs 46.7 (p 0.38). Bonsai is clearly weaker at next-token prediction; knowledge/reasoning gaps are within noise at N 100-200. Both packings score the same.
+- **Results by context (best fit under 7373 MiB, tg tok/s and peak VRAM).** `PTQ1_0`: 19.64 (6579) / 15.19 (6633) / 11.70 (6861) / 7.51 (7165) / 3.36 (7361, `-ngl 62`) /
+  2.24 (7303, `-ngl 48`, short depth) at 512 / 4K / 16K / 32K / 64K / 128K. `Q2_0`: 17.13 (7371) / 12.43 (7337) / 7.20 (7339) / 3.57 (7355) / 2.04 (7351, iso3 `-ngl 56`) / 3.98 (7327, short depth).
+  Qwen Q4_K_M on qwen38-engine: 2.947 (3.130 adaptive) at 512, 2.245 (2.446) at 4K; stock llama.cpp Qwen: 2.26 / 2.00 / 1.35 at 512 / 4K / 16K.
+- **Failures (root cause).** F1 all-GPU `Q2_0` at ubatch 512: 7791 MiB (compute buffer; fixed with `-ub 128`, 7371 MiB). F2 f16 KV at 32K: `cudaMalloc failed: out of memory` for 1920 MiB.
+  F3 64K prompt of 69447 tokens > 65536 (prompt now sized with `/tokenize`). F4 1 token generated (greedy end token; `ignore_eos`). F5 128K `-ngl` 51 / 52 / 48 at 7739 / 7847 / 7899 MiB
+  (overhead grows 6.1 KiB per token). F6 `PTQ1_0` 64K all-GPU at 7471 / 7595 MiB (fork allocates about 350 MiB at the first request; `-ngl 62` 7361 MiB). No kernel test failed.
+- **Decision for the engine.** On this card the bottleneck of Qwen Q4_K_M is the 7 GiB of CPU-layer weights read from DDR4 per token; Bonsai removes it. The next engineering step with the
+  largest payoff is to wire the ternary path into the engine with every layer on the GPU (PTQ1_0 or PQ2_0 needs its own unpack kernel; Q2_0 leaves almost no VRAM for the engine's buffers).
+

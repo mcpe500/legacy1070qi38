@@ -1,0 +1,5 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 8105 MiB):
+  Device 0: NVIDIA GeForce GTX 1070 Ti, compute capability 6.1, VMM: yes, VRAM: 8105 MiB
+load_backend: loaded CUDA backend from ~/llama-prism/llama-prism-b12128-d7b2896/libggml-cuda.so
+load_backend: loaded RPC backend from ~/llama-prism/llama-prism-b12128-d7b2896/libggml-rpc.so
+load_backend: loaded CPU backend from ~/llama-prism/llama-prism-b12128-d7b2896/libggml-cpu-haswell.so

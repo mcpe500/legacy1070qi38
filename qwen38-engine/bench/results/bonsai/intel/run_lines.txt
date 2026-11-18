@@ -1,0 +1,16 @@
+q2_ppl: task=ppl n=40 ngl=99 score=[PPL = 7.9955 +/- 0.20410] peak_vram=7371 MiB wall=147 s OK
+q2_hellaswag: task=hellaswag n=200 ngl=60 score=[acc_norm 76.50000000% CI95 [70.1586%, 81.8426%]] peak_vram=7279 MiB wall=1012 s OK
+q2_winogrande: task=winogrande n=500 ngl=60 score=[Final Winogrande score(500 tasks): 72.0000 +/- 2.0100] peak_vram=7273 MiB wall=952 s OK
+q2_arc: task=arc n=299 ngl=60 score=[none] peak_vram=7279 MiB wall=582 s OK
+q2_mmlu: task=mmlu n=500 ngl=60 score=[Final result: 43.6000 +/- 2.2199] peak_vram=7283 MiB wall=1620 s OK
+ptq1_ppl: task=ppl n=40 ngl=99 score=[PPL = 7.9996 +/- 0.20421] peak_vram=5691 MiB wall=371 s OK
+qwen_kldbase: task=kldbase n=40 ngl=25 score=[PPL = 5.9163 +/- 0.13986] peak_vram=6945 MiB wall=799 s OK
+q2_kld: task=kld n=40 ngl=99 score=[Mean KLD: 0.356084 ± 0.005925;Same top p: 76.480 ± 0.420 %] peak_vram=7371 MiB wall=201 s OK
+ptq1_kld: task=kld n=40 ngl=99 score=[Mean KLD: 0.356055 ± 0.005918;Same top p: 76.451 ± 0.420 %] peak_vram=5691 MiB wall=426 s OK
+q2_arc: task=arc n=298 ngl=59 score=[Final result: 50.6711 +/- 2.9010] peak_vram=7307 MiB wall=967 s OK
+qwen_hellaswag: task=hellaswag n=100 ngl=25 score=[acc_norm 83.00000000% CI95 [74.4520%, 89.1064%]] peak_vram=7113 MiB wall=3624 s OK
+qwen_winogrande: task=winogrande n=200 ngl=25 score=[Final Winogrande score(200 tasks): 77.5000 +/- 2.9602] peak_vram=7093 MiB wall=2152 s OK
+qwen_arc: task=arc n=100 ngl=25 score=[Final result: 52.0000 +/- 5.0212] peak_vram=7159 MiB wall=1776 s OK
+qwen_mmlu: task=mmlu n=150 ngl=25 score=[Final result: 43.3333 +/- 4.0596] peak_vram=7117 MiB wall=2947 s OK
+ptq1_hellaswag: task=hellaswag n=100 ngl=99 score=[acc_norm 72.00000000% CI95 [62.5120%, 79.8603%]] peak_vram=6185 MiB wall=347 s OK
+ptq1_winogrande: task=winogrande n=200 ngl=99 score=[Final Winogrande score(200 tasks): 73.5000 +/- 3.1285] peak_vram=6185 MiB wall=124 s OK
