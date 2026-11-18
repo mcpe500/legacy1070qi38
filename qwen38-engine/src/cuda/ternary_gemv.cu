@@ -141,12 +141,19 @@ __global__ void gemv_ptq1_0_kernel(const uint8_t * __restrict__ W, int64_t in, i
                                    const float * __restrict__ dx, const float * __restrict__ sx, int T, float * __restrict__ y) {
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
     const int64_t o = static_cast<int64_t>(blockIdx.x) * WARPS + warp;
-    if (o >= out) return;
     const int t0 = blockIdx.y * TT;
     const int nt = min(TT, T - t0);
     const int64_t ngroups = in / 128, nb32 = in / 32;
     const uint8_t * row = W + o * ngroups * ternary::kPtqGroupBytes;
     __shared__ int8_t codes[WARPS][128];   // per-warp scratch: one set of 128 ternary codes per output row
+    // Digit tables copied from constant memory into shared memory once per block. The phase-1 lookups index the
+    // table with a different payload byte in every lane; constant memory serializes such divergent reads (one
+    // address per cycle), shared memory serves them in parallel. Same values, so the result is bit-identical.
+    __shared__ int8_t s_d5[256 * 5], s_d4[256 * 4];
+    for (int i = threadIdx.x; i < 256 * 5; i += blockDim.x) s_d5[i] = c_ptq1_digits5[i];
+    for (int i = threadIdx.x; i < 256 * 4; i += blockDim.x) s_d4[i] = c_ptq1_digits4[i];
+    __syncthreads();
+    if (o >= out) return;   // after the block-wide table copy
     float acc[TT];
 #pragma unroll
     for (int t = 0; t < TT; ++t) acc[t] = 0.0f;
@@ -160,16 +167,16 @@ __global__ void gemv_ptq1_0_kernel(const uint8_t * __restrict__ W, int64_t in, i
         if (lane < 26) {
             const int b = blk[lane];
             if (lane < 16) {   // stage 1: byte j -> positions {j, j+16, j+32, j+48, j+64}
-                const int8_t * dg = c_ptq1_digits5 + b * 5;
+                const int8_t * dg = s_d5 + b * 5;
 #pragma unroll
                 for (int s = 0; s < 5; ++s) cw[lane + 16 * s] = static_cast<int8_t>(dg[s] - 1);
             } else if (lane < 24) {  // stage 2: byte 16+k -> positions {80+k, 88+k, 96+k, 104+k, 112+k}
                 const int k = lane - 16;
-                const int8_t * dg = c_ptq1_digits5 + b * 5;
+                const int8_t * dg = s_d5 + b * 5;
 #pragma unroll
                 for (int s = 0; s < 5; ++s) cw[80 + k + 8 * s] = static_cast<int8_t>(dg[s] - 1);
             } else {  // tail: byte 24 -> {120,122,124,126}, byte 25 -> {121,123,125,127}
-                const int8_t * dg = c_ptq1_digits4 + b * 4;
+                const int8_t * dg = s_d4 + b * 4;
                 const int base = 120 + (lane - 24);
 #pragma unroll
                 for (int s = 0; s < 4; ++s) cw[base + 2 * s] = static_cast<int8_t>(dg[s] - 1);

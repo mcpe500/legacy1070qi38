@@ -485,9 +485,9 @@ struct GpuLayers::Impl {
 GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps) : p_(new Impl(ix, cfg, rms_eps)) {
     Impl & m = *p_;
     if (cfg.n_layers < 1 || cfg.n_layers > 64) throw std::runtime_error("n_layers out of range");
-    // The attention kernel keeps its scores in dynamic shared memory (ctx_max * 4 bytes): 8192 positions = 32 KiB,
-    // still under the 48 KiB per-block limit of sm_61.
-    if (cfg.ctx_max > 8192) throw std::runtime_error("ctx_max above 8192 is not supported (attention shared memory)");
+    // Up to 8192 positions the attention kernel keeps its scores in dynamic shared memory (32 KiB, under the 48 KiB
+    // sm_61 limit). Above that the tiled online-softmax kernel runs, so ctx_max can reach 131072 (Bonsai path).
+    if (cfg.ctx_max > 131072) throw std::runtime_error("ctx_max above 131072 is not supported");
     m.theta_scale = std::pow(10000000.0f, -2.0f / static_cast<float>(kRope));
 
     CK(cudaStreamCreate(&m.st));
@@ -495,6 +495,21 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     Planner count;
     m.plan(count, false);
     m.arena_bytes = count.off;
+    {
+        // VRAM budget (process total, CUDA context included): refuse the plan before the big allocation.
+        const double proj = projected_mib(ix, cfg);
+        if (proj > cfg.vram_budget_mib) {
+            char msg[256];
+            std::snprintf(msg, sizeof(msg), "GPU plan needs %.0f MiB of device memory (arena %.0f MiB, %d layers, ctx %d), budget %.0f MiB: "
+                          "use fewer --gpu-layers, a smaller --ctx, or --gpu-layers auto",
+                          proj, static_cast<double>(m.arena_bytes) / 1048576.0, cfg.n_layers, cfg.ctx_max, cfg.vram_budget_mib);
+            cudaFreeHost(m.h_pos);
+            cudaStreamDestroy(m.st);
+            m.h_pos = nullptr;
+            m.st = nullptr;
+            throw std::runtime_error(msg);
+        }
+    }
     CK(cudaMalloc(&m.arena, m.arena_bytes));
     Planner real;
     real.base = m.arena;
@@ -742,6 +757,105 @@ void GpuLayers::stream_end(float * x_host, int T) {
     }
     if (std::getenv("QWEN_STREAM_DEBUG")) std::fprintf(stderr, "stream: layers %.2f s (pread %.2f, dma wait %.2f)\n", g_comp_s, g_pread_s, g_wait_s);
     g_up_s = g_comp_s = g_fetch_s = g_pread_s = g_wait_s = 0;
+}
+
+namespace {
+// Device bytes allocated after the arena (Q8 scratch, Q8_1 activations) plus what the driver adds lazily (module loads,
+// CUDA graph instantiation). Measured: 113.6 MiB in use beyond the arena on PTQ1_0 at ctx 4096, of which about 70 MiB is
+// the context itself (already counted by cudaMemGetInfo when the plan is checked). 64 MiB covers the rest with headroom.
+constexpr double kScratchMarginMib = 64.0;
+}  // namespace
+
+size_t GpuLayers::plan_bytes(const GgufIndex & ix, const GpuConfig & cfg) {
+    Impl m(ix, cfg, 0.0f);
+    Planner count;
+    m.plan(count, false);
+    return count.off;
+}
+
+double GpuLayers::projected_mib(const GgufIndex & ix, const GpuConfig & cfg) {
+    CK(cudaFree(nullptr));   // creates the context, so its memory is part of "in use"
+    size_t free_b = 0, total_b = 0;
+    CK(cudaMemGetInfo(&free_b, &total_b));
+    const double used = static_cast<double>(total_b - free_b) / 1048576.0;
+    return used + static_cast<double>(plan_bytes(ix, cfg)) / 1048576.0 + kScratchMarginMib;
+}
+
+void GpuLayers::clear_kv() {
+    const size_t unit = p_->cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    for (LayerD & l : p_->L) {
+        if (!l.is_attn) continue;
+        CK(cudaMemset(l.kcache, 0, unit * static_cast<size_t>(p_->cfg.ctx_max)));
+        CK(cudaMemset(l.vcache, 0, unit * static_cast<size_t>(p_->cfg.ctx_max)));
+    }
+    CK(cudaDeviceSynchronize());
+}
+
+size_t GpuLayers::state_bytes(int n_pos) const {
+    const size_t unit = p_->cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    size_t b = 0;
+    for (const LayerD & l : p_->L) {
+        if (l.is_attn) b += 2 * static_cast<size_t>(n_pos) * unit;
+        else b += sizeof(float) * (static_cast<size_t>(kConvCh) * (kConvK - 1) + static_cast<size_t>(kVH) * kDH * kDH);
+    }
+    return b;
+}
+
+namespace {
+// The state file I/O bounces through the pinned h_stage buffer (allocated at load, >= 3 MiB): no pageable cudaMemcpy of
+// large blocks, which made the driver's own staging show up as transient device memory.
+size_t stage_capacity(int t_max) {
+    return std::max(static_cast<size_t>(t_max) * 5120, static_cast<size_t>(48) * 128 * 128) * sizeof(float);
+}
+}  // namespace
+
+void GpuLayers::save_state(int n_pos, const std::function<void(const void *, size_t)> & io) const {
+    if (n_pos < 0 || n_pos > p_->cfg.ctx_max) throw std::runtime_error("save_state: n_pos out of range");
+    CK(cudaDeviceSynchronize());
+    const size_t chunk = stage_capacity(p_->cfg.t_max);
+    uint8_t * buf = reinterpret_cast<uint8_t *>(p_->h_stage);
+    auto put = [&](const void * dev, size_t bytes) {
+        for (size_t o = 0; o < bytes; o += chunk) {
+            const size_t n = std::min(chunk, bytes - o);
+            CK(cudaMemcpy(buf, static_cast<const uint8_t *>(dev) + o, n, cudaMemcpyDeviceToHost));
+            io(buf, n);
+        }
+    };
+    const size_t unit = p_->cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    for (const LayerD & l : p_->L) {
+        if (l.is_attn) {
+            put(l.kcache, static_cast<size_t>(n_pos) * unit);
+            put(l.vcache, static_cast<size_t>(n_pos) * unit);
+        } else {
+            put(l.conv_state, sizeof(float) * kConvCh * (kConvK - 1));
+            put(l.ssm_state, sizeof(float) * kVH * kDH * kDH);
+        }
+    }
+}
+
+void GpuLayers::load_state(int n_pos, const std::function<void(void *, size_t)> & io) {
+    if (n_pos < 0 || n_pos > p_->cfg.ctx_max) throw std::runtime_error("load_state: n_pos out of range");
+    CK(cudaDeviceSynchronize());
+    const size_t chunk = stage_capacity(p_->cfg.t_max);
+    uint8_t * buf = reinterpret_cast<uint8_t *>(p_->h_stage);
+    auto get = [&](void * dev, size_t bytes) {
+        for (size_t o = 0; o < bytes; o += chunk) {
+            const size_t n = std::min(chunk, bytes - o);
+            io(buf, n);
+            CK(cudaMemcpy(static_cast<uint8_t *>(dev) + o, buf, n, cudaMemcpyHostToDevice));
+        }
+    };
+    const size_t unit = p_->cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    for (LayerD & l : p_->L) {
+        if (l.is_attn) {
+            get(l.kcache, static_cast<size_t>(n_pos) * unit);
+            get(l.vcache, static_cast<size_t>(n_pos) * unit);
+        } else {
+            get(l.conv_state, sizeof(float) * kConvCh * (kConvK - 1));
+            get(l.ssm_state, sizeof(float) * kVH * kDH * kDH);
+        }
+    }
+    CK(cudaDeviceSynchronize());
 }
 
 size_t GpuLayers::vram_bytes() const {

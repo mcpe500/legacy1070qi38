@@ -33,5 +33,6 @@ cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * q
 // pos_dev (optional): device pointer to the position, read by the kernel instead of pos0 (needed to replay a CUDA graph).
 cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool iso3, cudaStream_t s, const int * pos_dev = nullptr);
 // Causal GQA attention (24 query heads over 4 kv heads) with FP32 dequantization of the iso3 cache inside the kernel.
+// ctx_max <= 8192: scores in shared memory; above: tiled online softmax (256 positions per tile), up to 131072.
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
                          int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev = nullptr);

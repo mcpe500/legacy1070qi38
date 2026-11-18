@@ -113,6 +113,10 @@ set_target_properties(gpu_layers_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/b
 add_executable(iso3_gpu_test tests/cuda/iso3_gpu_test.cu)
 target_link_libraries(iso3_gpu_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
 
+# Long-context attention (fast vs tiled kernel, tiled vs double reference up to 131072 positions).
+add_executable(attn_long_test tests/cuda/attn_long_test.cu)
+target_link_libraries(attn_long_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
+
 # Prepared ternary path (Ternary Bonsai 2 27B, Q2_0 + Hadamard activations): kernel test against libggml and a double reference.
 add_executable(ternary_test tests/cuda/ternary_test.cu)
 target_include_directories(ternary_test PRIVATE "${LLAMA_SRC}/ggml/include")

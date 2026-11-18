@@ -31,6 +31,8 @@ struct GpuConfig {
     // input is rotated with these sign vectors before its GEMV. Null = K-quant mode (no rotation).
     const float * signs_5120 = nullptr, * signs_6144 = nullptr, * signs_17408 = nullptr;
     bool gdn_v_grouped = false;   // prism.hadamard.gdn_v_grouped: permute the DeltaNet value heads for ssm_out
+    // Device memory cap of the whole process (CUDA context included). The constructor refuses a plan that would exceed it.
+    double vram_budget_mib = 7373.0;
 };
 
 // "all", "none", or a comma list of ggml type ids or names (q4_k, q5_k, q6_k, q3_k, iq4_nl, iq3_s, iq4_xs).
@@ -68,6 +70,19 @@ public:
     // and writes FP32 K and V rows pos0 .. pos0+T-1 into k_host / v_host ([pos][4][256]).
     void mtp_kv(const float * concat_host, int T, int pos0, float * k_host, float * v_host);   // copies the current stream to the host (parity taps)
     void stream_end(float * x_host, int T);
+
+    // Sizing without allocation: device bytes of the arena for this configuration, and the projected device memory of the
+    // process (memory in use now, CUDA context included, plus the arena and the scratch buffers) in MiB.
+    static size_t plan_bytes(const GgufIndex & ix, const GpuConfig & cfg);
+    static double projected_mib(const GgufIndex & ix, const GpuConfig & cfg);
+
+    // ---- State snapshot to/from a file (--state-save / --state-load). Writes, per GPU layer in order, the first n_pos
+    // positions of K and V (attention layers, in the cache format: iso3 400 B or FP32 4 KiB per position) or the conv and
+    // DeltaNet state (DeltaNet layers). `io(ptr, bytes)` writes or reads one contiguous host block. Not for the token loop.
+    void save_state(int n_pos, const std::function<void(const void *, size_t)> & io) const;
+    void load_state(int n_pos, const std::function<void(void *, size_t)> & io);
+    size_t state_bytes(int n_pos) const;
+    void clear_kv();   // zeroes every KV cache of the GPU layers (depth benchmark only)
 
     size_t vram_bytes() const;     // device bytes owned by this object (arena plus the Q8 scratch)
     size_t weight_bytes() const;   // quantized weights and small vectors

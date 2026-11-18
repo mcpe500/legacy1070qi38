@@ -19,20 +19,20 @@
 
 struct EngineConfig {
     std::string gguf;
-    int ctx_max = 4096;          // KV cache positions (hard cap 8192 on the Qwen path; 65536 on the Bonsai ternary
-                                 // path with iso3 KV and the tiled attention kernel above 4096)
+    int ctx_max = 4096;          // KV cache positions (hard cap 8192 on the Qwen path; 131072 on the Bonsai ternary
+                                 // path with iso3 KV and the tiled attention kernel above 8192)
     int t_max = 512;             // largest batch of tokens in one forward call
     int threads = 4;
     double resident_gib = 11.0;  // CPU layers kept resident, in GiB of file bytes (layers beyond it are streamed)
     // Default mode: hybrid. Layers 0 .. gpu_layers-1 run on the GPU (0 = CPU only), iso3 KV cache on the GPU attention
     // layers, Q8_1 + __dp4a for every quantization type that has a kernel (mask below = Q3_K, Q4_K, Q5_K, Q6_K, IQ4_NL,
     // IQ3_S, IQ4_XS; Q8_0 always uses dp4a). The default layer count comes from the VRAM sweep in docs/AFK_STATUS.md.
-    int gpu_layers = 32;
+    int gpu_layers = 32;         // -1 = auto: the largest prefix whose plan fits vram_budget_mib
     // Layer placement mode: -1 = auto (the ctx-aware byte knapsack when the model or the context needs a downshift,
     // else the contiguous prefix), 0 = always the contiguous prefix 0 .. gpu_layers-1, 1 = always the knapsack.
     // gpu_layer_list (sorted, from --gpu-layer-list) overrides both. vram_budget_mib is the cap the knapsack fills.
     int gpu_placement = -1;
-    double vram_budget_mib = 7373.0;
+    double vram_budget_mib = 7373.0;   // device memory cap of the process (CUDA context included), --vram-budget-mib
     std::vector<int> gpu_layer_list;
     bool kv_iso3 = true;
     uint32_t dp4a_mask = (1u << 11) | (1u << 12) | (1u << 13) | (1u << 14) | (1u << 20) | (1u << 21) | (1u << 23);
@@ -89,7 +89,19 @@ public:
     bool has_mtp() const { return mtp_ok_; }
     // First position the MTP attention looks at (the MTP KV below it was not filled when the prefill window is used).
     void set_mtp_kv_start(int p) { mtp_kv_start_ = p < 0 ? 0 : p; }
-    const EngineConfig & config() const { return cfg_; }
+    const EngineConfig & config() const { return cfg_; }   // gpu_layers holds the resolved count (also after auto)
+
+    // ---- Model state to/from a file (--state-save / --state-load): the first n_pos positions of every KV cache (GPU
+    // layers in their VRAM format, CPU layers FP32, MTP layer) and every DeltaNet conv / recurrent state, in layer order.
+    // `io(ptr, bytes)` writes or reads one contiguous block. Called with the engine idle, never in the token loop.
+    void save_state(int n_pos, const std::function<void(const void *, size_t)> & io) const;
+    void load_state(int n_pos, const std::function<void(void *, size_t)> & io);
+    size_t state_bytes(int n_pos) const;
+    // Zeroes every KV cache (GPU and CPU). Depth benchmark only: zero K/V = an empty but full-length attention span.
+    void clear_kv();
+    // Identity of the loaded model file and of the state layout (GPU layer count, KV format): a state file is only
+    // accepted by an engine with the same fingerprint.
+    uint64_t state_fingerprint() const;
 
     // DeltaNet state snapshot and rollback (GPU and CPU layers). With the snapshot on, a forward() of at most kRollT tokens keeps
     // the state from before the call; dn_rollback(keep) leaves the state as if only the first `keep` tokens had been processed.
@@ -127,6 +139,8 @@ private:
     void dn_conv_rec(int di, const LayerW & L, const float * qkv, const float * z, const float * gate, const float * beta, int T,
                      float * out);
     void forward_stream(int T, int pos0);
+    void carve_buffers(Arena & a, int g0, bool roll);   // every host buffer; run on a measuring arena first
+    size_t arena_bytes_need_ = 0;
     // y = W . hadamard(x) for a ternary (PTQ1_0 / Q2_0) weight, else y = W . x. `width` is the input dimension
     // the rotation applies to (5120, 6144 or 17408) and picks the sign vector and the rotated scratch buffer.
     void tmatmul(const QMat & W, const float * x, int64_t T, float * y, int width, uint8_t * act);

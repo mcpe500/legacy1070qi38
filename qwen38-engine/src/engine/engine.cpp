@@ -26,8 +26,15 @@ constexpr int kLayers = 64;
 constexpr int kNH = 24, kNKV = 4, kHD = 256, kRope = 64;
 constexpr int kQW = kNH * kHD;       // 6144 values of q per token
 constexpr int kKVW = kNKV * kHD;     // 1024 values of k (and of v) per token
-constexpr int kMaxCtxStack = 65536;  // ctx_max hard cap: the Bonsai ternary path reaches 64K with iso3 KV; the
-                                        // CPU attention scores live in the arena (not on the stack)
+// ctx_max hard caps. Ternary Bonsai (all weights 1.6-2 bit, every layer can sit in VRAM) reaches 128K positions with the
+// iso3 KV (12.5 KiB per position over 16 attention layers) and the tiled attention kernel above 8192. The Qwen K-quant
+// path keeps 8192: its CPU attention layers hold FP32 KV (8 MiB per position over 8 CPU attention layers at 32 GPU layers).
+constexpr int kMaxCtxTernary = 131072;
+constexpr int kMaxCtxQwen = 8192;
+// Host RAM budget of the brief: 14.2 GB (decimal, = 13.22 GiB). Checked at load against the arena, the resident CPU-layer
+// weights, the mlocked LM head / MTP block and a fixed margin for the process (tokenizer, generator buffers, CUDA pinned).
+constexpr double kHostBudgetBytes = 14.2e9;
+constexpr double kHostMarginBytes = 512.0 * 1024 * 1024;
 constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
 constexpr int kQG = kNH / kNKV;  // 6 query heads share one K/V group: their score and V passes read each row once
 
@@ -70,7 +77,8 @@ inline float sigm(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 }  // namespace
 
 Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
-    if (cfg_.ctx_max > kMaxCtxStack) throw std::runtime_error("ctx_max above " + std::to_string(kMaxCtxStack) + " is not supported");
+    if (cfg_.ctx_max < 16 || cfg_.ctx_max > kMaxCtxTernary)
+        throw std::runtime_error("ctx_max must be in 16 .. " + std::to_string(kMaxCtxTernary));
     qmat_init();
     ix.open(cfg_.gguf);
 
@@ -97,7 +105,6 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
 
     tok.init(ix);
     n_vocab = static_cast<int64_t>(tok.n_vocab());
-    arena_ = std::make_unique<Arena>(static_cast<size_t>(2.0 * kGiB));
     pool_ = std::make_unique<Pool>(cfg_.threads);
 
     tok_embd_ = make_qmat(ix, "token_embd.weight");
@@ -133,6 +140,8 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         gdn_v_grouped_ = ix.u_kv.count("prism.hadamard.gdn_v_grouped") ? ix.u_kv.at("prism.hadamard.gdn_v_grouped") != 0 : false;
         std::fprintf(stderr, "ternary: Hadamard basis (block 1024, explicit signs), gdn_v_grouped=%d\n", gdn_v_grouped_ ? 1 : 0);
     }
+    if (!ternary_mode_ && cfg_.ctx_max > kMaxCtxQwen)
+        throw std::runtime_error("ctx_max above " + std::to_string(kMaxCtxQwen) + " is only supported on the Ternary Bonsai path");
 
     layers_.resize(kLayers);
     for (int il = 0; il < kLayers; ++il) {
@@ -206,9 +215,83 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         if (a < lo[il]) lo[il] = a;
         if (e > hi[il]) hi[il] = e;
     }
+    // ---- GPU layer count and prefill streaming, checked against the VRAM budget before anything is allocated.
+    // --gpu-layers auto (-1) takes the largest contiguous prefix 0 .. n-1 whose plan fits. Prefill streaming needs a
+    // staging buffer plus one FP32 KV layer (ctx_max * 8 KiB: 1 GiB at 128K); when it does not fit, it is turned off.
+    const bool roll = cfg_.mtp_steps > 0 && mtp_ok_;
+    auto gpu_config = [&](int n, bool stream) {
+        GpuConfig gc;
+        gc.n_layers = n;
+        gc.ctx_max = cfg_.ctx_max;
+        gc.t_max = cfg_.t_max;
+        gc.kv_iso3 = cfg_.kv_iso3;
+        gc.dp4a_mask = cfg_.dp4a_mask;
+        gc.stream_prefill = stream;
+        gc.roll_t = roll ? kRollT : 0;
+        gc.use_graph = cfg_.cuda_graph;
+        gc.pin_stream = cfg_.pin_stream;
+        gc.vram_budget_mib = cfg_.vram_budget_mib;
+        if (ternary_mode_) {  // rotated basis: the GPU layers need the sign vectors and the grouped-V flag
+            gc.signs_5120 = signs_5120_;
+            gc.signs_6144 = signs_6144_;
+            gc.signs_17408 = signs_17408_;
+            gc.gdn_v_grouped = gdn_v_grouped_;
+        }
+        return gc;
+    };
+    bool stream_on = false;
+    if (cfg_.gpu_layers != 0) {
+        const bool want_stream = cfg_.stream_min_t > 0;
+        auto fits = [&](int n, bool stream) { return GpuLayers::projected_mib(ix, gpu_config(n, stream)) <= cfg_.vram_budget_mib; };
+        if (cfg_.gpu_layers < 0) {
+            int pick = 0;
+            for (int n = kLayers; n >= 1 && pick == 0; --n) {
+                if (want_stream && n < kLayers && fits(n, true)) { pick = n; stream_on = true; }
+                else if (fits(n, false)) { pick = n; stream_on = false; }
+            }
+            if (pick == 0) throw std::runtime_error("--gpu-layers auto: not even one layer fits the VRAM budget");
+            std::fprintf(stderr, "gpu-layers auto: %d layers fit %.0f MiB at ctx %d (prefill streaming %s)\n", pick,
+                         cfg_.vram_budget_mib, cfg_.ctx_max, stream_on ? "on" : "off");
+            cfg_.gpu_layers = pick;
+        } else {
+            if (cfg_.gpu_layers > kLayers) throw std::runtime_error("--gpu-layers above 64");
+            stream_on = want_stream && cfg_.gpu_layers < kLayers;
+            if (stream_on && !fits(cfg_.gpu_layers, true) && fits(cfg_.gpu_layers, false)) {
+                std::fprintf(stderr, "stream: staging for ctx %d does not fit the VRAM budget, prefill streaming off\n", cfg_.ctx_max);
+                stream_on = false;
+            }
+        }
+    }
+    const int g0 = cfg_.gpu_layers;
+
+    // ---- Host arena, sized from the configuration (measuring pass with the same allocation sequence as the real one).
+    {
+        Arena probe{Arena::Measure{}};
+        carve_buffers(probe, g0, roll);
+        arena_bytes_need_ = probe.used();
+    }
+    size_t locked_bytes = 0;   // LM head + MTP block, mlocked below
+    {
+        const GgufTensor & t = ix.get("output.weight");
+        locked_bytes += t.nbytes;
+        if (mtp_ok_)
+            for (const auto & kv : ix.tensors)
+                if (kv.first.compare(0, 7, "blk.64.") == 0) locked_bytes += kv.second.nbytes;
+    }
+    const double host_fixed = static_cast<double>(arena_bytes_need_) + static_cast<double>(locked_bytes) + kHostMarginBytes;
+    if (host_fixed > kHostBudgetBytes) {
+        char msg[256];
+        std::snprintf(msg, sizeof(msg), "host RAM budget: arena %.0f MiB + locked %.0f MiB + margin exceed 14.2 GB "
+                      "(ctx %d, %d CPU layers): put more layers on the GPU or lower --ctx",
+                      static_cast<double>(arena_bytes_need_) / 1048576.0, static_cast<double>(locked_bytes) / 1048576.0,
+                      cfg_.ctx_max, kLayers - g0);
+        throw std::runtime_error(msg);
+    }
+    // Resident CPU-layer weights fill what is left of the budget (the rest is streamed through the page cache and dropped).
+    const double resident_cap = std::min(cfg_.resident_gib, (kHostBudgetBytes - host_fixed) / kGiB);
+
     double cum = 0;
     n_resident_layers = 0;
-    const int g0 = cfg_.gpu_layers;
     for (int il = 0; il < kLayers; ++il) {
         layers_[il].span_begin = lo[il] / page * page;
         layers_[il].span_end = (hi[il] + page - 1) / page * page;
@@ -217,7 +300,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
             layers_[il].resident = false;
             continue;
         }
-        layers_[il].resident = (cum + gib <= cfg_.resident_gib);
+        layers_[il].resident = (cum + gib <= resident_cap);
         if (layers_[il].resident) { cum += gib; ++n_resident_layers; }
         else streamed_gib += gib;
     }
@@ -244,34 +327,8 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     }
 
     // Static arena: every buffer is carved out here, then the arena is frozen.
-    const size_t Tm = static_cast<size_t>(cfg_.t_max);
-    x_ = arena_->alloc_n<float>(Tm * kHidden);
-    xn_ = arena_->alloc_n<float>(Tm * kHidden);
-    proj_ = arena_->alloc_n<float>(Tm * kHidden);
-    bufA_ = arena_->alloc_n<float>(Tm * 2 * kQW);          // qkv [T][10240] or q+gate [T][12288]
-    bufB_ = arena_->alloc_n<float>(Tm * kInner);           // z
-    if (ternary_mode_) {  // Hadamard-rotated inputs for the ternary GEMVs, one buffer per input width
-        rot5120_ = arena_->alloc_n<float>(Tm * kHidden);
-        rot6144_ = arena_->alloc_n<float>(Tm * kInner);
-        rot17408_ = arena_->alloc_n<float>(Tm * kFFN);
-    }
-    sc_ = arena_->alloc_n<float>(static_cast<size_t>(pool_->size()) * kQG * cfg_.ctx_max);  // attention scores
-    conv_silu_ = arena_->alloc_n<float>(Tm * kConvCh);
-    attn_o_ = arena_->alloc_n<float>(Tm * kInner);
-    alpha_ = arena_->alloc_n<float>(Tm * kVHeads);
-    betar_ = arena_->alloc_n<float>(Tm * kVHeads);
-    gate_ = arena_->alloc_n<float>(Tm * kVHeads);
-    beta_ = arena_->alloc_n<float>(Tm * kVHeads);
-    fg_ = arena_->alloc_n<float>(Tm * kFFN);
-    fu_ = arena_->alloc_n<float>(Tm * kFFN);
-    qbuf_ = arena_->alloc_n<float>(Tm * kQW);
-    kbuf_ = arena_->alloc_n<float>(Tm * kKVW);
-    vbuf_ = arena_->alloc_n<float>(Tm * kKVW);
-    hlast_ = arena_->alloc_n<float>(kHidden);
-    hn_ = arena_->alloc_n<float>(8 * static_cast<size_t>(kHidden));
-    act_ = static_cast<uint8_t *>(arena_->alloc(qmat_act_bytes(12 /* Q4_K -> Q8_K */, kFFN, cfg_.t_max)));
-    rope_cos_ = arena_->alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * (kRope / 2));
-    rope_sin_ = arena_->alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * (kRope / 2));
+    arena_ = std::make_unique<Arena>((arena_bytes_need_ + 4095) / 4096 * 4096);
+    carve_buffers(*arena_, g0, roll);
     {
         // Same theta chain as the old per-call rope lambda (theta = pos, then repeated theta_scale multiplies),
         // so the table values are bit-identical to what std::cos/std::sin produced inline.
@@ -285,50 +342,156 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
             }
         }
     }
-    const bool roll = cfg_.mtp_steps > 0 && mtp_ok_;
-    for (int il = 0; il < kLayers; ++il) {
-        if (layers_[il].is_attn) {
-            kcache_.push_back(arena_->alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
-            vcache_.push_back(arena_->alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
-        } else {
-            conv_state_.push_back(arena_->alloc_n<float>(kConvCh * (kConvK - 1)));
-            ssm_state_.push_back(arena_->alloc_n<float>(kVHeads * kHeadDim * kHeadDim));
-            const bool cpu_layer = il >= g0;  // the GPU layers keep their snapshots in VRAM
-            const size_t R = kRollT;
-            snap_conv_.push_back(roll && cpu_layer ? arena_->alloc_n<float>(kConvCh * (kConvK - 1)) : nullptr);
-            snap_ssm_.push_back(roll && cpu_layer ? arena_->alloc_n<float>(kVHeads * kHeadDim * kHeadDim) : nullptr);
-            sv_qkv_.push_back(roll && cpu_layer ? arena_->alloc_n<float>(R * kConvCh) : nullptr);
-            sv_z_.push_back(roll && cpu_layer ? arena_->alloc_n<float>(R * kInner) : nullptr);
-            sv_gate_.push_back(roll && cpu_layer ? arena_->alloc_n<float>(R * kVHeads) : nullptr);
-            sv_beta_.push_back(roll && cpu_layer ? arena_->alloc_n<float>(R * kVHeads) : nullptr);
-        }
-    }
-    if (mtp_ok_) {  // KV of the MTP attention layer = cache index 16
-        kcache_.push_back(arena_->alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
-        vcache_.push_back(arena_->alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
-    }
     reset();
     arena_->freeze();
 
     if (g0 > 0) {
-        GpuConfig gc;
-        gc.n_layers = g0;
-        gc.ctx_max = cfg_.ctx_max;
-        gc.t_max = cfg_.t_max;
-        gc.kv_iso3 = cfg_.kv_iso3;
-        gc.dp4a_mask = cfg_.dp4a_mask;
-        gc.stream_prefill = cfg_.stream_min_t > 0 && g0 < kLayers;
-        gc.roll_t = roll ? kRollT : 0;
-        gc.use_graph = cfg_.cuda_graph;
-        gc.pin_stream = cfg_.pin_stream;
-        if (ternary_mode_) {  // rotated basis: the GPU layers need the sign vectors and the grouped-V flag
-            gc.signs_5120 = signs_5120_;
-            gc.signs_6144 = signs_6144_;
-            gc.signs_17408 = signs_17408_;
-            gc.gdn_v_grouped = gdn_v_grouped_;
-        }
+        const GpuConfig gc = gpu_config(g0, stream_on);
         gpu_ = std::make_unique<GpuLayers>(ix, gc, eps_);
         for (int il = 0; il < g0; ++il) hint_layer(il, false);  // weights are in VRAM now: drop their file pages
+        const double used = vram_used_mib();
+        if (used > cfg_.vram_budget_mib) {
+            char msg[160];
+            std::snprintf(msg, sizeof(msg), "device memory in use %.0f MiB after load exceeds the budget of %.0f MiB", used, cfg_.vram_budget_mib);
+            throw std::runtime_error(msg);
+        }
+    }
+}
+
+void Engine::clear_kv() {
+    if (gpu_) gpu_->clear_kv();
+    for (size_t i = 0; i < kcache_.size(); ++i) {
+        if (kcache_[i]) std::memset(kcache_[i], 0, sizeof(float) * static_cast<size_t>(cfg_.ctx_max) * kKVW);
+        if (vcache_[i]) std::memset(vcache_[i], 0, sizeof(float) * static_cast<size_t>(cfg_.ctx_max) * kKVW);
+    }
+}
+
+size_t Engine::state_bytes(int n_pos) const {
+    size_t b = gpu_ ? gpu_->state_bytes(n_pos) : 0;
+    for (int il = std::max(cfg_.gpu_layers, 0); il < kLayers; ++il) {
+        if (layers_[il].is_attn) b += 2 * sizeof(float) * static_cast<size_t>(n_pos) * kKVW;
+        else b += sizeof(float) * (static_cast<size_t>(kConvCh) * (kConvK - 1) + static_cast<size_t>(kVHeads) * kHeadDim * kHeadDim);
+    }
+    if (mtp_ok_) b += 2 * sizeof(float) * static_cast<size_t>(n_pos) * kKVW;
+    return b;
+}
+
+void Engine::save_state(int n_pos, const std::function<void(const void *, size_t)> & io) const {
+    if (n_pos < 0 || n_pos > cfg_.ctx_max) throw std::runtime_error("save_state: n_pos out of range");
+    if (gpu_) gpu_->save_state(n_pos, io);
+    const size_t kv = sizeof(float) * static_cast<size_t>(n_pos) * kKVW;
+    for (int il = std::max(cfg_.gpu_layers, 0); il < kLayers; ++il) {
+        if (layers_[il].is_attn) {
+            io(kcache_[il / 4], kv);
+            io(vcache_[il / 4], kv);
+        } else {
+            const int di = (il / 4) * 3 + il % 4;
+            io(conv_state_[di], sizeof(float) * kConvCh * (kConvK - 1));
+            io(ssm_state_[di], sizeof(float) * kVHeads * kHeadDim * kHeadDim);
+        }
+    }
+    if (mtp_ok_) {
+        io(kcache_[16], kv);
+        io(vcache_[16], kv);
+    }
+}
+
+void Engine::load_state(int n_pos, const std::function<void(void *, size_t)> & io) {
+    if (n_pos < 0 || n_pos > cfg_.ctx_max) throw std::runtime_error("load_state: n_pos out of range");
+    if (gpu_) gpu_->load_state(n_pos, io);
+    const size_t kv = sizeof(float) * static_cast<size_t>(n_pos) * kKVW;
+    for (int il = std::max(cfg_.gpu_layers, 0); il < kLayers; ++il) {
+        if (layers_[il].is_attn) {
+            io(kcache_[il / 4], kv);
+            io(vcache_[il / 4], kv);
+        } else {
+            const int di = (il / 4) * 3 + il % 4;
+            io(conv_state_[di], sizeof(float) * kConvCh * (kConvK - 1));
+            io(ssm_state_[di], sizeof(float) * kVHeads * kHeadDim * kHeadDim);
+        }
+    }
+    if (mtp_ok_) {
+        io(kcache_[16], kv);
+        io(vcache_[16], kv);
+    }
+}
+
+uint64_t Engine::state_fingerprint() const {
+    // FNV-1a over the tensor table (name, type, offset, size) and the state layout.
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](const void * p, size_t n) {
+        const uint8_t * b = static_cast<const uint8_t *>(p);
+        for (size_t i = 0; i < n; ++i) { h ^= b[i]; h *= 1099511628211ull; }
+    };
+    std::vector<std::string> names;
+    names.reserve(ix.tensors.size());
+    for (const auto & kv : ix.tensors) names.push_back(kv.first);
+    std::sort(names.begin(), names.end());
+    for (const std::string & n : names) {
+        const GgufTensor & t = ix.tensors.at(n);
+        mix(n.data(), n.size());
+        const int64_t v[3] = {static_cast<int64_t>(t.type), static_cast<int64_t>(t.offset), static_cast<int64_t>(t.nbytes)};
+        mix(v, sizeof(v));
+    }
+    const int32_t layout[4] = {cfg_.gpu_layers, cfg_.kv_iso3 ? 1 : 0, mtp_ok_ ? 1 : 0, ternary_mode_ ? 1 : 0};
+    mix(layout, sizeof(layout));
+    return h;
+}
+
+// Carves every host buffer out of `a` (also run on a measuring arena to size the real one). Clears the per-layer vectors first.
+void Engine::carve_buffers(Arena & a, int g0, bool roll) {
+    kcache_.clear(); vcache_.clear(); conv_state_.clear(); ssm_state_.clear();
+    snap_conv_.clear(); snap_ssm_.clear(); sv_qkv_.clear(); sv_z_.clear(); sv_gate_.clear(); sv_beta_.clear();
+    const size_t Tm = static_cast<size_t>(cfg_.t_max);
+    x_ = a.alloc_n<float>(Tm * kHidden);
+    xn_ = a.alloc_n<float>(Tm * kHidden);
+    proj_ = a.alloc_n<float>(Tm * kHidden);
+    bufA_ = a.alloc_n<float>(Tm * 2 * kQW);          // qkv [T][10240] or q+gate [T][12288]
+    bufB_ = a.alloc_n<float>(Tm * kInner);           // z
+    if (ternary_mode_) {  // Hadamard-rotated inputs for the ternary GEMVs, one buffer per input width
+        rot5120_ = a.alloc_n<float>(Tm * kHidden);
+        rot6144_ = a.alloc_n<float>(Tm * kInner);
+        rot17408_ = a.alloc_n<float>(Tm * kFFN);
+    }
+    sc_ = a.alloc_n<float>(static_cast<size_t>(pool_->size()) * kQG * cfg_.ctx_max);  // attention scores
+    conv_silu_ = a.alloc_n<float>(Tm * kConvCh);
+    attn_o_ = a.alloc_n<float>(Tm * kInner);
+    alpha_ = a.alloc_n<float>(Tm * kVHeads);
+    betar_ = a.alloc_n<float>(Tm * kVHeads);
+    gate_ = a.alloc_n<float>(Tm * kVHeads);
+    beta_ = a.alloc_n<float>(Tm * kVHeads);
+    fg_ = a.alloc_n<float>(Tm * kFFN);
+    fu_ = a.alloc_n<float>(Tm * kFFN);
+    qbuf_ = a.alloc_n<float>(Tm * kQW);
+    kbuf_ = a.alloc_n<float>(Tm * kKVW);
+    vbuf_ = a.alloc_n<float>(Tm * kKVW);
+    hlast_ = a.alloc_n<float>(kHidden);
+    hn_ = a.alloc_n<float>(8 * static_cast<size_t>(kHidden));
+    act_ = static_cast<uint8_t *>(a.alloc(qmat_act_bytes(12 /* Q4_K -> Q8_K */, kFFN, cfg_.t_max)));
+    rope_cos_ = a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * (kRope / 2));
+    rope_sin_ = a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * (kRope / 2));
+    for (int il = 0; il < kLayers; ++il) {
+        // Host state only for the layers that run on the CPU: a GPU layer keeps its KV / DeltaNet state in VRAM, and an
+        // FP32 KV layer costs ctx_max * 8 KiB here (1 GiB at 128K). Null keeps the per-layer indexing (ai = il / 4).
+        const bool cpu_layer = il >= g0;
+        if (layers_[il].is_attn) {
+            kcache_.push_back(cpu_layer ? a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW) : nullptr);
+            vcache_.push_back(cpu_layer ? a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW) : nullptr);
+        } else {
+            conv_state_.push_back(cpu_layer ? a.alloc_n<float>(kConvCh * (kConvK - 1)) : nullptr);
+            ssm_state_.push_back(cpu_layer ? a.alloc_n<float>(kVHeads * kHeadDim * kHeadDim) : nullptr);
+            const size_t R = kRollT;
+            snap_conv_.push_back(roll && cpu_layer ? a.alloc_n<float>(kConvCh * (kConvK - 1)) : nullptr);
+            snap_ssm_.push_back(roll && cpu_layer ? a.alloc_n<float>(kVHeads * kHeadDim * kHeadDim) : nullptr);
+            sv_qkv_.push_back(roll && cpu_layer ? a.alloc_n<float>(R * kConvCh) : nullptr);
+            sv_z_.push_back(roll && cpu_layer ? a.alloc_n<float>(R * kInner) : nullptr);
+            sv_gate_.push_back(roll && cpu_layer ? a.alloc_n<float>(R * kVHeads) : nullptr);
+            sv_beta_.push_back(roll && cpu_layer ? a.alloc_n<float>(R * kVHeads) : nullptr);
+        }
+    }
+    if (mtp_ok_) {  // KV of the MTP attention layer = cache index 16
+        kcache_.push_back(a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
+        vcache_.push_back(a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
     }
 }
 
@@ -345,8 +508,8 @@ double Engine::vram_used_mib() const {
 
 void Engine::reset() {
     if (gpu_) gpu_->reset();
-    for (float * p : conv_state_) std::memset(p, 0, sizeof(float) * kConvCh * (kConvK - 1));
-    for (float * p : ssm_state_) std::memset(p, 0, sizeof(float) * kVHeads * kHeadDim * kHeadDim);
+    for (float * p : conv_state_) if (p) std::memset(p, 0, sizeof(float) * kConvCh * (kConvK - 1));
+    for (float * p : ssm_state_) if (p) std::memset(p, 0, sizeof(float) * kVHeads * kHeadDim * kHeadDim);
 }
 
 void Engine::hint_layer(int il, bool willneed) {
@@ -574,7 +737,10 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
 
     const float kq_scale = 1.0f / std::sqrt(static_cast<float>(kHD));
     pool_->parallel_for(static_cast<int64_t>(T) * kNKV, 1, [&](int64_t b, int64_t e) {
-        float (*sc)[kMaxCtxStack] = reinterpret_cast<float (*)[kMaxCtxStack]>(sc_ + static_cast<size_t>(pool_->slot()) * kQG * kMaxCtxStack);
+        // Score slab of this pool slot: [kQG][ctx_max]. The stride is ctx_max, the size it was allocated with.
+        const size_t C = static_cast<size_t>(cfg_.ctx_max);
+        float * const sc0 = sc_ + static_cast<size_t>(pool_->slot()) * kQG * C;
+        auto sc = [sc0, C](int hh) { return sc0 + static_cast<size_t>(hh) * C; };
         for (int64_t idx = b; idx < e; ++idx) {
             const int t = static_cast<int>(idx / kNKV), g = static_cast<int>(idx % kNKV);
             const int n = pos0 + t + 1;  // causal: positions j0 .. pos0+t (j0 > 0 only for the MTP layer with a prefill window)
@@ -588,17 +754,17 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
             }
             // Score pass: every K row is read once for all six query heads of the group.
             for (int j = 0; j < j0; ++j)
-                for (int hh = 0; hh < kQG; ++hh) sc[hh][j] = 0.0f;
+                for (int hh = 0; hh < kQG; ++hh) sc(hh)[j] = 0.0f;
             for (int j = j0; j < n; ++j) {
                 const float * krow = kc + static_cast<int64_t>(j) * kKVW + g * kHD;
                 for (int hh = 0; hh < kQG; ++hh) {
                     const float s = dotf(q[hh], krow, kHD) * kq_scale;
-                    sc[hh][j] = s;
+                    sc(hh)[j] = s;
                     if (s > mx[hh]) mx[hh] = s;
                 }
             }
             for (int hh = 0; hh < kQG; ++hh)
-                for (int j = j0; j < n; ++j) { sc[hh][j] = std::exp(sc[hh][j] - mx[hh]); sum[hh] += sc[hh][j]; }
+                for (int j = j0; j < n; ++j) { sc(hh)[j] = std::exp(sc(hh)[j] - mx[hh]); sum[hh] += sc(hh)[j]; }
             float o[kQG][kHD];
             for (int hh = 0; hh < kQG; ++hh) {
                 for (int d = 0; d < kHD; ++d) o[hh][d] = 0.0f;
@@ -607,7 +773,7 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
             for (int j = j0; j < n; ++j) {
                 const float * v = vc + static_cast<int64_t>(j) * kKVW + g * kHD;
                 for (int hh = 0; hh < kQG; ++hh) {
-                    const float pj = sc[hh][j] * (1.0f / sum[hh]);
+                    const float pj = sc(hh)[j] * (1.0f / sum[hh]);
                     for (int d = 0; d < kHD; ++d) o[hh][d] += pj * v[d];
                 }
             }

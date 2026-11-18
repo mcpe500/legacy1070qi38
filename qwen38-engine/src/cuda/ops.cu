@@ -280,6 +280,88 @@ __global__ void attention_kernel(const float * qbuf, const float * qfull, const 
     attn_o[static_cast<int64_t>(t) * (NH * HD) + h * HD + tid] = o * sigm_f(gate);
 }
 
+constexpr int kFastCtxMax = 8192;   // largest ctx_max of the shared-memory score kernel
+
+// Long-context attention (ctx_max > 8192): the scores no longer fit in shared memory (131072 floats = 512 KiB),
+// so K/V is streamed in tiles of kTile positions and the softmax runs online (running max, running sum,
+// accumulator rescaled per tile). Shared memory stays at a few KiB, far under the 48 KiB sm_61 limit. The
+// accumulator is normalized once at the end. Same result as the fast path up to float summation order.
+constexpr int kTile = 256;   // positions per tile: 8 warps score one position each, 1 KiB of scores
+
+template <bool ISO3>
+__global__ void attention_kernel_tiled(const float * qbuf, const float * qfull, const uint8_t * kc, const uint8_t * vc,
+                                       float * attn_o, int pos0, const int * pos_dev) {
+    if (pos_dev) pos0 = *pos_dev;
+    __shared__ float qs[HD], red[8], tsc[kTile];
+    const int t = blockIdx.x / NH, h = blockIdx.x % NH, g = h / (NH / NKV);
+    const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
+    const int n = pos0 + t + 1;
+    qs[tid] = qbuf[static_cast<int64_t>(t) * (NH * HD) + h * HD + tid];
+    __syncthreads();
+    const float kq_scale = 1.0f / sqrtf(static_cast<float>(HD));
+
+    float m = -INFINITY, l = 0.0f, o = 0.0f;
+    for (int j0 = 0; j0 < n; j0 += kTile) {
+        const int nt = min(kTile, n - j0);
+        for (int w = warp; w < nt; w += 8) {   // one warp scores one position of the tile
+            const int j = j0 + w;
+            float acc = 0.0f;
+            if (!ISO3) {
+                const float4 * k4 = reinterpret_cast<const float4 *>(reinterpret_cast<const float *>(kc) +
+                                                                      static_cast<int64_t>(j) * (NKV * HD) + g * HD + lane * 8);
+                const float4 a = k4[0], b = k4[1];
+                acc = qs[lane * 8 + 0] * a.x + qs[lane * 8 + 1] * a.y + qs[lane * 8 + 2] * a.z + qs[lane * 8 + 3] * a.w +
+                      qs[lane * 8 + 4] * b.x + qs[lane * 8 + 5] * b.y + qs[lane * 8 + 6] * b.z + qs[lane * 8 + 7] * b.w;
+            } else {
+                const uint8_t * kb = kc + (static_cast<int64_t>(j) * 8 + g * 2) * 50;
+#pragma unroll
+                for (int hf = 0; hf < 2; ++hf) {
+                    const uint8_t * b = kb + hf * 50;
+                    float r[4];
+                    iso3_group(b, lane, r);
+                    const float nm = iso3_norm(b);
+                    const int base = hf * 128 + 4 * lane;
+                    acc += qs[base] * (r[0] * nm) + qs[base + 1] * (r[1] * nm) + qs[base + 2] * (r[2] * nm) + qs[base + 3] * (r[3] * nm);
+                }
+            }
+            acc = warp_sum(acc);
+            if (lane == 0) tsc[w] = acc * kq_scale;
+        }
+        __syncthreads();
+        float tmx = -INFINITY;
+        for (int j = tid; j < nt; j += 256) tmx = fmaxf(tmx, tsc[j]);
+        tmx = block_max(tmx, red);
+        const float mn = fmaxf(m, tmx);
+        float ts = 0.0f;
+        for (int j = tid; j < nt; j += 256) {
+            const float e = expf(tsc[j] - mn);
+            tsc[j] = e;
+            ts += e;
+        }
+        ts = block_sum(ts, red);
+        __syncthreads();   // every tsc[j] is final before any thread reads the whole tile
+        const float corr = (m == -INFINITY) ? 0.0f : expf(m - mn);
+        l = l * corr + ts;
+        o *= corr;
+        m = mn;
+        if (!ISO3) {
+            const float * vf = reinterpret_cast<const float *>(vc);
+            for (int j = 0; j < nt; ++j) o += tsc[j] * vf[static_cast<int64_t>(j0 + j) * (NKV * HD) + g * HD + tid];
+        } else {
+            const int grp = tid >> 2, c = tid & 3, hf = grp >> 5, gi = grp & 31;
+            for (int j = 0; j < nt; ++j) {
+                const uint8_t * b = vc + (static_cast<int64_t>(j0 + j) * 8 + g * 2 + hf) * 50;
+                float r[4];
+                iso3_group(b, gi, r);
+                o += tsc[j] * (r[c] * iso3_norm(b));
+            }
+        }
+        __syncthreads();   // tsc is rewritten by the next tile
+    }
+    const float gate = qfull[static_cast<int64_t>(t) * (NH * 2 * HD) + h * 2 * HD + HD + tid];
+    attn_o[static_cast<int64_t>(t) * (NH * HD) + h * HD + tid] = o * (1.0f / l) * sigm_f(gate);
+}
+
 }  // namespace
 
 cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s) {
@@ -339,8 +421,21 @@ cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * q
 }
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
                          int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev) {
-    const size_t smem = static_cast<size_t>(ctx_max) * sizeof(float);
     const dim3 grid(T * NH);
+    // Up to 8192 positions the scores fit in dynamic shared memory (32 KiB of the 48 KiB sm_61 limit) and the original
+    // kernel runs unchanged (the Qwen path is bit-identical to before). Above that the tiled online-softmax kernel takes
+    // over (ctx_max up to 131072, Bonsai path).
+    if (ctx_max > kFastCtxMax) {
+        if (iso3) {
+            attention_kernel_tiled<true><<<grid, 256, 0, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
+                                                              static_cast<const uint8_t *>(vcache), attn_o, pos0, pos_dev);
+        } else {
+            attention_kernel_tiled<false><<<grid, 256, 0, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
+                                                               static_cast<const uint8_t *>(vcache), attn_o, pos0, pos_dev);
+        }
+        return cudaGetLastError();
+    }
+    const size_t smem = static_cast<size_t>(ctx_max) * sizeof(float);
     if (iso3) {
         attention_kernel<true><<<grid, 256, smem, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
                                                        static_cast<const uint8_t *>(vcache), attn_o, pos0, pos_dev);

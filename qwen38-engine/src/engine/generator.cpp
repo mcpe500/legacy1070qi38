@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 
 #include "arena.hpp"
@@ -240,6 +242,12 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
     }
     st.prefill_s = secs(t_start, Clock::now());
     cached_.assign(prompt.begin(), prompt.end());   // fed tokens; extended below as tokens are fed
+    if (gp.prefill_only) {   // the state holds the prompt; last_h_ (= hprev) is the h row of position n_prompt-1
+        st.finish = "prefill";
+        have_h_ = D > 0;
+        guard.ok = true;
+        return;
+    }
 
     if (gp.capture_logits) gp.capture_logits->assign(logits.begin(), logits.begin() + V);
     sampler_.reset(gp.sp, prompt.data(), prompt.size());
@@ -424,4 +432,88 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
     st.decode_s = secs(t_dec, Clock::now());
     if (D == 0) have_h_ = false;
     guard.ok = true;
+}
+
+// ---- state file --------------------------------------------------------------------------------------------------------
+namespace {
+constexpr char kStateMagic[8] = {'Q', '3', '8', 'S', 'T', 'A', 'T', 'E'};
+constexpr uint32_t kStateVersion = 1;
+struct StateHeader {
+    char magic[8];
+    uint32_t version;
+    uint32_t n_pos;           // cached tokens = positions 0 .. n_pos-1 of every cache
+    uint64_t fingerprint;     // Engine::state_fingerprint() of the writer
+    uint64_t payload_bytes;   // Engine::state_bytes(n_pos)
+    int32_t mtp_start;
+    uint32_t have_h;          // 1: a 5120-float h row follows the tokens
+};
+struct FileCloser { void operator()(std::FILE * f) const { if (f) std::fclose(f); } };
+}  // namespace
+
+size_t Generator::save_state(const std::string & path) const {
+    if (cached_.empty()) throw std::runtime_error("state-save: nothing to save (empty cache)");
+    const std::string tmp = path + ".tmp";
+    std::unique_ptr<std::FILE, FileCloser> f(std::fopen(tmp.c_str(), "wb"));
+    if (!f) throw std::runtime_error("state-save: cannot open " + tmp);
+    std::vector<char> vbuf(8u << 20);
+    std::setvbuf(f.get(), vbuf.data(), _IOFBF, vbuf.size());
+    StateHeader h{};
+    std::memcpy(h.magic, kStateMagic, 8);
+    h.version = kStateVersion;
+    h.n_pos = static_cast<uint32_t>(cached_.size());
+    h.fingerprint = eng_.state_fingerprint();
+    h.payload_bytes = eng_.state_bytes(static_cast<int>(cached_.size()));
+    h.mtp_start = mtp_start_;
+    h.have_h = have_h_ ? 1 : 0;
+    auto put = [&](const void * p, size_t n) {
+        if (n && std::fwrite(p, 1, n, f.get()) != n) throw std::runtime_error("state-save: write failed (disk full?)");
+    };
+    put(&h, sizeof(h));
+    put(cached_.data(), cached_.size() * sizeof(int32_t));
+    if (have_h_) put(last_h_.data(), last_h_.size() * sizeof(float));
+    size_t moved = 0;
+    eng_.save_state(static_cast<int>(cached_.size()), [&](const void * p, size_t n) { put(p, n); moved += n; });
+    if (moved != h.payload_bytes) throw std::runtime_error("state-save: payload size mismatch");
+    if (std::fflush(f.get()) != 0) throw std::runtime_error("state-save: flush failed");
+    f.reset();
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) throw std::runtime_error("state-save: rename to " + path + " failed");
+    return moved;
+}
+
+size_t Generator::load_state(const std::string & path) {
+    std::unique_ptr<std::FILE, FileCloser> f(std::fopen(path.c_str(), "rb"));
+    if (!f) throw std::runtime_error("state-load: cannot open " + path);
+    std::vector<char> vbuf(8u << 20);
+    std::setvbuf(f.get(), vbuf.data(), _IOFBF, vbuf.size());
+    auto get = [&](void * p, size_t n) {
+        if (n && std::fread(p, 1, n, f.get()) != n) throw std::runtime_error("state-load: file is truncated");
+    };
+    StateHeader h{};
+    get(&h, sizeof(h));
+    if (std::memcmp(h.magic, kStateMagic, 8) != 0) throw std::runtime_error("state-load: not a state file");
+    if (h.version != kStateVersion) throw std::runtime_error("state-load: unsupported version " + std::to_string(h.version));
+    if (h.fingerprint != eng_.state_fingerprint())
+        throw std::runtime_error("state-load: the file was written by a different model or layout (model file, --gpu-layers, --kv)");
+    const EngineConfig & cfg = eng_.config();
+    if (h.n_pos < 1 || static_cast<int>(h.n_pos) + 1 >= cfg.ctx_max)
+        throw std::runtime_error("state-load: " + std::to_string(h.n_pos) + " saved positions do not fit --ctx " + std::to_string(cfg.ctx_max));
+    if (h.payload_bytes != eng_.state_bytes(static_cast<int>(h.n_pos))) throw std::runtime_error("state-load: payload size mismatch");
+    if (h.have_h > 1 || (h.have_h && !eng_.has_mtp())) throw std::runtime_error("state-load: bad MTP row flag");
+    std::vector<int32_t> toks(h.n_pos);
+    get(toks.data(), toks.size() * sizeof(int32_t));
+    for (int32_t t : toks)
+        if (t < 0 || t >= eng_.n_vocab) throw std::runtime_error("state-load: token id out of range");
+    if (h.have_h) get(last_h_.data(), last_h_.size() * sizeof(float));
+    cached_.clear();
+    have_h_ = false;
+    eng_.reset();
+    size_t moved = 0;
+    eng_.load_state(static_cast<int>(h.n_pos), [&](void * p, size_t n) { get(p, n); moved += n; });
+    if (std::fgetc(f.get()) != EOF) throw std::runtime_error("state-load: trailing bytes after the payload");
+    cached_ = std::move(toks);
+    cached_.reserve(static_cast<size_t>(cfg.ctx_max) + 8);
+    have_h_ = h.have_h != 0;
+    mtp_start_ = h.mtp_start;
+    eng_.set_mtp_kv_start(mtp_start_);
+    return moved;
 }
