@@ -294,6 +294,23 @@ cudaError_t op_silu_mul(float * g, const float * u, int64_t n, cudaStream_t s) {
     silu_mul_kernel<<<static_cast<unsigned>((n + 255) / 256), 256, 0, s>>>(g, u, n);
     return cudaGetLastError();
 }
+namespace {
+// One token row: the 48 value heads of 128 values move from v to 3*(v%16) + v/16.
+__global__ void gdn_v_permute_kernel(const float * __restrict__ src, float * __restrict__ dst, int T) {
+    const int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= static_cast<int64_t>(T) * 48 * 128) return;
+    const int64_t t = i / (48 * 128), r = i % (48 * 128);
+    const int v = static_cast<int>(r / 128), d = static_cast<int>(r % 128);
+    dst[static_cast<int64_t>(t) * 48 * 128 + static_cast<int64_t>(3 * (v % 16) + v / 16) * 128 + d] = src[i];
+}
+}  // namespace
+
+cudaError_t op_gdn_v_permute(const float * src, float * dst, int T, cudaStream_t s) {
+    const int64_t n = static_cast<int64_t>(T) * 48 * 128;
+    gdn_v_permute_kernel<<<static_cast<unsigned>((n + 255) / 256), 256, 0, s>>>(src, dst, T);
+    return cudaGetLastError();
+}
+
 cudaError_t op_dn_prep(const float * alpha, const float * beta_raw, const float * dt_bias, const float * ssm_a, float * gate,
                        float * beta, int T, cudaStream_t s) {
     const int n = T * VH;

@@ -26,11 +26,11 @@ find_library(GGML_CPU_LIB ggml-cpu PATHS "${LLAMA_BUILD}/bin" REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 
 add_library(gguf_index STATIC src/packer/gguf_index.cpp)
-target_include_directories(gguf_index PUBLIC src/packer "${LLAMA_SRC}/ggml/include")
+target_include_directories(gguf_index PUBLIC src/packer src/common "${LLAMA_SRC}/ggml/include")
 target_link_libraries(gguf_index PUBLIC ${GGML_LIB} ${GGML_BASE_LIB})
 
-add_library(cpu_ref STATIC src/cpu/cpu_ops.cpp src/cpu/dn_layer.cpp)
-target_include_directories(cpu_ref PUBLIC src/cpu src/packer "${LLAMA_SRC}/ggml/include")
+add_library(cpu_ref STATIC src/cpu/cpu_ops.cpp src/cpu/dn_layer.cpp src/cpu/ternary_cpu.cpp)
+target_include_directories(cpu_ref PUBLIC src/cpu src/common src/packer "${LLAMA_SRC}/ggml/include")
 target_link_libraries(cpu_ref PUBLIC gguf_index ${GGML_LIB} ${GGML_BASE_LIB})
 
 add_executable(layer01_parity tests/layer01_parity.cpp)
@@ -48,12 +48,12 @@ target_link_libraries(dump_ref_tensors PRIVATE ${LLAMA_COMMON_LIB} ${LLAMA_LIB} 
 set_target_properties(dump_ref_tensors PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
 
 # Stage 2 engine: CPU forward, tokenizer, static arena, streaming residency.
-add_library(qmat STATIC src/cpu/qmat.cpp src/cpu/mt_dot.cpp)
+add_library(qmat STATIC src/cpu/qmat.cpp src/cpu/mt_dot.cpp src/cpu/ternary_cpu.cpp)
 target_include_directories(qmat PUBLIC src/cpu src/packer src/common "${LLAMA_SRC}/ggml/include")
 target_link_libraries(qmat PUBLIC gguf_index ${GGML_CPU_LIB} ${GGML_LIB} ${GGML_BASE_LIB} pthread)
 
 # Multi-token W4A8 kernel self-test (Point A): mt_dot vs ggml vec_dot on random quantized blocks.
-add_executable(mt_dot_test tests/mt_dot_test.cpp src/cpu/mt_dot.cpp src/cpu/qmat.cpp)
+add_executable(mt_dot_test tests/mt_dot_test.cpp src/cpu/mt_dot.cpp src/cpu/qmat.cpp src/cpu/ternary_cpu.cpp)
 target_include_directories(mt_dot_test PRIVATE src/cpu src/common src/packer "${LLAMA_SRC}/ggml/include")
 target_link_libraries(mt_dot_test PRIVATE gguf_index ${GGML_CPU_LIB} ${GGML_LIB} ${GGML_BASE_LIB} pthread)
 

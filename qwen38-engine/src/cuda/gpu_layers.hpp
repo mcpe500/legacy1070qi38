@@ -27,6 +27,10 @@ struct GpuConfig {
     bool use_graph = false;
     // Streamed prefill: register the CPU-layer weights of the mmap as pinned memory and overlap upload with compute.
     bool pin_stream = true;
+    // Ternary Bonsai mode (PTQ1_0 type 143 / Q2_0 type 42 weights in the Hadamard-rotated basis): every projected
+    // input is rotated with these sign vectors before its GEMV. Null = K-quant mode (no rotation).
+    const float * signs_5120 = nullptr, * signs_6144 = nullptr, * signs_17408 = nullptr;
+    bool gdn_v_grouped = false;   // prism.hadamard.gdn_v_grouped: permute the DeltaNet value heads for ssm_out
 };
 
 // "all", "none", or a comma list of ggml type ids or names (q4_k, q5_k, q6_k, q3_k, iq4_nl, iq3_s, iq4_xs).

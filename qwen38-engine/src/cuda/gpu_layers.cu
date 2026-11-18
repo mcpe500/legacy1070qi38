@@ -19,6 +19,8 @@
 #include "gemv.cuh"
 #include "ops.cuh"
 #include "q8_gemv.cuh"
+#include "ternary_gemv.cuh"
+#include "ternary_spec.hpp"
 
 #define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) \
     throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(e_) + " at " + __FILE__ + ":" + std::to_string(__LINE__)); } while (0)
@@ -75,6 +77,11 @@ struct GpuLayers::Impl {
     size_t arena_bytes = 0, weights = 0, kv = 0;
     Q8Scratch q8;
     ActQ8 act;  // Q8_1 activations of the current GEMV input
+    const float * act_src = nullptr;  // buffer `act` was quantized from (rotated or plain)
+    bool tmode = false;               // any weight of the GPU layers is ternary (PTQ1_0 / Q2_0)
+    const float * sgn[3] = {nullptr, nullptr, nullptr};   // device sign vectors for widths 5120 / 6144 / 17408
+    float * xr5120 = nullptr, *xr6144 = nullptr, *xr17408 = nullptr;  // rotated activations [t_max][width]
+    float * xr_of(int sidx) const { return sidx == 0 ? xr5120 : (sidx == 1 ? xr6144 : xr17408); }
     float * h_stage = nullptr;  // pinned staging buffer
     std::vector<LayerD> L;
     // scratch
@@ -157,6 +164,17 @@ struct GpuLayers::Impl {
         const GgufTensor & t = ix.get(name);
         if (t.ne[2] != 1 || t.ne[3] != 1) throw std::runtime_error("not a matrix: " + name);
         const int type = static_cast<int>(t.type);
+        if (ternary::is_ternary(type)) {  // PTQ1_0 / Q2_0: decoded by the ternary dp4a kernels, no ggml row size
+            const size_t rb = type == ternary::kTypePtq1_0
+                                  ? static_cast<size_t>(t.ne[0] / ternary::kPtqGroup) * ternary::kPtqGroupBytes
+                                  : static_cast<size_t>(t.ne[0] / ternary::kQ2_0Block) * ternary::kQ2_0BlockBytes;
+            if (static_cast<int64_t>(t.nbytes) != static_cast<int64_t>(rb) * t.ne[1]) throw std::runtime_error("byte size mismatch in " + name);
+            if (lazy_plan) { lazy_max = std::max(lazy_max, static_cast<size_t>(t.nbytes)); return WMat{nullptr, type, t.ne[0], t.ne[1], &t}; }
+            uint8_t * d = pl.take<uint8_t>(t.nbytes);
+            if (upload) upload_tensor(d, t);
+            weights += t.nbytes;
+            return WMat{d, type, t.ne[0], t.ne[1], nullptr};
+        }
         if (!gemv_fp32_supported(type)) throw std::runtime_error("unsupported quantization in " + name + ": type " + std::to_string(type));
         if (static_cast<int64_t>(t.nbytes) != gemv_row_bytes(type, t.ne[0]) * t.ne[1]) throw std::runtime_error("byte size mismatch in " + name);
         if (lazy_plan) {
@@ -297,6 +315,23 @@ struct GpuLayers::Impl {
         kproj = pl.take<float>(Tm * kKVW);
         kout = pl.take<float>(Tm * kKVW);
         vproj = pl.take<float>(Tm * kKVW);
+        if (cfg.signs_5120) {  // Ternary Bonsai mode: sign vectors plus one rotated activation buffer per width
+            tmode = true;
+            if (upload) ternary_ptq1_init();  // constant-memory upload, never inside a graph capture
+            const size_t Tm2 = static_cast<size_t>(cfg.t_max);
+            xr5120 = pl.take<float>(Tm2 * kHidden);
+            xr6144 = pl.take<float>(Tm2 * kInner);
+            xr17408 = pl.take<float>(Tm2 * kFFN);
+            sgn[0] = pl.take<float>(kHidden);
+            sgn[1] = pl.take<float>(kInner);
+            sgn[2] = pl.take<float>(kFFN);
+            if (upload) {
+                CK(cudaMemcpy(const_cast<float *>(sgn[0]), cfg.signs_5120, sizeof(float) * kHidden, cudaMemcpyHostToDevice));
+                CK(cudaMemcpy(const_cast<float *>(sgn[1]), cfg.signs_6144, sizeof(float) * kInner, cudaMemcpyHostToDevice));
+                CK(cudaMemcpy(const_cast<float *>(sgn[2]), cfg.signs_17408, sizeof(float) * kFFN, cudaMemcpyHostToDevice));
+                weights += (static_cast<size_t>(kHidden) + kInner + kFFN) * sizeof(float);
+            }
+        }
         rope_cos = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         rope_sin = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         pos_dev = pl.take<int>(64);
@@ -307,8 +342,19 @@ struct GpuLayers::Impl {
     // Quantizes `x` once for all the listed matrices that take the dp4a path (nothing happens when none does).
     void quant(const float * x, int64_t in, int T, std::initializer_list<const WMat *> mats) {
         for (const WMat * w : mats) {
-            if (use_dp4a(*w)) { CK(actq8_quantize(x, in, T, act, st)); return; }
+            if (use_dp4a(*w)) { CK(actq8_quantize(x, in, T, act, st)); act_src = x; return; }
         }
+    }
+
+    // Ternary mode: rotate `x` into the Hadamard basis of width slot sidx (0/1/2 for 5120/6144/17408) and
+    // quantize the rotated vector for the listed matrices. Unrotated plain-basis matrices keep using quant().
+    void quant_rot(std::initializer_list<const WMat *> mats, const float * x, int64_t in, int T, int sidx) {
+        bool any = false;
+        for (const WMat * w : mats) if (ternary::is_ternary(w->type)) any = true;
+        if (!any || !sgn[sidx]) { quant(x, in, T, mats); return; }
+        CK(ternary_rotate(x, sgn[sidx], xr_of(sidx), static_cast<int>(in), T, st));
+        CK(actq8_quantize(xr_of(sidx), in, T, act, st));
+        act_src = xr_of(sidx);
     }
 
     // The caller must have run quant() for the same `in` buffer when use_dp4a(W) is true.
@@ -324,8 +370,17 @@ struct GpuLayers::Impl {
             upload_tensor(stage, *W.src);
             W.p = stage;
         }
-        if (W.type == GT_Q8_0) CK(q8_0_gemv_dp4a(W.p, W.in, W.out, in, T, out, q8, st));
-        else if (use_dp4a(W)) CK(gemv_dp4a(W.type, W.p, W.in, W.out, act, T, out, st));
+        if (ternary::is_ternary(W.type)) {
+            if (W.type == ternary::kTypePtq1_0) CK(gemv_ptq1_0_dp4a(W.p, W.in, W.out, act, T, out, st));
+            else CK(gemv_q2_0_dp4a(W.p, W.in, W.out, act, T, out, st));
+        } else if (W.type == GT_Q8_0) CK(q8_0_gemv_dp4a(W.p, W.in, W.out, in, T, out, q8, st));
+        else if (use_dp4a(W)) {
+            if (act_src != in) {  // plain-basis matrix after a rotated quant (alpha/beta of a ternary layer)
+                CK(actq8_quantize(in, W.in, T, act, st));
+                act_src = in;
+            }
+            CK(gemv_dp4a(W.type, W.p, W.in, W.out, act, T, out, st));
+        }
         else CK(gemv_fp32(W.type, W.p, W.in, W.out, in, T, out, st));
         if (b >= 0) {
             CK(cudaEventRecord(comp_done[b], st));
@@ -369,11 +424,11 @@ struct GpuLayers::Impl {
 
     void ffn(const LayerD & l, int T) {
         CK(op_rmsnorm_rows(x, l.post_norm, xn, kHidden, T, eps, st));
-        quant(xn, kHidden, T, {&l.ffn_gate, &l.ffn_up});
+        quant_rot({&l.ffn_gate, &l.ffn_up}, xn, kHidden, T, 0);
         gemv(l.ffn_gate, xn, T, fg);
         gemv(l.ffn_up, xn, T, fu);
         CK(op_silu_mul(fg, fu, static_cast<int64_t>(T) * kFFN, st));
-        quant(fg, kFFN, T, {&l.ffn_down});
+        quant_rot({&l.ffn_down}, fg, kFFN, T, 2);
         gemv(l.ffn_down, fg, T, proj);
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
@@ -384,10 +439,10 @@ struct GpuLayers::Impl {
             CK(cudaMemcpyAsync(l.snap_ssm, l.ssm_state, sizeof(float) * kVH * kDH * kDH, cudaMemcpyDeviceToDevice, st));
         }
         CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, st));
-        quant(xn, kHidden, T, {&l.qkv, &l.gate_z});
+        quant_rot({&l.qkv, &l.gate_z}, xn, kHidden, T, 0);
         gemv(l.qkv, xn, T, bufA);
         gemv(l.gate_z, xn, T, bufB);
-        gemv(l.alpha, xn, T, alpha);
+        gemv(l.alpha, xn, T, alpha);  // plain basis: ssm_alpha/ssm_beta are not Hadamard-folded
         gemv(l.beta, xn, T, betar);
         CK(op_dn_prep(alpha, betar, l.ssm_dt, l.ssm_a, gate, beta, T, st));
         if (saving) {
@@ -398,14 +453,21 @@ struct GpuLayers::Impl {
         }
         CK(op_dn_conv(bufA, l.conv_w, l.conv_state, conv, T, st));
         CK(op_dn_rec(conv, gate, beta, bufB, l.ssm_norm, l.ssm_state, attn_o, T, eps, st));
-        quant(attn_o, kInner, T, {&l.ssm_out});
+        if (tmode && cfg.gdn_v_grouped) {  // ssm_out reads its value heads in grouped order (prism metadata)
+            CK(op_gdn_v_permute(attn_o, xr6144, T, st));
+            CK(ternary_rotate(xr6144, sgn[1], xr6144, kInner, T, st));
+            CK(actq8_quantize(xr6144, kInner, T, act, st));
+            act_src = xr6144;
+        } else {
+            quant_rot({&l.ssm_out}, attn_o, kInner, T, 1);
+        }
         gemv(l.ssm_out, attn_o, T, proj);
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
 
     void attention(const LayerD & l, int T, int pos0, bool iso3) {
         CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, st));
-        quant(xn, kHidden, T, {&l.wq, &l.wk, &l.wv});
+        quant_rot({&l.wq, &l.wk, &l.wv}, xn, kHidden, T, 0);
         gemv(l.wq, xn, T, bufA);
         gemv(l.wk, xn, T, kproj);
         gemv(l.wv, xn, T, vproj);
@@ -414,7 +476,7 @@ struct GpuLayers::Impl {
         CK(op_kv_store(kout, l.kcache, T, pos0, iso3, st, pd));
         CK(op_kv_store(vproj, l.vcache, T, pos0, iso3, st, pd));
         CK(op_attention(qbuf, bufA, l.kcache, l.vcache, attn_o, T, pos0, iso3, cfg.ctx_max, st, pd));
-        quant(attn_o, kInner, T, {&l.wo});
+        quant_rot({&l.wo}, attn_o, kInner, T, 1);
         gemv(l.wo, attn_o, T, proj);
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }

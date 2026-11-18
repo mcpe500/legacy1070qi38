@@ -25,3 +25,10 @@ cudaError_t ternary_rotate(const float * x, const float * signs, float * y, int 
 
 // y[t][o] = sum_i W[o][i] * x'[t][i] with x' quantized in `a` (in % 64 == 0).
 cudaError_t gemv_q2_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s);
+
+// y[t][o] = sum_i W[o][i] * x'[t][i] for the PTQ1_0 packing (type 143: one fp16 scale per 128 values at offset 26,
+// 26 payload bytes of base-3 digits). `in` must be a multiple of 128. Needs ternary_ptq1_init() once.
+cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s);
+// Uploads the byte -> digit tables the kernel reads through constant memory. Idempotent, thread-unsafe by design
+// (call it once before the first GEMV, like qmat_init on the CPU side).
+void ternary_ptq1_init();

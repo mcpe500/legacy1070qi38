@@ -42,6 +42,20 @@ public:
         run(n, grain < 1 ? 1 : grain, r);
     }
 
+    // Stable per-thread work slot in [0, size()) for per-thread scratch carved from a static arena (the caller
+    // thread and every worker get a unique index on first use; threads are persistent, so an index stays with
+    // its thread). Used by the long-context attention scores, which no longer fit on the stack at 64K ctx.
+    int slot() {
+        struct Tls { const Pool * owner; int idx; };
+        static thread_local Tls tls{nullptr, 0};
+        if (tls.owner != this) {
+            tls.owner = this;
+            tls.idx = next_slot_.fetch_add(1);
+            if (tls.idx >= n_) tls.idx = n_ - 1;  // defensive: never hand out an index without a scratch region
+        }
+        return tls.idx;
+    }
+
 private:
     void run(int64_t n, int64_t grain, FuncRef r) {
         if (n <= 0) return;
@@ -97,4 +111,5 @@ private:
     FuncRef fn_{nullptr, nullptr};
     int64_t n_items_ = 0, grain_ = 1;
     std::atomic<int64_t> next_{0};
+    std::atomic<int32_t> next_slot_{0};
 };

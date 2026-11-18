@@ -1,5 +1,7 @@
 #include "gemv.cuh"
 
+#include <cstring>
+
 #include "f16bits.hpp"
 
 #define QT_BEGIN(type, name, size) static __device__ const type name[size] = {
@@ -160,6 +162,19 @@ template <> struct Deq<GT_IQ3_S> {  // block 110 bytes: d, qs[64], qh[8], signs[
     }
 };
 
+template <> struct Deq<GT_BF16> {  // no scale: 32 bf16 values per unit, widened to FP32 with a 16-bit shift
+    static constexpr int BLOCK_BYTES = 64, UPB = 1;
+    static __device__ __forceinline__ void run(const uint8_t * blk, int, float * w) {
+#pragma unroll
+        for (int l = 0; l < 32; ++l) {
+            const uint32_t bits = static_cast<uint32_t>(rd16(blk + 2 * l)) << 16;
+            float f;
+            std::memcpy(&f, &bits, sizeof(f));
+            w[l] = f;
+        }
+    }
+};
+
 template <> struct Deq<GT_Q8_0> {  // block 34 bytes: d, qs[32] (reference path for tests; production uses dp4a)
     static constexpr int BLOCK_BYTES = 34, UPB = 1;
     static __device__ __forceinline__ void run(const uint8_t * blk, int, float * w) {
@@ -240,6 +255,7 @@ int64_t gemv_row_bytes(int type, int64_t in) {
         case GT_IQ4_NL: return in / 32 * 18;
         case GT_IQ3_S: return in / 256 * 110;
         case GT_Q8_0: return in / 32 * 34;
+        case GT_BF16: return static_cast<int64_t>(in) * 2;
         default: return 0;
     }
 }
@@ -255,6 +271,7 @@ cudaError_t gemv_fp32(int type, const uint8_t * W, int64_t in, int64_t out, cons
         case GT_IQ4_NL: return launch<GT_IQ4_NL>(W, in, out, x, T, y, s);
         case GT_IQ3_S: return launch<GT_IQ3_S>(W, in, out, x, T, y, s);
         case GT_Q8_0: return launch<GT_Q8_0>(W, in, out, x, T, y, s);
+        case GT_BF16: return launch<GT_BF16>(W, in, out, x, T, y, s);
         default: return cudaErrorInvalidValue;
     }
 }

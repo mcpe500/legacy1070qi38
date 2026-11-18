@@ -246,6 +246,14 @@ int main(int argc, char ** argv) {
         // Optional per-layer parity against the reference dump (prefill pass only).
         struct LayerCmp { int il; double cos, mx; bool ok; };
         std::vector<LayerCmp> cmps;
+        const char * tap_dump = std::getenv("QWEN_TAP_DUMP");
+        if (tap_dump) {
+            eng.tap = [tap_dump](int il, const float * x, int T) {
+                std::string path = std::string(tap_dump) + "/l_out-" + std::to_string(il) + ".bin";
+                FILE * f = std::fopen(path.c_str(), "wb");
+                if (f) { std::fwrite(x, sizeof(float), static_cast<size_t>(T) * 5120, f); std::fclose(f); }
+            };
+        }
         if (!parity_dir.empty()) {
             eng.tap = [&](int il, const float * x, int T) {
                 std::vector<float> ref;

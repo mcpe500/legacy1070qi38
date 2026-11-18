@@ -17,6 +17,7 @@
 
 #include "cpu_ops.hpp"
 #include "gpu_layers.hpp"
+#include "ternary_cpu.hpp"
 #include "dn_layer.hpp"  // model dimension constants only (kHidden, kFFN, ...)
 
 namespace {
@@ -25,8 +26,10 @@ constexpr int kLayers = 64;
 constexpr int kNH = 24, kNKV = 4, kHD = 256, kRope = 64;
 constexpr int kQW = kNH * kHD;       // 6144 values of q per token
 constexpr int kKVW = kNKV * kHD;     // 1024 values of k (and of v) per token
-constexpr int kMaxCtxStack = 4096;   // attention score buffer lives on the stack
+constexpr int kMaxCtxStack = 65536;  // ctx_max hard cap: the Bonsai ternary path reaches 64K with iso3 KV; the
+                                        // CPU attention scores live in the arena (not on the stack)
 constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
+constexpr int kQG = kNH / kNKV;  // 6 query heads share one K/V group: their score and V passes read each row once
 
 uint64_t u64(const GgufIndex & ix, const char * k) {
     auto it = ix.u_kv.find(k);
@@ -67,12 +70,16 @@ inline float sigm(float x) { return 1.0f / (1.0f + std::exp(-x)); }
 }  // namespace
 
 Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
-    if (cfg_.ctx_max > kMaxCtxStack) throw std::runtime_error("ctx_max above 4096 is not supported");
+    if (cfg_.ctx_max > kMaxCtxStack) throw std::runtime_error("ctx_max above " + std::to_string(kMaxCtxStack) + " is not supported");
     qmat_init();
     ix.open(cfg_.gguf);
 
-    // The engine is locked to Qwen3.8-27B: verify the numbers it hardcodes.
-    expect(ix, "qwen35.block_count", 65);
+    // The engine is locked to the qwen35 architecture: 65 blocks on Qwen3.8-27B (64 layers + the MTP head), 64 on
+    // Ternary Bonsai 2 27B (no MTP block). A missing blk.64 disables the draft head automatically; --pld is unaffected.
+    const uint64_t nblocks = u64(ix, "qwen35.block_count");
+    if (nblocks != 65 && nblocks != 64) throw std::runtime_error("gguf: qwen35.block_count = " + std::to_string(nblocks) + ", engine supports 64 (Bonsai, no MTP) or 65 (Qwen)");
+    if (nblocks == 64 && cfg_.mtp_steps > 0)
+        std::fprintf(stderr, "mtp: blk.64 absent (Ternary Bonsai), draft head disabled; --pld stays available\n");
     expect(ix, "qwen35.embedding_length", kHidden);
     expect(ix, "qwen35.feed_forward_length", kFFN);
     expect(ix, "qwen35.attention.head_count", kNH);
@@ -97,6 +104,35 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     lm_head_ = make_qmat(ix, "output.weight");
     if (lm_head_.out != n_vocab) throw std::runtime_error("output.weight rows differ from the vocabulary size");
     out_norm_ = f32p(ix, "output_norm.weight", kHidden);
+
+    // Ternary Bonsai auto-detect: any tensor of ggml type 42 (Q2_0) or 143 (PTQ1_0) switches the engine into the
+    // rotated ternary mode, where every projected input is Hadamard-rotated before the GEMV.
+    for (const auto & kv : ix.tensors) {
+        if (qmat_is_ternary(kv.second.type)) { ternary_mode_ = true; break; }
+    }
+    if (ternary_mode_) {
+        if (!ix.arr_kv.count("prism.hadamard.sign_widths"))
+            throw std::runtime_error("ternary model without prism.hadamard.sign_widths");
+        if (!ix.f32_arr_kv.count("prism.hadamard.sign_values") && !ix.i32_arr_kv.count("prism.hadamard.sign_values"))
+            throw std::runtime_error("ternary model without prism.hadamard.sign_values");
+        const std::vector<int64_t> & w = ix.arr_kv.at("prism.hadamard.sign_widths");
+        if (w.size() != 3 || w[0] != kHidden || w[1] != kInner || w[2] != kFFN)
+            throw std::runtime_error("ternary: unexpected prism.hadamard.sign_widths");
+        if (ix.f32_arr_kv.count("prism.hadamard.sign_values")) {
+            signs_ = ix.f32_arr_kv.at("prism.hadamard.sign_values");
+        } else {  // stored as int32 +-1: widen to float
+            const std::vector<int32_t> & sv = ix.i32_arr_kv.at("prism.hadamard.sign_values");
+            signs_.resize(sv.size());
+            for (size_t i = 0; i < sv.size(); ++i) signs_[i] = static_cast<float>(sv[i]);
+        }
+        if (signs_.size() != static_cast<size_t>(kHidden + kInner + kFFN))
+            throw std::runtime_error("ternary: sign_values length does not match the widths");
+        signs_5120_ = signs_.data();
+        signs_6144_ = signs_.data() + kHidden;
+        signs_17408_ = signs_.data() + kHidden + kInner;
+        gdn_v_grouped_ = ix.u_kv.count("prism.hadamard.gdn_v_grouped") ? ix.u_kv.at("prism.hadamard.gdn_v_grouped") != 0 : false;
+        std::fprintf(stderr, "ternary: Hadamard basis (block 1024, explicit signs), gdn_v_grouped=%d\n", gdn_v_grouped_ ? 1 : 0);
+    }
 
     layers_.resize(kLayers);
     for (int il = 0; il < kLayers; ++il) {
@@ -214,6 +250,12 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     proj_ = arena_->alloc_n<float>(Tm * kHidden);
     bufA_ = arena_->alloc_n<float>(Tm * 2 * kQW);          // qkv [T][10240] or q+gate [T][12288]
     bufB_ = arena_->alloc_n<float>(Tm * kInner);           // z
+    if (ternary_mode_) {  // Hadamard-rotated inputs for the ternary GEMVs, one buffer per input width
+        rot5120_ = arena_->alloc_n<float>(Tm * kHidden);
+        rot6144_ = arena_->alloc_n<float>(Tm * kInner);
+        rot17408_ = arena_->alloc_n<float>(Tm * kFFN);
+    }
+    sc_ = arena_->alloc_n<float>(static_cast<size_t>(pool_->size()) * kQG * cfg_.ctx_max);  // attention scores
     conv_silu_ = arena_->alloc_n<float>(Tm * kConvCh);
     attn_o_ = arena_->alloc_n<float>(Tm * kInner);
     alpha_ = arena_->alloc_n<float>(Tm * kVHeads);
@@ -279,6 +321,12 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         gc.roll_t = roll ? kRollT : 0;
         gc.use_graph = cfg_.cuda_graph;
         gc.pin_stream = cfg_.pin_stream;
+        if (ternary_mode_) {  // rotated basis: the GPU layers need the sign vectors and the grouped-V flag
+            gc.signs_5120 = signs_5120_;
+            gc.signs_6144 = signs_6144_;
+            gc.signs_17408 = signs_17408_;
+            gc.gdn_v_grouped = gdn_v_grouped_;
+        }
         gpu_ = std::make_unique<GpuLayers>(ix, gc, eps_);
         for (int il = 0; il < g0; ++il) hint_layer(il, false);  // weights are in VRAM now: drop their file pages
     }
@@ -323,15 +371,43 @@ void Engine::check_memory(int il) const {
     }
 }
 
+// ssm_out input permutation (gdn_v_grouped=1): the reference permutes the DeltaNet output from tiled head order
+// [hd, nk, rep] to grouped [hd, rep, nk] before signs and rotation. With hd = 128, nk = 16 groups, rep = 3 value
+// heads per group, the flat v index v = nk + 16*rep becomes v' = 3*nk + rep.
+void Engine::gdn_v_permute(const float * src, float * dst, int64_t T) {
+    for (int64_t t = 0; t < T; ++t) {
+        const float * s = src + t * kInner;
+        float * d = dst + t * kInner;
+        for (int v = 0; v < kVHeads; ++v) {
+            const int nk = v % kQKHeads, rep = v / kQKHeads;
+            std::memcpy(d + (3 * nk + rep) * kHeadDim, s + v * kHeadDim, sizeof(float) * kHeadDim);
+        }
+    }
+}
+
+// y = W . hadamard(x) for a ternary (PTQ1_0 / Q2_0) weight, else y = W . x. The rotation cost is O(width log 1024)
+// per token and the rotated buffer is reused for every matrix of the same input width in the layer.
+void Engine::tmatmul(const QMat & W, const float * x, int64_t T, float * y, int width, uint8_t * act) {
+    if (!ternary_mode_ || !qmat_is_ternary(W.type)) {
+        qmatmul(*pool_, W, x, T, y, act);
+        return;
+    }
+    const float * signs = width == kHidden ? signs_5120_ : (width == kInner ? signs_6144_ : signs_17408_);
+    float * rot = width == kHidden ? rot5120_ : (width == kInner ? rot6144_ : rot17408_);
+    for (int64_t t = 0; t < T; ++t) std::memcpy(rot + t * width, x + t * width, sizeof(float) * static_cast<size_t>(width));
+    hadamard_rotate(rot, signs, width, T);
+    qmatmul(*pool_, W, rot, T, y, nullptr);
+}
+
 void Engine::ffn(const LayerW & L, int T) {
     for (int t = 0; t < T; ++t) rmsnorm(x_ + t * kHidden, kHidden, L.post_norm, eps_, xn_ + t * kHidden);
-    qmatmul(*pool_, L.ffn_gate, xn_, T, fg_, act_);
-    qmatmul(*pool_, L.ffn_up, xn_, T, fu_, act_);
+    tmatmul(L.ffn_gate, xn_, T, fg_, kHidden, act_);
+    tmatmul(L.ffn_up, xn_, T, fu_, kHidden, act_);
     const int64_t n = static_cast<int64_t>(T) * kFFN;
     pool_->parallel_for(n, 4096, [&](int64_t b, int64_t e) {
         for (int64_t i = b; i < e; ++i) fg_[i] = silu(fg_[i]) * fu_[i];
     });
-    qmatmul(*pool_, L.ffn_down, fg_, T, proj_, act_);
+    tmatmul(L.ffn_down, fg_, T, proj_, kFFN, act_);
     for (int64_t i = 0; i < static_cast<int64_t>(T) * kHidden; ++i) x_[i] += proj_[i];
 }
 
@@ -405,9 +481,9 @@ void Engine::dn_layer(int il, const LayerW & L, int T) {
     constexpr int64_t Hv = kVHeads;
 
     for (int t = 0; t < T; ++t) rmsnorm(x_ + t * kHidden, kHidden, L.attn_norm, eps_, xn_ + t * kHidden);
-    qmatmul(*pool_, L.qkv, xn_, T, bufA_, act_);       // [T][10240]
-    qmatmul(*pool_, L.gate_z, xn_, T, bufB_, act_);    // [T][6144]
-    qmatmul(*pool_, L.alpha, xn_, T, alpha_, act_);    // [T][48]
+    tmatmul(L.qkv, xn_, T, bufA_, kHidden, act_);      // [T][10240]
+    tmatmul(L.gate_z, xn_, T, bufB_, kHidden, act_);   // [T][6144]
+    qmatmul(*pool_, L.alpha, xn_, T, alpha_, act_);    // [T][48]  (not in prism.hadamard.weight_names)
     qmatmul(*pool_, L.beta, xn_, T, betar_, act_);     // [T][48]
     for (int t = 0; t < T; ++t) {
         for (int h = 0; h < Hv; ++h) {
@@ -426,7 +502,14 @@ void Engine::dn_layer(int il, const LayerW & L, int T) {
     }
     dn_conv_rec(di, L, bufA_, bufB_, gate_, beta_, T, attn_o_);
 
-    qmatmul(*pool_, L.ssm_out, attn_o_, T, proj_, act_);
+    if (ternary_mode_ && gdn_v_grouped_) {
+        // value heads arrive grouped for the folded ssm_out weight: permute, rotate, GEMV
+        gdn_v_permute(attn_o_, rot6144_, T);
+        hadamard_rotate(rot6144_, signs_6144_, kInner, T);
+        qmatmul(*pool_, L.ssm_out, rot6144_, T, proj_, nullptr);
+    } else {
+        tmatmul(L.ssm_out, attn_o_, T, proj_, kInner, act_);
+    }
     for (int64_t i = 0; i < static_cast<int64_t>(T) * kHidden; ++i) x_[i] += proj_[i];
 }
 
@@ -455,9 +538,9 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
     float * vc = vcache_[ai];
 
     for (int t = 0; t < T; ++t) rmsnorm(x_ + t * kHidden, kHidden, L.attn_norm, eps_, xn_ + t * kHidden);
-    qmatmul(*pool_, L.wq, xn_, T, bufA_, act_);   // per head: [q(256) | gate(256)]
-    qmatmul(*pool_, L.wk, xn_, T, kbuf_, act_);
-    qmatmul(*pool_, L.wv, xn_, T, vbuf_, act_);
+    tmatmul(L.wq, xn_, T, bufA_, kHidden, act_);   // per head: [q(256) | gate(256)]
+    tmatmul(L.wk, xn_, T, kbuf_, kHidden, act_);
+    tmatmul(L.wv, xn_, T, vbuf_, kHidden, act_);
 
     // RoPE angles come from the precomputed tables (generated at load with the identical accumulation chain),
     // so the values are bit-identical to the old inline chain; the 28 heads of a token share one lookup.
@@ -490,9 +573,8 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
     }
 
     const float kq_scale = 1.0f / std::sqrt(static_cast<float>(kHD));
-    constexpr int kQG = kNH / kNKV;  // 6 query heads share one K/V group: their score and V passes read each row once
     pool_->parallel_for(static_cast<int64_t>(T) * kNKV, 1, [&](int64_t b, int64_t e) {
-        float sc[kQG][kMaxCtxStack];
+        float (*sc)[kMaxCtxStack] = reinterpret_cast<float (*)[kMaxCtxStack]>(sc_ + static_cast<size_t>(pool_->slot()) * kQG * kMaxCtxStack);
         for (int64_t idx = b; idx < e; ++idx) {
             const int t = static_cast<int>(idx / kNKV), g = static_cast<int>(idx % kNKV);
             const int n = pos0 + t + 1;  // causal: positions j0 .. pos0+t (j0 > 0 only for the MTP layer with a prefill window)
@@ -538,7 +620,7 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
         }
     });
 
-    qmatmul(*pool_, L.wo, attn_o_, T, proj_, act_);
+    tmatmul(L.wo, attn_o_, T, proj_, kInner, act_);
     for (int64_t i = 0; i < static_cast<int64_t>(T) * kHidden; ++i) x_[i] += proj_[i];
 }
 
@@ -574,6 +656,7 @@ void Engine::forward_ex(const int32_t * tokens, int T, int pos0, float * logits,
     for (int t = 0; t < T; ++t) {
         if (tokens[t] < 0 || tokens[t] >= n_vocab) throw std::runtime_error("forward: token id out of range");
         qmat_row_to_f32(tok_embd_, tokens[t], x_ + static_cast<int64_t>(t) * kHidden);
+        if (ternary_mode_) hadamard_unrotate(x_ + static_cast<int64_t>(t) * kHidden, signs_5120_, kHidden, 1);
     }
     using Clk = std::chrono::steady_clock;
     const int first_cpu = cfg_.gpu_layers;
@@ -600,13 +683,28 @@ void Engine::forward_ex(const int32_t * tokens, int T, int pos0, float * logits,
     if (h_rows || n_out > 0) {
         if (!h_rows && n_out == 1) {
             rmsnorm(x_ + static_cast<int64_t>(T - 1) * kHidden, kHidden, out_norm_, eps_, hlast_);
-            qmatmul(*pool_, lm_head_, hlast_, 1, logits, act_);
+            if (ternary_mode_) {
+                std::memcpy(rot5120_, hlast_, sizeof(float) * kHidden);
+                hadamard_rotate(rot5120_, signs_5120_, kHidden, 1);
+                qmatmul(*pool_, lm_head_, rot5120_, 1, logits, nullptr);
+            } else {
+                qmatmul(*pool_, lm_head_, hlast_, 1, logits, act_);
+            }
         } else {
             float * hn = h_rows ? h_rows : hn_;
             const int r0 = h_rows ? 0 : T - n_out;
             for (int t = r0; t < T; ++t)
                 rmsnorm(x_ + static_cast<int64_t>(t) * kHidden, kHidden, out_norm_, eps_, hn + static_cast<int64_t>(t - r0) * kHidden);
-            if (n_out > 0) qmatmul(*pool_, lm_head_, hn + static_cast<int64_t>(T - n_out - r0) * kHidden, n_out, logits, act_);
+            if (n_out > 0) {
+                const float * src = hn + static_cast<int64_t>(T - n_out - r0) * kHidden;
+                if (ternary_mode_) {
+                    for (int r = 0; r < n_out; ++r) std::memcpy(rot5120_ + r * kHidden, src + r * kHidden, sizeof(float) * kHidden);
+                    hadamard_rotate(rot5120_, signs_5120_, kHidden, n_out);
+                    qmatmul(*pool_, lm_head_, rot5120_, n_out, logits, nullptr);
+                } else {
+                    qmatmul(*pool_, lm_head_, src, n_out, logits, act_);
+                }
+            }
         }
     }
     const auto c3 = Clk::now();
@@ -623,6 +721,7 @@ void Engine::mtp_prefill(const int32_t * tokens, const float * h_in, int T, int 
     for (int t = 0; t < T; ++t) {
         if (tokens[t] < 0 || tokens[t] >= n_vocab) throw std::runtime_error("mtp_prefill: token id out of range");
         qmat_row_to_f32(tok_embd_, tokens[t], proj_);
+        if (ternary_mode_) hadamard_unrotate(proj_, signs_5120_, kHidden, 1);
         float * dst = bufA_ + static_cast<int64_t>(t) * 2 * kHidden;
         rmsnorm(proj_, kHidden, mtp_enorm_, eps_, dst);
         rmsnorm(h_in + static_cast<int64_t>(t) * kHidden, kHidden, mtp_hnorm_, eps_, dst + kHidden);
@@ -637,6 +736,7 @@ void Engine::mtp_forward(const int32_t * tokens, const float * h_in, int T, int 
     for (int t = 0; t < T; ++t) {
         if (tokens[t] < 0 || tokens[t] >= n_vocab) throw std::runtime_error("mtp_forward: token id out of range");
         qmat_row_to_f32(tok_embd_, tokens[t], proj_);
+        if (ternary_mode_) hadamard_unrotate(proj_, signs_5120_, kHidden, 1);
         float * dst = bufA_ + static_cast<int64_t>(t) * 2 * kHidden;
         rmsnorm(proj_, kHidden, mtp_enorm_, eps_, dst);
         rmsnorm(h_in + static_cast<int64_t>(t) * kHidden, kHidden, mtp_hnorm_, eps_, dst + kHidden);

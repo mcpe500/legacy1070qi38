@@ -1,6 +1,7 @@
 #include "ternary_gemv.cuh"
 
 #include "f16bits.hpp"
+#include "ternary_spec.hpp"
 
 namespace {
 
@@ -131,6 +132,85 @@ __global__ void rotate_kernel(const float * __restrict__ x, const float * __rest
     }
 }
 
+// ---- PTQ1_0 (type 143): base-3 digits of a 128-value group of 28 bytes (26 payload + fp16 scale at +26).
+// Constant-memory digit tables, uploaded once by ternary_ptq1_init() from the empirical kPtq1Code table.
+__constant__ int8_t c_ptq1_digits5[256 * 5];
+__constant__ int8_t c_ptq1_digits4[256 * 4];
+template <int TT>
+__global__ void gemv_ptq1_0_kernel(const uint8_t * __restrict__ W, int64_t in, int64_t out, const int8_t * __restrict__ qx,
+                                   const float * __restrict__ dx, const float * __restrict__ sx, int T, float * __restrict__ y) {
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    const int64_t o = static_cast<int64_t>(blockIdx.x) * WARPS + warp;
+    if (o >= out) return;
+    const int t0 = blockIdx.y * TT;
+    const int nt = min(TT, T - t0);
+    const int64_t ngroups = in / 128, nb32 = in / 32;
+    const uint8_t * row = W + o * ngroups * ternary::kPtqGroupBytes;
+    __shared__ int8_t codes[WARPS][128];   // per-warp scratch: one set of 128 ternary codes per output row
+    float acc[TT];
+#pragma unroll
+    for (int t = 0; t < TT; ++t) acc[t] = 0.0f;
+
+    for (int64_t g = 0; g < ngroups; ++g) {
+        const uint8_t * blk = row + g * ternary::kPtqGroupBytes;
+        const float d = f16_to_f32(rd16(blk + 26));
+        // Phase 1: lanes 0..25 decode their payload byte into the group positions it covers. Each warp writes
+        // its own 128-code set (WARPS output rows share the block, so the scratch is per warp).
+        int8_t * cw = codes[warp];
+        if (lane < 26) {
+            const int b = blk[lane];
+            if (lane < 16) {   // stage 1: byte j -> positions {j, j+16, j+32, j+48, j+64}
+                const int8_t * dg = c_ptq1_digits5 + b * 5;
+#pragma unroll
+                for (int s = 0; s < 5; ++s) cw[lane + 16 * s] = static_cast<int8_t>(dg[s] - 1);
+            } else if (lane < 24) {  // stage 2: byte 16+k -> positions {80+k, 88+k, 96+k, 104+k, 112+k}
+                const int k = lane - 16;
+                const int8_t * dg = c_ptq1_digits5 + b * 5;
+#pragma unroll
+                for (int s = 0; s < 5; ++s) cw[80 + k + 8 * s] = static_cast<int8_t>(dg[s] - 1);
+            } else {  // tail: byte 24 -> {120,122,124,126}, byte 25 -> {121,123,125,127}
+                const int8_t * dg = c_ptq1_digits4 + b * 4;
+                const int base = 120 + (lane - 24);
+#pragma unroll
+                for (int s = 0; s < 4; ++s) cw[base + 2 * s] = static_cast<int8_t>(dg[s] - 1);
+            }
+        }
+        __syncwarp();
+        // Phase 2: lane handles the four codes at positions 4*lane .. 4*lane+3 (one Q8_1 activation block each).
+        // Four activation bytes are read as one uint32 (4-byte aligned: in % 64 == 0, 128 % 64 == 0, p % 4 == 0).
+        const int p = lane * 4;
+        const int32_t c4 = *reinterpret_cast<const int32_t *>(cw + p);
+#pragma unroll
+        for (int t = 0; t < TT; ++t) {
+            if (t < nt) {
+                const int64_t tt = t0 + t;
+                const uint32_t a4 = *reinterpret_cast<const uint32_t *>(qx + tt * in + g * 128 + p);
+                const int64_t b32 = tt * nb32 + g * 4 + (lane >> 3);
+                // codes are already (digit - 1) in {-1,0,1}: no +1 baseline to remove, so no -sx term (Q2_0 needs one,
+                // because its 2-bit codes are 0..2 and sx cancels the +1)
+                acc[t] += d * dx[b32] * static_cast<float>(__dp4a(c4, static_cast<int>(a4), 0));
+            }
+        }
+    }
+#pragma unroll
+    for (int t = 0; t < TT; ++t) {
+#pragma unroll
+        for (int off = 16; off > 0; off >>= 1) acc[t] += __shfl_xor_sync(0xffffffffu, acc[t], off);
+    }
+    if (lane == 0) {
+#pragma unroll
+        for (int t = 0; t < TT; ++t)
+            if (t < nt) y[static_cast<int64_t>(t0 + t) * out + o] = acc[t];
+    }
+}
+
+template <int TT>
+cudaError_t launch_ptq1(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+    const dim3 grid(static_cast<unsigned>((out + WARPS - 1) / WARPS), static_cast<unsigned>((T + TT - 1) / TT));
+    gemv_ptq1_0_kernel<TT><<<grid, WARPS * 32, 0, s>>>(W, in, out, a.qx, a.dx, a.sx, static_cast<int>(T), y);
+    return cudaGetLastError();
+}
+
 }  // namespace
 
 cudaError_t ternary_rotate(const float * x, const float * signs, float * y, int width, int T, cudaStream_t s) {
@@ -146,3 +226,31 @@ cudaError_t gemv_q2_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const Act
     if (T <= 8) return launch<8>(W, in, out, a, T, y, s);
     return launch<16>(W, in, out, a, T, y, s);
 }
+
+cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+    if (in % 128 != 0) return cudaErrorInvalidValue;
+    ternary_ptq1_init();
+    if (T <= 1) return launch_ptq1<1>(W, in, out, a, T, y, s);
+    if (T <= 4) return launch_ptq1<4>(W, in, out, a, T, y, s);
+    if (T <= 8) return launch_ptq1<8>(W, in, out, a, T, y, s);
+    return launch_ptq1<16>(W, in, out, a, T, y, s);
+}
+
+void ternary_ptq1_init() {
+    static bool done = false;
+    if (done) return;
+    int8_t d5[256 * 5], d4[256 * 4];
+    for (int b = 0; b < 256; ++b) {
+        const int c = ternary::kPtq1Code[b];
+        const int t3 = (c > 242) ? -1 : c;
+        int v = t3 < 0 ? 0 : t3;
+        for (int i = 4; i >= 0; --i) { d5[b * 5 + i] = static_cast<int8_t>(v % 3); v /= 3; }
+        const int c4 = (t3 < 0 || t3 % 3 != 0) ? -1 : t3 / 3;
+        v = c4 < 0 ? 0 : c4;
+        for (int i = 3; i >= 0; --i) { d4[b * 4 + i] = static_cast<int8_t>(v % 3); v /= 3; }
+    }
+    cudaMemcpyToSymbol(c_ptq1_digits5, d5, sizeof(d5));
+    cudaMemcpyToSymbol(c_ptq1_digits4, d4, sizeof(d4));
+    done = true;
+}
+

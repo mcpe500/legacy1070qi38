@@ -10,6 +10,9 @@
 cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s);
 cudaError_t op_add_inplace(float * x, const float * y, int64_t n, cudaStream_t s);          // x += y
 cudaError_t op_silu_mul(float * g, const float * u, int64_t n, cudaStream_t s);              // g = silu(g) * u
+// ssm_out of a Gated DeltaNet layer (gdn_v_grouped=1): permute the value heads of attn_o [T][6144] from tiled
+// order v into grouped order v' = 3 * (v % 16) + v / 16, in place into dst (src may not alias dst).
+cudaError_t op_gdn_v_permute(const float * src, float * dst, int T, cudaStream_t s);
 
 // Gated DeltaNet. T tokens, 48 value heads, 16 key heads, head size 128, conv kernel 4.
 cudaError_t op_dn_prep(const float * alpha, const float * beta_raw, const float * dt_bias, const float * ssm_a,

@@ -19,7 +19,8 @@
 
 struct EngineConfig {
     std::string gguf;
-    int ctx_max = 4096;          // KV cache positions (hard cap 8192; raise with --ctx, VRAM grows ~59 MiB per doubling)
+    int ctx_max = 4096;          // KV cache positions (hard cap 8192 on the Qwen path; 65536 on the Bonsai ternary
+                                 // path with iso3 KV and the tiled attention kernel above 4096)
     int t_max = 512;             // largest batch of tokens in one forward call
     int threads = 4;
     double resident_gib = 11.0;  // CPU layers kept resident, in GiB of file bytes (layers beyond it are streamed)
@@ -27,6 +28,12 @@ struct EngineConfig {
     // layers, Q8_1 + __dp4a for every quantization type that has a kernel (mask below = Q3_K, Q4_K, Q5_K, Q6_K, IQ4_NL,
     // IQ3_S, IQ4_XS; Q8_0 always uses dp4a). The default layer count comes from the VRAM sweep in docs/AFK_STATUS.md.
     int gpu_layers = 32;
+    // Layer placement mode: -1 = auto (the ctx-aware byte knapsack when the model or the context needs a downshift,
+    // else the contiguous prefix), 0 = always the contiguous prefix 0 .. gpu_layers-1, 1 = always the knapsack.
+    // gpu_layer_list (sorted, from --gpu-layer-list) overrides both. vram_budget_mib is the cap the knapsack fills.
+    int gpu_placement = -1;
+    double vram_budget_mib = 7373.0;
+    std::vector<int> gpu_layer_list;
     bool kv_iso3 = true;
     uint32_t dp4a_mask = (1u << 11) | (1u << 12) | (1u << 13) | (1u << 14) | (1u << 20) | (1u << 21) | (1u << 23);
     // Prefill batches of at least stream_min_t tokens (first call, position 0) run the CPU layers on the GPU too, one layer
@@ -111,12 +118,18 @@ public:
     double last_gpu_s = 0, last_cpu_s = 0, last_head_s = 0;
 
 private:
+    // ssm_out of a Gated DeltaNet layer reads its value heads in grouped order (prism.hadamard.gdn_v_grouped=1):
+    // permute attn_o_ [v_head][128] with v' = 3 * (v % 16) + v / 16 into the rotated scratch buffer `dst`.
+    static void gdn_v_permute(const float * src, float * dst, int64_t T);
     void dn_layer(int il, const LayerW & L, int T);
     void attn_layer(int il, const LayerW & L, int T, int pos0);
     void ffn(const LayerW & L, int T);
     void dn_conv_rec(int di, const LayerW & L, const float * qkv, const float * z, const float * gate, const float * beta, int T,
                      float * out);
     void forward_stream(int T, int pos0);
+    // y = W . hadamard(x) for a ternary (PTQ1_0 / Q2_0) weight, else y = W . x. `width` is the input dimension
+    // the rotation applies to (5120, 6144 or 17408) and picks the sign vector and the rotated scratch buffer.
+    void tmatmul(const QMat & W, const float * x, int64_t T, float * y, int width, uint8_t * act);
     void hint_layer(int il, bool willneed);   // readahead / drop for the streaming policy
     void check_memory(int il) const;
 
@@ -135,6 +148,7 @@ private:
     float *alpha_ = nullptr, *betar_ = nullptr, *gate_ = nullptr, *beta_ = nullptr;
     float *fg_ = nullptr, *fu_ = nullptr, *qbuf_ = nullptr, *kbuf_ = nullptr, *vbuf_ = nullptr;
     uint8_t * act_ = nullptr;
+    float * sc_ = nullptr;    // attention scores [threads][kQG][ctx_max], one slab per pool slot (64K ctx does not fit the stack)
     float * hlast_ = nullptr;
     float * hn_ = nullptr;      // [8][5120] normed rows when forward_ex has no h_rows buffer
     // RoPE angle tables [ctx_max][kRope/2], generated once at load with the same accumulation chain as the old
@@ -153,4 +167,12 @@ private:
     // Persistent state.
     std::vector<float *> conv_state_, ssm_state_;  // per DeltaNet layer
     std::vector<float *> kcache_, vcache_;         // per attention layer, [ctx_max][4][256]
+    // Ternary Bonsai mode (auto-detected: any tensor of ggml type 42 or 143): weights live in the Hadamard-rotated
+    // basis of the prism.hadamard.* metadata (block 1024, explicit signs, normalized Sylvester-Walsh), the token
+    // embedding is stored pre-rotated (inverse_weight_names) and there is no MTP block.
+    bool ternary_mode_ = false;
+    std::vector<float> signs_;              // sign_values: [5120] ++ [6144] ++ [17408] (+1/-1 per value)
+    const float * signs_5120_ = nullptr, * signs_6144_ = nullptr, * signs_17408_ = nullptr;
+    float * rot5120_ = nullptr, * rot6144_ = nullptr, * rot17408_ = nullptr;  // rotated activations (arena scratch)
+    bool gdn_v_grouped_ = false;
 };
