@@ -35,4 +35,7 @@ cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool i
 // Causal GQA attention (24 query heads over 4 kv heads) with FP32 dequantization of the iso3 cache inside the kernel.
 // ctx_max <= 8192: scores in shared memory; above: tiled online softmax (256 positions per tile), up to 131072.
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
-                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev = nullptr);
+                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev = nullptr,
+                         float * part = nullptr);
+// Scratch for the split-K decode attention (ctx_max > 8192, T <= 8): floats `part` must hold. Without it the tiled kernel runs.
+size_t op_attention_part_floats();

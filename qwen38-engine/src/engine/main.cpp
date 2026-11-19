@@ -129,6 +129,8 @@ int main(int argc, char ** argv) {
         else if (a == "--state-test") state_test = next();     // round-trip test file (with --cont-file)
         else if (a == "--cont-file") cont_file = next();       // continuation text of --state-test
         else if (a == "--depth-bench") depth_bench = std::atoi(next().c_str());
+        else if (a == "--gpu-head") cfg.gpu_head = std::atoi(next().c_str());
+        else if (a == "--gpu-mtp") cfg.gpu_mtp = std::atoi(next().c_str());
         else if (a == "--vram-budget-mib") cfg.vram_budget_mib = std::atof(next().c_str());
         else if (a == "-n") n_predict = std::atoi(next().c_str());
         else if (a == "--temp") gp.sp.temperature = static_cast<float>(std::atof(next().c_str()));

@@ -219,7 +219,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     // --gpu-layers auto (-1) takes the largest contiguous prefix 0 .. n-1 whose plan fits. Prefill streaming needs a
     // staging buffer plus one FP32 KV layer (ctx_max * 8 KiB: 1 GiB at 128K); when it does not fit, it is turned off.
     const bool roll = cfg_.mtp_steps > 0 && mtp_ok_;
-    auto gpu_config = [&](int n, bool stream) {
+    auto gpu_config = [&](int n, bool stream, bool head, bool mtp = false) {
         GpuConfig gc;
         gc.n_layers = n;
         gc.ctx_max = cfg_.ctx_max;
@@ -231,6 +231,8 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         gc.use_graph = cfg_.cuda_graph;
         gc.pin_stream = cfg_.pin_stream;
         gc.vram_budget_mib = cfg_.vram_budget_mib;
+        gc.head = head;
+        gc.mtp = mtp;
         if (ternary_mode_) {  // rotated basis: the GPU layers need the sign vectors and the grouped-V flag
             gc.signs_5120 = signs_5120_;
             gc.signs_6144 = signs_6144_;
@@ -242,7 +244,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     bool stream_on = false;
     if (cfg_.gpu_layers != 0) {
         const bool want_stream = cfg_.stream_min_t > 0;
-        auto fits = [&](int n, bool stream) { return GpuLayers::projected_mib(ix, gpu_config(n, stream)) <= cfg_.vram_budget_mib; };
+        auto fits = [&](int n, bool stream) { return GpuLayers::projected_mib(ix, gpu_config(n, stream, false)) <= cfg_.vram_budget_mib; };
         if (cfg_.gpu_layers < 0) {
             int pick = 0;
             for (int n = kLayers; n >= 1 && pick == 0; --n) {
@@ -263,6 +265,34 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         }
     }
     const int g0 = cfg_.gpu_layers;
+    // LM head on the GPU: only with every layer there (the stream is already in VRAM), when it fits after the layers.
+    // Auto (-1) puts it there if the plan stays under the budget; 1 requires it; 0 keeps it on the CPU.
+    if (g0 == kLayers && cfg_.gpu_head != 0) {
+        bool fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true)) <= cfg_.vram_budget_mib;
+        // At long context the iso3 KV leaves no room for the head next to the prefill scratch (about 270 MiB at t_max 512).
+        // Smaller prefill chunks free it: the batched GEMVs tile at most 16 tokens, so prefill speed barely changes.
+        for (int tm : {256, 128, 64}) {
+            if (fit || cfg_.t_max <= tm) break;
+            const int keep = cfg_.t_max;
+            cfg_.t_max = tm;
+            fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true)) <= cfg_.vram_budget_mib;
+            if (fit) std::fprintf(stderr, "LM head: prefill chunk lowered from %d to %d tokens so the head fits in VRAM\n", keep, tm);
+            else cfg_.t_max = keep;
+        }
+        if (!fit && cfg_.gpu_head == 1) throw std::runtime_error("--gpu-head 1: the LM head does not fit the VRAM budget at this context");
+        head_on_ = fit;
+        std::fprintf(stderr, "LM head: %s\n", fit ? "GPU" : "CPU (does not fit the VRAM budget next to 64 layers)");
+    } else if (cfg_.gpu_head == 1) {
+        throw std::runtime_error("--gpu-head 1 needs every layer on the GPU (--gpu-layers 64)");
+    }
+    // MTP draft head on the GPU: when the GGUF has blk.64, every layer and the LM head are on the GPU, and the block plus
+    // its KV fit next to them (about 335 MiB of weights for the Qwen-format head, 0.8 KiB of iso3 KV per position).
+    if (mtp_ok_ && head_on_ && cfg_.gpu_mtp != 0) {
+        const bool fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true, true)) <= cfg_.vram_budget_mib;
+        if (!fit && cfg_.gpu_mtp == 1) throw std::runtime_error("--gpu-mtp 1: the MTP block does not fit the VRAM budget at this context");
+        mtp_gpu_ = fit;
+        std::fprintf(stderr, "MTP block: %s\n", fit ? "GPU" : "CPU (does not fit the VRAM budget)");
+    }
 
     // ---- Host arena, sized from the configuration (measuring pass with the same allocation sequence as the real one).
     {
@@ -346,7 +376,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     arena_->freeze();
 
     if (g0 > 0) {
-        const GpuConfig gc = gpu_config(g0, stream_on);
+        const GpuConfig gc = gpu_config(g0, stream_on, head_on_, mtp_gpu_);
         gpu_ = std::make_unique<GpuLayers>(ix, gc, eps_);
         for (int il = 0; il < g0; ++il) hint_layer(il, false);  // weights are in VRAM now: drop their file pages
         const double used = vram_used_mib();
@@ -372,7 +402,7 @@ size_t Engine::state_bytes(int n_pos) const {
         if (layers_[il].is_attn) b += 2 * sizeof(float) * static_cast<size_t>(n_pos) * kKVW;
         else b += sizeof(float) * (static_cast<size_t>(kConvCh) * (kConvK - 1) + static_cast<size_t>(kVHeads) * kHeadDim * kHeadDim);
     }
-    if (mtp_ok_) b += 2 * sizeof(float) * static_cast<size_t>(n_pos) * kKVW;
+    if (mtp_ok_ && !mtp_gpu_) b += 2 * sizeof(float) * static_cast<size_t>(n_pos) * kKVW;
     return b;
 }
 
@@ -390,7 +420,7 @@ void Engine::save_state(int n_pos, const std::function<void(const void *, size_t
             io(ssm_state_[di], sizeof(float) * kVHeads * kHeadDim * kHeadDim);
         }
     }
-    if (mtp_ok_) {
+    if (mtp_ok_ && !mtp_gpu_) {
         io(kcache_[16], kv);
         io(vcache_[16], kv);
     }
@@ -410,7 +440,7 @@ void Engine::load_state(int n_pos, const std::function<void(void *, size_t)> & i
             io(ssm_state_[di], sizeof(float) * kVHeads * kHeadDim * kHeadDim);
         }
     }
-    if (mtp_ok_) {
+    if (mtp_ok_ && !mtp_gpu_) {
         io(kcache_[16], kv);
         io(vcache_[16], kv);
     }
@@ -433,7 +463,7 @@ uint64_t Engine::state_fingerprint() const {
         const int64_t v[3] = {static_cast<int64_t>(t.type), static_cast<int64_t>(t.offset), static_cast<int64_t>(t.nbytes)};
         mix(v, sizeof(v));
     }
-    const int32_t layout[4] = {cfg_.gpu_layers, cfg_.kv_iso3 ? 1 : 0, mtp_ok_ ? 1 : 0, ternary_mode_ ? 1 : 0};
+    const int32_t layout[5] = {cfg_.gpu_layers, cfg_.kv_iso3 ? 1 : 0, mtp_ok_ ? 1 : 0, ternary_mode_ ? 1 : 0, mtp_gpu_ ? 1 : 0};
     mix(layout, sizeof(layout));
     return h;
 }
@@ -489,9 +519,9 @@ void Engine::carve_buffers(Arena & a, int g0, bool roll) {
             sv_beta_.push_back(roll && cpu_layer ? a.alloc_n<float>(R * kVHeads) : nullptr);
         }
     }
-    if (mtp_ok_) {  // KV of the MTP attention layer = cache index 16
-        kcache_.push_back(a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
-        vcache_.push_back(a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
+    if (mtp_ok_) {  // KV of the MTP attention layer = cache index 16 (host copy only when the MTP block runs on the CPU)
+        kcache_.push_back(mtp_gpu_ ? nullptr : a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
+        vcache_.push_back(mtp_gpu_ ? nullptr : a.alloc_n<float>(static_cast<size_t>(cfg_.ctx_max) * kKVW));
     }
 }
 
@@ -846,7 +876,9 @@ void Engine::forward_ex(const int32_t * tokens, int T, int pos0, float * logits,
         }
     }
     const auto c2 = Clk::now();
-    if (h_rows || n_out > 0) {
+    if ((h_rows || n_out > 0) && head_on_ && n_out <= 8) {
+        gpu_->head(T, n_out, logits, h_rows);   // the stream after layer 63 is still on the device
+    } else if (h_rows || n_out > 0) {
         if (!h_rows && n_out == 1) {
             rmsnorm(x_ + static_cast<int64_t>(T - 1) * kHidden, kHidden, out_norm_, eps_, hlast_);
             if (ternary_mode_) {
@@ -882,6 +914,7 @@ void Engine::forward_ex(const int32_t * tokens, int T, int pos0, float * logits,
 }
 
 void Engine::mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0) {
+    if (mtp_gpu_) { mtp_forward(tokens, h_in, T, pos0, nullptr, nullptr); return; }
     if (!(gpu_ && gpu_->stream_ready() && cfg_.mtp_gpu_prefill && T >= cfg_.stream_min_t)) { mtp_forward(tokens, h_in, T, pos0, nullptr, nullptr); return; }
     if (T < 1 || T > cfg_.t_max || pos0 < 0 || pos0 + T > cfg_.ctx_max) throw std::runtime_error("mtp_prefill: T or position out of range");
     for (int t = 0; t < T; ++t) {
@@ -907,12 +940,21 @@ void Engine::mtp_forward(const int32_t * tokens, const float * h_in, int T, int 
         rmsnorm(proj_, kHidden, mtp_enorm_, eps_, dst);
         rmsnorm(h_in + static_cast<int64_t>(t) * kHidden, kHidden, mtp_hnorm_, eps_, dst + kHidden);
     }
+    if (mtp_gpu_) { gpu_->mtp_forward(bufA_, T, pos0, h_out, logits); return; }
     qmatmul(*pool_, mtp_eh_, bufA_, T, x_, act_);
     attn_layer(64, mtp_L_, T, pos0);   // cache index 64 / 4 = 16
     ffn(mtp_L_, T);
     if (h_out || logits) {
         rmsnorm(x_ + static_cast<int64_t>(T - 1) * kHidden, kHidden, mtp_head_norm_, eps_, hlast_);
         if (h_out) std::memcpy(h_out, hlast_, sizeof(float) * kHidden);
-        if (logits) qmatmul(*pool_, lm_head_, hlast_, 1, logits, act_);
+        if (logits) {
+            if (ternary_mode_) {   // the ternary LM head reads its input in the Hadamard basis
+                std::memcpy(rot5120_, hlast_, sizeof(float) * kHidden);
+                hadamard_rotate(rot5120_, signs_5120_, kHidden, 1);
+                qmatmul(*pool_, lm_head_, rot5120_, 1, logits, nullptr);
+            } else {
+                qmatmul(*pool_, lm_head_, hlast_, 1, logits, act_);
+            }
+        }
     }
 }

@@ -1,2 +1,2 @@
-{"depth_bench":32768,"steps":8,"decode_tok_s":1.1379,"ctx":32768,"gpu_layers":62,"load_s":47.70,"cpu_arena_mib":518.4,"gpu_arena_mib":7159.8,"gpu_kv_mib":375.0,"vram_used_mib":7286.2,"peak_rss_kb":1102000}
-{"tag":"Q2_0_ctx32768_depth","rc":0,"peak_vram_mib":7287,"max_rss_kb":1102000}
+{"depth_bench":32768,"steps":32,"decode_tok_s":1.6474,"ctx":32768,"gpu_layers":62,"load_s":46.58,"cpu_arena_mib":518.4,"gpu_arena_mib":7171.9,"gpu_kv_mib":375.0,"vram_used_mib":7296.2,"peak_rss_kb":1099064}
+{"tag":"Q2_0_ctx32768_depth","rc":0,"peak_vram_mib":7297,"max_rss_kb":1099064}

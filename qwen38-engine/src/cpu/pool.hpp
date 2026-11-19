@@ -18,7 +18,11 @@ public:
     };
 
     explicit Pool(int n_threads) : n_(n_threads < 1 ? 1 : n_threads) {
-        for (int i = 1; i < n_; ++i) workers_.emplace_back([this] { loop(); });
+        worker_ids_.reserve(n_ - 1);
+        for (int i = 1; i < n_; ++i) {
+            workers_.emplace_back([this] { loop(); });
+            worker_ids_.push_back(workers_.back().get_id());
+        }
     }
     ~Pool() {
         {
@@ -42,22 +46,21 @@ public:
         run(n, grain < 1 ? 1 : grain, r);
     }
 
-    // Stable per-thread work slot in [0, size()) for per-thread scratch carved from a static arena (the caller
-    // thread and every worker get a unique index on first use; threads are persistent, so an index stays with
-    // its thread). Used by the long-context attention scores, which no longer fit on the stack at 64K ctx.
-    int slot() {
-        struct Tls { const Pool * owner; int idx; };
-        static thread_local Tls tls{nullptr, 0};
-        if (tls.owner != this) {
-            tls.owner = this;
-            tls.idx = next_slot_.fetch_add(1);
-            if (tls.idx >= n_) tls.idx = n_ - 1;  // defensive: never hand out an index without a scratch region
-        }
-        return tls.idx;
+    // Stable work slot in [0, size()) for per-thread scratch carved from a static arena. The server calls
+    // parallel_for from a different httplib thread for every request, so a TLS "first use" counter would hand the
+    // same fallback slot to every later caller. The current caller is always slot 0; the persistent workers keep
+    // slot 1..n-1. Used by the long-context attention scores, which no longer fit on the stack at 64K ctx.
+    int slot() const {
+        const std::thread::id me = std::this_thread::get_id();
+        if (me == caller_.load(std::memory_order_acquire)) return 0;
+        for (int i = 0; i < static_cast<int>(worker_ids_.size()); ++i)
+            if (worker_ids_[i] == me) return i + 1;
+        return 0;   // only reachable outside parallel_for
     }
 
 private:
     void run(int64_t n, int64_t grain, FuncRef r) {
+        caller_.store(std::this_thread::get_id(), std::memory_order_release);
         if (n <= 0) return;
         if (n_ == 1 || n <= grain) { r.call(r.obj, 0, n); return; }
         {
@@ -111,5 +114,6 @@ private:
     FuncRef fn_{nullptr, nullptr};
     int64_t n_items_ = 0, grain_ = 1;
     std::atomic<int64_t> next_{0};
-    std::atomic<int32_t> next_slot_{0};
+    std::atomic<std::thread::id> caller_{};
+    std::vector<std::thread::id> worker_ids_;
 };

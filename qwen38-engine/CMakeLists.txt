@@ -114,6 +114,10 @@ add_executable(iso3_gpu_test tests/cuda/iso3_gpu_test.cu)
 target_link_libraries(iso3_gpu_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
 
 # Long-context attention (fast vs tiled kernel, tiled vs double reference up to 131072 positions).
+add_executable(ternary_bench tests/cuda/ternary_bench.cu)
+target_link_libraries(ternary_bench PRIVATE gpu_cuda CUDA::cudart)
+add_executable(ternary_ab_test tests/cuda/ternary_ab_test.cu)
+target_link_libraries(ternary_ab_test PRIVATE gpu_cuda CUDA::cudart)
 add_executable(attn_long_test tests/cuda/attn_long_test.cu)
 target_link_libraries(attn_long_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
 

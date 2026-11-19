@@ -394,3 +394,43 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [OPEN] Eksperimen bahasa pemaket (C/C++/Goose) masuk Task 6 SPEC-008 dengan decision gate >10%; ekspektasi ditulis eksplisit: tidak ada harness bahasa yang menembus batas bandwidth RAM
   → Lihat spec/specs/SPEC-008-single-file-executable/, spec/specs/RFC-004-embed-format.md, CLAIMS C-69..C-72
 ```
+
+### Branch `exp/bonsai-128k-context`: engine Bonsai + dokumentasi 128K (2026-11-18)
+
+```
+[Post-bootstrap] [DECISION] Cabang dokumentasi/engineering `exp/bonsai-128k-context` dibuat dari `main`: SPEC-008 + RFC-004 berada di bawah `7a2ff6c`, integrasi Ternary Bonsai di `a89f467`, lalu perubahan working tree untuk attention tiled, budget memori, state file, dan probe kedalaman
+[Post-bootstrap] [UPDATE] `[OPEN]` pada sesi SPEC-008 untuk baris CLAIMS Bonsai ditutup oleh klaim baru C-73..C-83; entri [OPEN] lama dibiarkan utuh sesuai aturan append-only
+[Post-bootstrap] [FINDING] Attention `qwen38-engine` kini punya kernel tiled online-softmax di atas 8192 posisi: `attn_long_test 131072` lulus 16/16 kasus (f32 dan iso3), galat relatif maksimum 2,112e-05 (C-77)
+[Post-bootstrap] [FINDING] Batas konteks engine: Qwen K-quant maksimum 8192; Ternary Bonsai maksimum 131072. Auto-fit memilih 64 layer GPU untuk PTQ1_0 pada 131072 dan 53 layer GPU untuk Q2_0 (C-83, C-76)
+[Post-bootstrap] [FINDING] Probe `--depth-bench` pada 131072: PTQ1_0 0,4390 tok/s (7293 MiB), Q2_0 0,3786 tok/s (7285 MiB). Metodenya: warm-up satu token pada N-9 lalu delapan langkah terukur pada N-8..N-1 dengan KV nol — bukan prefill penuh, bukan uji kualitas konteks panjang (C-76)
+[Post-bootstrap] [FINDING] State file engine lolos round-trip untuk Qwen Q4_K_M, Bonsai PTQ1_0, dan Bonsai Q2_0 pada prefix 957/3989 token: token identik dan baris logits pertama bit-identik (C-74)
+[Post-bootstrap] [FINDING] Generasi nyata Bonsai pada engine: PTQ1_0 1,0709 tok/s dan Q2_0 2,8018 tok/s di ctx 4096. Angka ini implementasi engine, bukan angka stock llama.cpp/PrismML 17,13/19,64 tok/s (C-75, C-79)
+[Post-bootstrap] [UPDATE] Dokumentasi diperbarui: README root, qwen38-engine/README.md, bench/README.md, README submodul yang masih "stage 0", docs/AFK_STATUS.md, plus ringkasan baru `qwen38-engine/bench/results/bonsai128k/README.md` dan SVG `spec/specs/assets/qwen38-engine-128k-context.svg`
+[Post-bootstrap] [TEST] Build dan test pada 2026-11-18: `rtk err ninja -C build -j4` PASS; `attn_long_test 131072` 16/16 PASS; `ternary_test` PASS; `stop_filter_test` PASS; `mt_dot_test` PASS; `foundation_test` PASS; SASS gate PASS (IDP.4A x2125, half x0); `tools/test_legacy.py` 127 test OK (4 skip); `spec validate` PASS; `tools/webui_test.py` PASS
+[Post-bootstrap] [OPEN] Prefill penuh 131072 belum dijalankan; yang ada hanya probe decode pada KV nol
+[Post-bootstrap] [OPEN] Kualitas retrieval/needle pada konteks panjang belum diukur; `--depth-bench` tidak mengujinya
+[Post-bootstrap] [OPEN] `PQ2_0` (GGML type 142) belum didukung engine; kecepatan engine Bonsai masih jauh di bawah llama.cpp/PrismML
+[Post-bootstrap] [OPEN] WebUI belum dibuka di browser sungguhan; channel RAM masih butuh `sudo dmidecode -t memory`
+  → Lihat qwen38-engine/bench/results/bonsai128k/, spec/research/CLAIMS.md C-73..C-83, spec/specs/SPEC-008-single-file-executable/
+```
+
+### `exp/bonsai-128k-context` lanjutan: kernel v2, split-K, MTP plumbing, perbaikan Pool (2026-11-19)
+
+```
+[Post-bootstrap] [FINDING] Depth bench diulang dengan `-n 33` (satu warm-up di N-33 + 32 langkah terukur): PTQ1_0 4,5906 tok/s dan Q2_0 0,4655 tok/s pada 131072; Q2_0 64K mencatat transient 7417 MiB (C-76)
+[Post-bootstrap] [FINDING] Attention split-K 64 slice ditambahkan untuk decode/T kecil; `attn_long_test` kini 28/28 PASS, galat relatif maksimum 2,581e-05 (C-77)
+[Post-bootstrap] [FINDING] Kernel ternary v2 lulus A/B byte-identical 135/135; PTQ1_0 microbench ffn_up T1 15,6→77,6 GB/s, LM head 18,7→91,1 GB/s (C-85)
+[Post-bootstrap] [FINDING] Needle 4K kernel v2 tanpa MTP: PTQ1_0 8,1536 tok/s dan Q2_0 8,2092 tok/s, keduanya menjawab MAGENTA-FALCON-42
+[Post-bootstrap] [FINDING] Inject `blk.64` Qwen ke Bonsai PTQ1_0 untuk uji plumbing: tanpa MTP 11,4932 tok/s, MTP 2 tetap 17,7078 tok/s, 158/198 draft diterima, 256 token identik (C-84)
+[Post-bootstrap] [DECISION] Angka MTP di atas disebut plumbing saja karena head belum dilatih pada Bonsai; alat korpus/distilasi/injeksi disertakan di qwen38-engine/tools/bonsai_mtp_train/
+[Post-bootstrap] [FINDING][CONFLICT] `server_test` gagal nondeterministik pada request kedua walau D=0, tanpa CUDA graph, dan dengan KV f32; binary d848269 juga gagal saat diuji ulang, sehingga log PASS lama tidak merefleksikan kondisi ini
+[Post-bootstrap] [ROOT CAUSE] Caller HTTP berubah tiap request; `Pool::slot()` TLS lama melakukan fetch_add tanpa batas dan memakai fallback slot sama untuk semua caller ekstra, sehingga scratch attention score bertabrakan
+[Post-bootstrap] [DECISION] `Pool::slot()` kini memberi caller aktif slot 0 dan worker persisten slot 1..n-1; caller disimpan per `parallel_for`, bukan TLS permanen (C-86)
+[Post-bootstrap] [TEST] Setelah fix Pool: `server_test.py` + `QWEN_MT_DOT=0` PASS 69/69; ulangi 10 request greedy di server terpisah semuanya Paris
+[Post-bootstrap] [TEST] Build `rtk err ninja -C build -j4` PASS; `attn_long_test 131072` 28/28 PASS; `ternary_test` PASS; `ternary_ab_test` 135/135 PASS; `mt_dot_test`, `stop_filter_test`, `foundation_test` PASS; SASS gate PASS (`IDP.4A x2813`, half x0); webui 0 fail; 127 CLI test OK; spec validate PASS; selftest korpus/injeksi/distilasi MTP PASS
+[Post-bootstrap] [OPEN] Prefill penuh 131072 dan needle 128K belum dijalankan; antrian 128K state-test terputus sebelum hasil valid
+[Post-bootstrap] [OPEN] Head MTP Bonsai terlatih belum tersedia; `PQ2_0` belum didukung engine
+[Post-bootstrap] [OPEN] `docs/figures/51_bonsai_128k.svg` hasil generator masih memiliki teks <12 px; aset PR memakai `spec/specs/assets/qwen38-engine-128k-context.svg` yang lolos validator
+[Post-bootstrap] [UPDATE] CLAIMS diperluas menjadi C-73..C-86; README root/engine/bench/results dan docs/AFK_STATUS.md diselaraskan dengan angka kernel v2, split-K, MTP plumbing, dan fix Pool
+  → Lihat qwen38-engine/bench/results/bonsai128k/, spec/research/CLAIMS.md C-73..C-86, qwen38-engine/src/cpu/pool.hpp
+```

@@ -199,7 +199,8 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
     have_h_ = false;
     if (L == 0) {
         eng_.reset();
-        mtp_start_ = (D > 0 && gp.mtp_window > 0) ? std::max(0, n_prompt - gp.mtp_window) : 0;
+        // The MTP window skips the MTP KV below mtp_start_ (CPU attention only); the GPU MTP block attends over every position.
+        mtp_start_ = (D > 0 && gp.mtp_window > 0 && !eng_.gpu_mtp_on()) ? std::max(0, n_prompt - gp.mtp_window) : 0;
         eng_.set_mtp_kv_start(mtp_start_);
     }
     st.reused_tokens = static_cast<int>(L);

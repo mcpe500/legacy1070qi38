@@ -33,6 +33,12 @@ struct GpuConfig {
     bool gdn_v_grouped = false;   // prism.hadamard.gdn_v_grouped: permute the DeltaNet value heads for ssm_out
     // Device memory cap of the whole process (CUDA context included). The constructor refuses a plan that would exceed it.
     double vram_budget_mib = 7373.0;
+    // LM head on the GPU (output_norm + output.weight, rotated for a ternary head): head() computes the logits of the last
+    // rows from the device copy of the stream after the last GPU layer. Only meaningful with n_layers = 64.
+    bool head = false;
+    // MTP draft head (blk.64) on the GPU: its decoder layer, nextn.eh_proj and shared_head_norm live in the arena, its KV in
+    // the format of the other attention layers. Needs head = true (the draft logits use the GPU LM head).
+    bool mtp = false;
 };
 
 // "all", "none", or a comma list of ggml type ids or names (q4_k, q5_k, q6_k, q3_k, iq4_nl, iq3_s, iq4_xs).
@@ -82,7 +88,17 @@ public:
     void save_state(int n_pos, const std::function<void(const void *, size_t)> & io) const;
     void load_state(int n_pos, const std::function<void(void *, size_t)> & io);
     size_t state_bytes(int n_pos) const;
-    void clear_kv();   // zeroes every KV cache of the GPU layers (depth benchmark only)
+    void clear_kv();
+    // GPU LM head (cfg.head). After forward() of T rows: RMSNorm(output_norm) of every row; the normed rows go to h_rows
+    // (optional, [T][5120]) and the logits of the last n_out rows (n_out <= 8) to logits ([n_out][n_vocab], host).
+    void head(int T, int n_out, float * logits, float * h_rows);
+    bool has_head() const;
+    // MTP block on the GPU (cfg.mtp). concat_host [T][10240] = [rmsnorm(emb, enorm) | rmsnorm(h, hnorm)] (built on the host).
+    // Fills the MTP KV at positions pos0 .. pos0+T-1; h_out (optional) receives shared_head_norm of the last row and logits
+    // (optional) its logits through the GPU LM head.
+    void mtp_forward(const float * concat_host, int T, int pos0, float * h_out, float * logits);
+    bool has_mtp() const;
+    size_t head_bytes() const;   // device bytes of the GPU LM-head weights
 
     size_t vram_bytes() const;     // device bytes owned by this object (arena plus the Q8 scratch)
     size_t weight_bytes() const;   // quantized weights and small vectors

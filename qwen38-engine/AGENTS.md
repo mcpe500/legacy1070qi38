@@ -4,7 +4,7 @@ Dedicated engineering workspace for a hardware-locked inference engine for **Qwe
 This file is also reachable as `CLAUDE.md` (symlink). Domain skills live in `.agents/skills/`
 and are linked from `.opencode/skills/` and `.claude/skills/`.
 
-**Current stage: 5 DONE (all stages). Hybrid engine with MTP, sampler, chunked prefill up to 4096 tokens, HTTP/SSE server with embedded WebUI (`scripts/serve.sh`), head-to-head benchmark in bench/results/final_comparison.md. See docs/AFK_STATUS.md.**
+**Current stage: 5 DONE (all stages), plus the Ternary Bonsai path, 131072-position attention, ternary kernel v2, GPU head/MTP plumbing, and MTP training tools. Hybrid engine with MTP, sampler, chunked prefill, HTTP/SSE server with embedded WebUI (`scripts/serve.sh`), head-to-head benchmark in bench/results/final_comparison.md. See docs/AFK_STATUS.md.**
 
 ## Hardware lock
 
@@ -63,8 +63,8 @@ Read the skill that covers the module, then change the code.
 src/packer/   offline GGUF stripper and dual-layout CUDA/AVX2 repacker
 src/cuda/     sm_61 __dp4a GEMV, FP32 DeltaNet and rollback, iso3 GQA attention
 src/cpu/      AVX2 znver1 GEMV, DeltaNet, LM head, MTP head, BPE tokenizer
-src/engine/   static arena allocator, hybrid layer split, sampler, <think> state machine
-src/server/   embedded HTTP/SSE server (cpp-httplib)
+src/engine/   static arena allocator, hybrid layer split, sampler, <think> state machine, HTTP/SSE server
+tools/bonsai_mtp_train/  corpus preparation, MTP distillation, GGUF injection
 webui/        index.html, one file, no build step
 tests/        parity tests and headless UI test
 bench/        sequential benchmark against llama.cpp
@@ -106,7 +106,7 @@ Full detail is in `webui-and-parity-bench`.
 - `docs/ref_pr38_summary.md` and `docs/ref_pr38_iso3_mtp.diff`: offline copy of
   mcpe500/legacy1070qi38 PR #38 (merged 2026-11-15). This is the ground truth for iso3 and MTP.
 - Fork with the iso3 code: mcpe500/llama.cpp, branch `feat/iso3-kv`, commit `36dbad3`.
-- Measurements and claims with IDs (C-01..C-58) live in the legacy repo, in
+- Measurements and claims with IDs (C-01..C-86) live in the legacy repo, in
   `spec/research/CLAIMS.md`.
 
 ## Open conflicts (need a user decision)
@@ -127,6 +127,6 @@ Full detail is in `webui-and-parity-bench`.
 ## Git
 
 This folder sits inside the git working tree of the legacy repository (`mcpe500/legacy1070qi38`).
-It has no git repository of its own and no remote. Nothing here is pushed.
-Any commit would land in the legacy repository, so commits need the user's instruction first.
-Commit only specific paths. Never commit `models/`, `build*/`, `*.gguf`, `*.cubin`, or logs.
+It has no git repository or remote of its own; commits here land in the legacy repository.
+Commit only specific paths and only when instructed. Push only as part of an authorized pull request.
+Never commit `models/`, `build*/`, `*.gguf`, `*.cubin`, or logs.

@@ -83,4 +83,5 @@
 - Perubahan di `qwen38-engine` mengikuti aturan lokalnya: `ninja -j4`, SASS gate, taskset, tanpa
   MCP/daemon, dan SEMUA perintah shell lewat `rtk` (`rtk err ninja -C build -j4`, `rtk run`, ...)
 - Angka tok/s Bonsai yang beredar (19.64 dst.) hidup di `bench/results/bonsai/`; baris CLAIMS-nya
-  belum ada — pekerjaan dokumen terpisah, **jangan** dikutip sebagai klaim di PR ini
+  sekarang ada (C-79, dengan kualitas C-78 dan angka engine C-75/C-80), jadi dokumentasi boleh
+  mengutipnya dengan ID klaim tersebut

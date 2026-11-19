@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="780" viewBox="0 0 1200 780" role="img" aria-labelledby="title desc">
+  <title id="title">qwen38-engine: jalur konteks panjang Ternary Bonsai</title>
+  <desc id="desc">Diagram attention tiled dan split-K, kernel ternary v2, probe 131072 posisi, dan plumbing MTP.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7dd3fc"/>
+    </marker>
+    <style>
+      .title { font: 700 28px sans-serif; fill: #f8fafc; }
+      .subtitle { font: 400 16px sans-serif; fill: #cbd5e1; }
+      .h2 { font: 700 18px sans-serif; fill: #f8fafc; }
+      .label { font: 600 15px sans-serif; fill: #f8fafc; }
+      .body { font: 400 14px sans-serif; fill: #dbeafe; }
+      .small { font: 400 13px sans-serif; fill: #cbd5e1; }
+      .metric { font: 700 16px sans-serif; fill: #86efac; }
+      .warn { font: 600 14px sans-serif; fill: #fde68a; }
+      .card { fill: #172033; stroke: #334155; stroke-width: 2; rx: 12; }
+      .blue { fill: #102a43; stroke: #38bdf8; stroke-width: 2; rx: 12; }
+      .green { fill: #102b25; stroke: #34d399; stroke-width: 2; rx: 12; }
+      .amber { fill: #302713; stroke: #fbbf24; stroke-width: 2; rx: 12; }
+      .arrow { stroke: #7dd3fc; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="780" fill="#0b1020"/>
+  <text x="50" y="48" class="title">qwen38-engine: jalur konteks panjang Ternary Bonsai</text>
+  <text x="50" y="76" class="subtitle">Kernel ternary v2, tiled prefill, split-K decode, dan plumbing MTP pada GTX 1070 Ti (SM 6.1)</text>
+
+  <rect x="40" y="112" width="180" height="88" class="blue"/>
+  <text x="130" y="142" text-anchor="middle" class="label">Bonsai GGUF</text>
+  <text x="130" y="167" text-anchor="middle" class="body">PTQ1_0 / Q2_0</text>
+  <text x="130" y="188" text-anchor="middle" class="small">Hadamard Bonsai</text>
+
+  <path d="M220 156 H270" class="arrow"/>
+  <rect x="280" y="112" width="220" height="88" class="blue"/>
+  <text x="390" y="142" text-anchor="middle" class="label">Auto-fit GPU</text>
+  <text x="390" y="167" text-anchor="middle" class="body">Proyeksi maks. 7373 MiB</text>
+  <text x="390" y="188" text-anchor="middle" class="small">Head / MTP otomatis</text>
+
+  <path d="M500 156 H550" class="arrow"/>
+  <rect x="560" y="112" width="220" height="88" class="blue"/>
+  <text x="670" y="142" text-anchor="middle" class="label">Kernel ternary v2</text>
+  <text x="670" y="167" text-anchor="middle" class="body">135/135 byte-identical</text>
+  <text x="670" y="188" text-anchor="middle" class="small">PTQ1_0 ffn_up 77,6 GB/s</text>
+
+  <path d="M780 156 H830" class="arrow"/>
+  <rect x="840" y="112" width="320" height="88" class="green"/>
+  <text x="1000" y="142" text-anchor="middle" class="label">Attention causal GQA</text>
+  <text x="1000" y="167" text-anchor="middle" class="body">Prefill tiled / decode split-K</text>
+  <text x="1000" y="188" text-anchor="middle" class="small">FP32 arithmetic, KV iso3</text>
+
+  <text x="50" y="246" class="h2">Pemilihan kernel berdasarkan panjang konteks</text>
+  <rect x="40" y="270" width="230" height="100" class="amber"/>
+  <text x="155" y="303" text-anchor="middle" class="label">Konteks model</text>
+  <text x="155" y="330" text-anchor="middle" class="body">16 .. 131072 posisi</text>
+  <text x="155" y="352" text-anchor="middle" class="small">Qwen: maks. 8192</text>
+
+  <path d="M270 320 H320" class="arrow"/>
+  <rect x="330" y="268" width="360" height="100" class="blue"/>
+  <text x="510" y="301" text-anchor="middle" class="label">Sampai 8192: kernel shared-memory</text>
+  <text x="510" y="327" text-anchor="middle" class="body">Skor attention muat di SM 6.1</text>
+  <text x="510" y="349" text-anchor="middle" class="small">Jalur lama tidak berubah</text>
+
+  <path d="M270 320 C300 320 300 420 320 420" class="arrow"/>
+  <rect x="330" y="388" width="360" height="108" class="green"/>
+  <text x="510" y="421" text-anchor="middle" class="label">Di atas 8192: tiled + split-K</text>
+  <text x="510" y="447" text-anchor="middle" class="body">Prefill: 256 posisi per tile</text>
+  <text x="510" y="469" text-anchor="middle" class="body">Decode: 64 slice + combine</text>
+  <text x="510" y="487" text-anchor="middle" class="small">Paritas 28/28 PASS</text>
+
+  <path d="M690 442 H730" class="arrow"/>
+  <rect x="740" y="268" width="420" height="228" class="card"/>
+  <text x="765" y="300" class="h2">Probe decode pada kedalaman 131072</text>
+  <text x="765" y="336" class="label">PTQ1_0</text>
+  <text x="890" y="336" class="metric">4,5906 tok/s</text>
+  <text x="1080" y="336" class="body">7349 MiB</text>
+  <text x="765" y="364" class="label">Q2_0</text>
+  <text x="890" y="364" class="metric">0,4655 tok/s</text>
+  <text x="1080" y="364" class="body">7295 MiB</text>
+  <line x1="765" y1="384" x2="1135" y2="384" stroke="#475569" stroke-width="1"/>
+  <text x="765" y="412" class="body">Warm-up N-33; 32 langkah di N-32..N-1</text>
+  <text x="765" y="436" class="body">64 layer GPU (PTQ1_0); 53 (Q2_0)</text>
+  <text x="765" y="460" class="small">KV dikosongkan; bukan prefill 128K</text>
+  <text x="765" y="482" class="small">Q2_0 64K sempat 7417 MiB (transient)</text>
+
+  <rect x="40" y="540" width="1120" height="120" class="green"/>
+  <text x="65" y="573" class="h2">Generasi dan plumbing MTP</text>
+  <text x="65" y="601" class="body">Prompt needle 4K tanpa MTP: PTQ1_0 8,1536 tok/s; Q2_0 8,2092 tok/s; jawaban MAGENTA-FALCON-42.</text>
+  <text x="65" y="627" class="body">PTQ1_0 + blk.64 Qwen (uji plumbing): MTP 0 11,4932; MTP 2 17,7078 tok/s; 158/198 draft diterima.</text>
+  <text x="65" y="649" class="small">Head trained pada Bonsai belum tersedia; alat korpus, distilasi, dan injeksi ada di tools/bonsai_mtp_train/.</text>
+
+  <rect x="40" y="684" width="1120" height="60" class="amber"/>
+  <text x="65" y="710" class="warn">--depth-bench mengosongkan KV: ini biaya decode, bukan prefill 128K penuh atau bukti kualitas retrieval.</text>
+  <text x="65" y="732" class="body">Server 69/69 PASS setelah perbaikan slot Pool; klaim lengkap: CLAIMS.md C-73..C-86.</text>
+
+  <text x="50" y="768" class="small">Sumber: qwen38-engine/bench/results/bonsai128k/ • state 2026-11-19</text>
+</svg>

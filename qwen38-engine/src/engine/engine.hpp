@@ -35,6 +35,8 @@ struct EngineConfig {
     double vram_budget_mib = 7373.0;   // device memory cap of the process (CUDA context included), --vram-budget-mib
     std::vector<int> gpu_layer_list;
     bool kv_iso3 = true;
+    int gpu_head = -1;           // LM head on the GPU: -1 auto (when 64 layers + head fit), 0 CPU, 1 required
+    int gpu_mtp = -1;            // MTP block (blk.64) on the GPU: -1 auto (needs the GPU head and room), 0 CPU, 1 required
     uint32_t dp4a_mask = (1u << 11) | (1u << 12) | (1u << 13) | (1u << 14) | (1u << 20) | (1u << 21) | (1u << 23);
     // Prefill batches of at least stream_min_t tokens (first call, position 0) run the CPU layers on the GPU too, one layer
     // at a time through a staging buffer. 0 disables it.
@@ -141,6 +143,12 @@ private:
     void forward_stream(int T, int pos0);
     void carve_buffers(Arena & a, int g0, bool roll);   // every host buffer; run on a measuring arena first
     size_t arena_bytes_need_ = 0;
+    bool head_on_ = false;     // LM head runs on the GPU (GpuLayers::head)
+    bool mtp_gpu_ = false;     // MTP block runs on the GPU (GpuLayers::mtp_forward)
+public:
+    bool gpu_head_on() const { return head_on_; }
+    bool gpu_mtp_on() const { return mtp_gpu_; }
+private:
     // y = W . hadamard(x) for a ternary (PTQ1_0 / Q2_0) weight, else y = W . x. `width` is the input dimension
     // the rotation applies to (5120, 6144 or 17408) and picks the sign vector and the rotated scratch buffer.
     void tmatmul(const QMat & W, const float * x, int64_t T, float * y, int width, uint8_t * act);

@@ -1,6 +1,7 @@
 // Long-context attention parity (exp/bonsai-128k-context).
 //  1. Fast path vs tiled path on the same cache (n <= 8192): op_attention with ctx_max = 8192 (scores in shared memory)
 //     against ctx_max = 16384 (tiled online softmax). Both KV formats.
+//  3. Split-K decode path (ctx_max > 8192, T <= 8, partials + combine) vs the same double reference.
 //  2. Tiled path vs a double-precision CPU reference at n = 4096, 32768, 65536 and 131072 positions, both KV formats
 //     (iso3 reference = iso3_dequantize_block_ref of the bytes the GPU stored). A "needle" key at position 7 makes one head
 //     attend almost only there, so a tile bookkeeping error (wrong max, lost tile) shows up as a large error.
@@ -25,7 +26,7 @@ constexpr int NH = 24, NKV = 4, HD = 256, KVW = NKV * HD;
 constexpr int T = 2;   // two query rows: row 0 sees n-1 positions, row 1 sees n
 
 struct Dev {
-    float * q = nullptr, * qfull = nullptr, * out = nullptr, * src = nullptr;
+    float * q = nullptr, * qfull = nullptr, * out = nullptr, * src = nullptr, * part = nullptr;
     void * kc = nullptr, * vc = nullptr;
 };
 
@@ -84,8 +85,8 @@ void reference(const std::vector<float> & q, const std::vector<float> & qfull, c
     }
 }
 
-std::vector<float> run_gpu(const Dev & d, int n, bool iso3, int ctx_max) {
-    CK(op_attention(d.q, d.qfull, d.kc, d.vc, d.out, T, n - T, iso3, ctx_max, 0));
+std::vector<float> run_gpu(const Dev & d, int n, bool iso3, int ctx_max, bool split = false) {
+    CK(op_attention(d.q, d.qfull, d.kc, d.vc, d.out, T, n - T, iso3, ctx_max, 0, nullptr, split ? d.part : nullptr));
     CK(cudaDeviceSynchronize());
     std::vector<float> o(static_cast<size_t>(T) * NH * HD);
     CK(cudaMemcpy(o.data(), d.out, o.size() * sizeof(float), cudaMemcpyDeviceToHost));
@@ -122,6 +123,7 @@ int main(int argc, char ** argv) {
     CK(cudaMalloc(&d.qfull, qfull.size() * 4));
     CK(cudaMalloc(&d.out, q.size() * 4));
     CK(cudaMalloc(&d.src, sizeof(float) * 512 * KVW));
+    CK(cudaMalloc(&d.part, sizeof(float) * op_attention_part_floats()));
     CK(cudaMemcpy(d.q, q.data(), q.size() * 4, cudaMemcpyHostToDevice));
     CK(cudaMemcpy(d.qfull, qfull.data(), qfull.size() * 4, cudaMemcpyHostToDevice));
 
@@ -146,11 +148,19 @@ int main(int argc, char ** argv) {
                         ok ? "PASS" : "FAIL", iso3 ? "iso3" : "f32 ", n, e.max_abs, e.rms_ref, e.rel);
         }
         // 2. tiled vs double reference
-        for (int n : {4096, 32768, 65536, 131072}) {
+        for (int n : {100, 4096, 32768, 65536, 131072}) {
             if (n > max_n) continue;
             const std::vector<float> tiled = run_gpu(d, n, iso3, 131072);
             std::vector<double> ref;
             reference(q, qfull, Kh, Vh, n, ref);
+            {
+                const std::vector<float> sp = run_gpu(d, n, iso3, 131072, true);
+                const Err es = compare(sp, ref);
+                const bool oks = es.rel < 1e-4;
+                fails += !oks;
+                std::printf("[%s] kv=%s n=%6d split-K(64 slices) vs double ref: max_abs %.3e rms %.3e rel %.3e\n",
+                            oks ? "PASS" : "FAIL", iso3 ? "iso3" : "f32 ", n, es.max_abs, es.rms_ref, es.rel);
+            }
             const Err e = compare(tiled, ref);
             // needle: head 0 of row 1 vs V row 7 (gated) -- the reference itself says how sharp it is
             const bool ok = e.rel < 1e-4;

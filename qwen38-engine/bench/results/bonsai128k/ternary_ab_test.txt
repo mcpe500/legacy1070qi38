@@ -1,0 +1,1 @@
+ternary_ab_test: 135 cases, 135 bit-identical, 0 differ -> PASS
