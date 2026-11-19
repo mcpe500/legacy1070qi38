@@ -1,149 +1,326 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1760" viewBox="0 0 1200 1760" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="2500" viewBox="0 0 1440 2500" role="img" aria-labelledby="title desc">
   <title id="title">qwen38-engine: kuantisasi, TPS, konteks, dan intelligence</title>
-  <desc id="desc">Matriks kuantisasi terukur, throughput per konteks, hasil intelligence, dan batas dukungan engine pada GTX 1070 Ti.</desc>
+  <desc id="desc">Matriks hasil terukur untuk kuantisasi Qwen dan Ternary Bonsai, throughput per konteks, hasil intelligence, serta batas dukungan engine di GTX 1070 Ti.</desc>
+
   <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070b16"/>
+      <stop offset="0.55" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#101a2d"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#16233b" stop-opacity="0.94"/>
+      <stop offset="1" stop-color="#101a2d" stop-opacity="0.96"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2c47" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#152238" stop-opacity="0.94"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#818cf8"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#60a5fa"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+    <filter id="soft" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000000" flood-opacity="0.36"/>
+    </filter>
     <style>
-      .title { font: 700 28px sans-serif; fill: #f8fafc; }
-      .subtitle { font: 400 16px sans-serif; fill: #cbd5e1; }
-      .h2 { font: 700 18px sans-serif; fill: #f8fafc; }
-      .head { font: 700 14px sans-serif; fill: #e2e8f0; }
-      .body { font: 400 14px sans-serif; fill: #dbeafe; }
-      .metric { font: 700 14px sans-serif; fill: #86efac; }
-      .small { font: 400 13px sans-serif; fill: #cbd5e1; }
-      .warn { font: 600 14px sans-serif; fill: #fde68a; }
-      .blue { fill: #102a43; stroke: #38bdf8; stroke-width: 2; rx: 12; }
-      .green { fill: #102b25; stroke: #34d399; stroke-width: 2; rx: 12; }
-      .amber { fill: #302713; stroke: #fbbf24; stroke-width: 2; rx: 12; }
-      .card { fill: #172033; stroke: #334155; stroke-width: 2; rx: 12; }
+      .title { font: 700 40px sans-serif; fill: #f8fafc; }
+      .subtitle { font: 400 18px sans-serif; fill: #cbd5e1; }
+      .panel-title { font: 700 25px sans-serif; fill: #f8fafc; }
+      .card-title { font: 700 19px sans-serif; fill: #f8fafc; }
+      .th { font: 700 16px sans-serif; fill: #e2e8f0; }
+      .td { font: 400 15px sans-serif; fill: #dbeafe; }
+      .metric { font: 700 16px sans-serif; fill: #86efac; }
+      .cyan-text { font: 700 16px sans-serif; fill: #7dd3fc; }
+      .amber-text { font: 700 15px sans-serif; fill: #fde68a; }
+      .small { font: 400 14px sans-serif; fill: #cbd5e1; }
+      .muted { font: 400 14px sans-serif; fill: #94a3b8; }
+      .badge { font: 700 14px sans-serif; fill: #0b1020; }
+      .footer { font: 400 14px sans-serif; fill: #cbd5e1; }
+      .panel { fill: url(#panel); stroke: #334155; stroke-width: 1.5; rx: 26; filter: url(#soft); }
+      .card { fill: url(#card); stroke: #3b4a66; stroke-width: 1; rx: 20; }
+      .chip { fill: #172236; stroke: #3b4a66; stroke-width: 1; rx: 999; }
+      .row { fill: #ffffff; fill-opacity: 0.035; rx: 10; }
     </style>
   </defs>
 
-  <rect x="0" y="0" width="1200" height="1760" fill="#0b1020"/>
-  <text x="50" y="48" class="title">qwen38-engine: kuantisasi, TPS, konteks, intelligence</text>
-  <text x="50" y="76" class="subtitle">Terukur di GTX 1070 Ti SM 6.1 + Ryzen 5 2400G • temperature 0 • satu runtime GPU pada satu waktu • 2026-11-19</text>
+  <rect width="1440" height="2500" fill="url(#bg)"/>
+  <circle cx="1260" cy="110" r="230" fill="#38bdf8" opacity="0.05"/>
+  <circle cx="180" cy="2340" r="270" fill="#34d399" opacity="0.045"/>
 
-  <rect x="40" y="105" width="1120" height="480" class="blue"/>
-  <text x="65" y="138" class="h2">A. Kuantisasi dan decode tok/s yang diukur</text>
-  <text x="65" y="172" class="head">Qwen3.8-27B / runtime lain</text>
-  <text x="65" y="200" class="body">Q4_K_M stock + FFN 17..64 di CPU: <tspan class="metric">2.85 tok/s</tspan> konteks pendek (C-54)</text>
-  <text x="65" y="228" class="body">Q4_K_M engine, 4K, MTP 0: <tspan class="metric">2.7191 tok/s</tspan>; adaptive MTP 512: <tspan class="metric">3.130 tok/s</tspan> (C-80/C-81)</text>
-  <text x="65" y="256" class="body">Q4_0 stock: <tspan class="metric">2.39 tok/s</tspan>; IQ4_XS stock: <tspan class="metric">2.29 tok/s</tspan> (C-50/C-54)</text>
-  <text x="65" y="284" class="body">IQ4_XS 4K + FFN 21..64 di CPU: <tspan class="metric">2.87 tok/s</tspan>; UD-IQ3_S: <tspan class="metric">1.67 / 2.40</tspan> (C-60)</text>
-  <text x="65" y="312" class="body">UD-Q3_K_XL 4K: <tspan class="metric">1.85 / 2.25 tok/s</tspan>; IQ3_XXS: <tspan class="metric">1.15 tok/s</tspan> (C-50/C-60)</text>
-  <text x="65" y="340" class="body">Q3-DOWN-XS 4K: <tspan class="metric">5.54 CUDA / 6.51 q4_0 KV / 7.05 Vulkan</tspan> (C-66/C-68)</text>
-  <text x="65" y="368" class="body">Ukuran nyata: Q4_K_M 16.53 GiB; IQ4_XS 15.28 GiB; Q3-DOWN-XS 7.91 GiB (C-13/C-65/C-69)</text>
+  <text x="80" y="78" class="title">qwen38-engine — Kuantisasi, TPS, Konteks, Intelligence</text>
+  <text x="80" y="115" class="subtitle">Hasil terukur pada GTX 1070 Ti SM 6.1, Ryzen 5 2400G, dan 16 GB DDR4 • satu runtime GPU pada satu waktu</text>
 
-  <text x="65" y="404" class="head">Ternary Bonsai 2 27B</text>
-  <text x="65" y="432" class="body">PTQ1_0 1.75 bpw, 5.54 GiB: <tspan class="metric">19.64 tok/s</tspan> external di 512 (C-79)</text>
-  <text x="65" y="460" class="body">Q2_0 2.25 bpw, 7.10 GiB: <tspan class="metric">17.13 tok/s</tspan> external di 512 (C-79)</text>
-  <text x="65" y="488" class="body">Engine 4K tanpa MTP: <tspan class="metric">8.1536 / 8.2092 tok/s</tspan> untuk PTQ1_0 / Q2_0 (C-87)</text>
-  <text x="65" y="516" class="body">Engine PTQ1_0 + blk.64 Qwen di 512: <tspan class="metric">17.7078 tok/s</tspan> MTP 2 vs 11.4932 tanpa MTP (C-84)</text>
-  <text x="65" y="544" class="body">Engine depth-only 131072: <tspan class="metric">4.5906 / 0.4655 tok/s</tspan> untuk PTQ1_0 / Q2_0 (C-76)</text>
-  <text x="65" y="572" class="warn">PQ2_0 2.125 bpw tidak diunduh dan belum diukur; engine belum mendukung type 142.</text>
+  <rect x="80" y="135" width="390" height="37" class="chip"/>
+  <text x="275" y="159" text-anchor="middle" class="small">GTX 1070 Ti • Ryzen 5 2400G • 16 GB DDR4</text>
+  <rect x="485" y="135" width="350" height="37" class="chip"/>
+  <text x="660" y="159" text-anchor="middle" class="small">temperature 0 • seed 42 • sequential GPU</text>
+  <rect x="850" y="135" width="310" height="37" class="chip"/>
+  <text x="1005" y="159" text-anchor="middle" class="small">7373 MiB VRAM • 14,2 GB RAM</text>
+  <rect x="1175" y="135" width="185" height="37" class="chip"/>
+  <text x="1267" y="159" text-anchor="middle" class="small">2026-11-19</text>
 
-  <rect x="40" y="620" width="1120" height="370" class="green"/>
-  <text x="65" y="653" class="h2">B. Matriks decode tok/s per konteks</text>
-  <text x="65" y="685" class="head">Model / runtime</text>
-  <text x="340" y="685" class="head">512</text>
-  <text x="440" y="685" class="head">4K</text>
-  <text x="540" y="685" class="head">16K</text>
-  <text x="640" y="685" class="head">32K</text>
-  <text x="740" y="685" class="head">64K</text>
-  <text x="840" y="685" class="head">128K</text>
-  <text x="940" y="685" class="head">Catatan</text>
-  <line x1="65" y1="701" x2="1135" y2="701" stroke="#475569"/>
-  <text x="65" y="729" class="body">Bonsai Q2_0 external</text>
-  <text x="340" y="729" class="metric">17.13</text>
-  <text x="440" y="729" class="metric">12.43</text>
-  <text x="540" y="729" class="metric">7.20</text>
-  <text x="640" y="729" class="metric">3.57</text>
-  <text x="740" y="729" class="metric">2.04</text>
-  <text x="840" y="729" class="metric">3.98</text>
-  <text x="940" y="729" class="small">128K short-depth</text>
-  <text x="65" y="757" class="body">Bonsai PTQ1_0 fork</text>
-  <text x="340" y="757" class="metric">19.64</text>
-  <text x="440" y="757" class="metric">15.19</text>
-  <text x="540" y="757" class="metric">11.70</text>
-  <text x="640" y="757" class="metric">7.51</text>
-  <text x="740" y="757" class="metric">3.36</text>
-  <text x="840" y="757" class="metric">2.24</text>
-  <text x="940" y="757" class="small">128K short-depth</text>
-  <text x="65" y="785" class="body">Qwen engine Q4_K_M</text>
-  <text x="340" y="785" class="metric">2.947</text>
-  <text x="440" y="785" class="metric">2.245</text>
-  <text x="540" y="785" class="small">limit 4K</text>
-  <text x="640" y="785" class="small">-</text>
-  <text x="740" y="785" class="small">-</text>
-  <text x="840" y="785" class="small">-</text>
-  <text x="940" y="785" class="small">adaptive 3.130 / 2.446</text>
-  <text x="65" y="813" class="body">Qwen stock Q4_K_M</text>
-  <text x="340" y="813" class="metric">2.26</text>
-  <text x="440" y="813" class="metric">2.00</text>
-  <text x="540" y="813" class="metric">1.35</text>
-  <text x="640" y="813" class="small">-</text>
-  <text x="740" y="813" class="small">-</text>
-  <text x="840" y="813" class="small">-</text>
-  <text x="940" y="813" class="small">konteks 512/4K/16K</text>
-  <text x="65" y="849" class="body">Engine Bonsai 4K needle tanpa MTP: <tspan class="metric">PTQ1_0 8.1536; Q2_0 8.2092 tok/s</tspan>; needle MAGENTA-FALCON-42 ditemukan (C-87).</text>
-  <text x="65" y="877" class="body">Engine depth-only 131072: <tspan class="metric">PTQ1_0 4.5906; Q2_0 0.4655 tok/s</tspan> dengan KV dikosongkan (C-76).</text>
-  <text x="65" y="905" class="small">64K memakai prompt penuh; 128K hanya kapasitas plus speed pada kedalaman pendek. Sumber: C-76/C-87/C-88.</text>
-  <text x="65" y="933" class="warn">Jangan menggabungkan angka runtime lain dengan angka qwen38-engine.</text>
+  <rect x="60" y="200" width="1320" height="700" class="panel"/>
+  <rect x="60" y="200" width="7" height="700" fill="url(#cyan)" rx="4"/>
+  <text x="105" y="252" class="panel-title">A • Kuantisasi dan decode tok/s terukur</text>
+  <text x="105" y="285" class="muted">Semua nilai adalah hasil di mesin ini; tanda “/” memisahkan dua konfigurasi runtime yang berbeda.</text>
 
-  <rect x="40" y="1025" width="1120" height="315" class="amber"/>
-  <text x="65" y="1058" class="h2">C. Intelligence terukur: Qwen Q4_K_M versus Bonsai</text>
-  <text x="65" y="1090" class="head">Ukuran</text>
-  <text x="360" y="1090" class="head">Qwen Q4_K_M</text>
-  <text x="560" y="1090" class="head">Bonsai Q2_0</text>
-  <text x="745" y="1090" class="head">Bonsai PTQ1_0</text>
-  <text x="930" y="1090" class="head">Paired p</text>
-  <line x1="65" y1="1106" x2="1135" y2="1106" stroke="#475569"/>
-  <text x="65" y="1134" class="body">WikiText-2 PPL</text>
-  <text x="360" y="1134" class="metric">5.916 ± 0.140</text>
-  <text x="560" y="1134" class="metric">7.995 ± 0.204</text>
-  <text x="745" y="1134" class="metric">8.000 ± 0.204</text>
-  <text x="930" y="1134" class="small">-</text>
-  <text x="65" y="1162" class="body">KLD vs Qwen Q4_K_M</text>
-  <text x="360" y="1162" class="small">reference</text>
-  <text x="560" y="1162" class="metric">0.3561</text>
-  <text x="745" y="1162" class="metric">0.3561</text>
-  <text x="930" y="1162" class="small">-</text>
-  <text x="65" y="1190" class="body">Same top-1 token</text>
-  <text x="360" y="1190" class="small">reference</text>
-  <text x="560" y="1190" class="metric">76.48%</text>
-  <text x="745" y="1190" class="metric">76.45%</text>
-  <text x="930" y="1190" class="small">-</text>
-  <text x="65" y="1218" class="body">HellaSwag N=100</text>
-  <text x="360" y="1218" class="metric">83.0%</text>
-  <text x="560" y="1218" class="metric">72.0%</text>
-  <text x="745" y="1218" class="metric">72.0%</text>
-  <text x="930" y="1218" class="warn">0.001</text>
-  <text x="65" y="1246" class="body">Winogrande N=200</text>
-  <text x="360" y="1246" class="metric">77.5%</text>
-  <text x="560" y="1246" class="metric">73.5%</text>
-  <text x="745" y="1246" class="metric">73.5%</text>
-  <text x="930" y="1246" class="small">0.268</text>
-  <text x="65" y="1274" class="body">ARC-Challenge N=100</text>
-  <text x="360" y="1274" class="metric">52.0%</text>
-  <text x="560" y="1274" class="metric">48.0%</text>
-  <text x="745" y="1274" class="small">-</text>
-  <text x="930" y="1274" class="small">0.481</text>
-  <text x="65" y="1302" class="body">MMLU N=150</text>
-  <text x="360" y="1302" class="metric">43.3%</text>
-  <text x="560" y="1302" class="metric">46.7%</text>
-  <text x="745" y="1302" class="small">-</text>
-  <text x="930" y="1302" class="small">0.383</text>
-  <text x="65" y="1330" class="body">Q3-DOWN-XS intelligence: PPL <tspan class="metric">8.4615</tspan> (+22% vs Q4_K_M), KLD <tspan class="metric">0.2728</tspan>, same-top-p 78.2% (C-67).</text>
+  <rect x="100" y="315" width="640" height="500" class="card"/>
+  <rect x="100" y="315" width="640" height="58" fill="#38bdf8" fill-opacity="0.10" rx="20"/>
+  <text x="130" y="352" class="card-title">Qwen3.8-27B</text>
+  <text x="620" y="352" text-anchor="end" class="small">decode tok/s • konteks</text>
+  <line x1="120" y1="373" x2="720" y2="373" stroke="#485569"/>
 
-  <rect x="40" y="1375" width="1120" height="270" class="card"/>
-  <text x="65" y="1408" class="h2">D. Dukungan engine, batas konteks, dan batas interpretasi</text>
-  <text x="65" y="1440" class="body">Kuantisasi Qwen di jalur engine: Q3_K, Q4_K, Q5_K, Q6_K, Q8_0, IQ4_NL, IQ3_S, IQ4_XS melalui ggml + DP4A.</text>
-  <text x="65" y="1468" class="body">Kuantisasi Bonsai di jalur engine: PTQ1_0 dan Q2_0 dengan basis Hadamard. PQ2_0 (type 142) belum didukung.</text>
-  <text x="65" y="1496" class="body">Konteks: Qwen K-quant maksimum 8192; Bonsai maksimum 131072; prefill penuh 128K belum dijalankan.</text>
-  <text x="65" y="1524" class="body">Kernel: ≤8192 shared-memory; di atasnya tiled online-softmax prefill dan split-K 64 slice decode (28/28 parity PASS).</text>
-  <text x="65" y="1552" class="body">State: round-trip Qwen, PTQ1_0, dan Q2_0 PASS pada konfigurasi sama; belum portable antar konfigurasi.</text>
-  <text x="65" y="1580" class="warn">--depth-bench mengosongkan KV: biaya decode pada kedalaman N, bukan prefill penuh dan bukan uji kualitas retrieval.</text>
-  <text x="65" y="1608" class="body">Konteks 4K needle Bonsai menjawab MAGENTA-FALCON-42, tetapi belum ada benchmark kualitas pada 128K.</text>
+  <rect x="120" y="385" width="600" height="40" class="row"/>
+  <text x="135" y="411" class="td">Q4_K_M stock + FFN 17..64 ke CPU</text>
+  <text x="615" y="411" text-anchor="end" class="metric">2.85</text>
+  <text x="700" y="411" text-anchor="end" class="small">pendek</text>
 
-  <rect x="40" y="1680" width="1120" height="45" fill="#0f172a" stroke="#334155" stroke-width="1" rx="8"/>
-  <text x="65" y="1709" class="small">Referensi Bonsai adalah Q4_K_M proyek, bukan BF16. Server 69/69 PASS setelah perbaikan Pool. Klaim lengkap: C-73..C-88.</text>
+  <text x="135" y="459" class="td">Q4_K_M engine • MTP 0</text>
+  <text x="615" y="459" text-anchor="end" class="metric">2.7191</text>
+  <text x="700" y="459" text-anchor="end" class="small">4K</text>
+
+  <rect x="120" y="473" width="600" height="40" class="row"/>
+  <text x="135" y="499" class="td">Q4_K_M engine • adaptive MTP</text>
+  <text x="615" y="499" text-anchor="end" class="metric">3.130</text>
+  <text x="700" y="499" text-anchor="end" class="small">512</text>
+
+  <text x="135" y="547" class="td">Q4_0 stock</text>
+  <text x="615" y="547" text-anchor="end" class="metric">2.39</text>
+  <text x="700" y="547" text-anchor="end" class="small">pendek</text>
+
+  <rect x="120" y="561" width="600" height="40" class="row"/>
+  <text x="135" y="587" class="td">IQ4_XS stock / 4K + FFN ke CPU</text>
+  <text x="615" y="587" text-anchor="end" class="metric">2.29 / 2.87</text>
+  <text x="700" y="587" text-anchor="end" class="small">pendek / 4K</text>
+
+  <text x="135" y="635" class="td">UD-IQ3_S -ngl / -ot</text>
+  <text x="615" y="635" text-anchor="end" class="metric">1.67 / 2.40</text>
+  <text x="700" y="635" text-anchor="end" class="small">4K</text>
+
+  <rect x="120" y="649" width="600" height="40" class="row"/>
+  <text x="135" y="675" class="td">UD-Q3_K_XL -ngl / -ot</text>
+  <text x="615" y="675" text-anchor="end" class="metric">1.85 / 2.25</text>
+  <text x="700" y="675" text-anchor="end" class="small">4K</text>
+
+  <text x="135" y="723" class="td">IQ3_XXS stock</text>
+  <text x="615" y="723" text-anchor="end" class="metric">1.15</text>
+  <text x="700" y="723" text-anchor="end" class="small">pendek</text>
+
+  <rect x="120" y="737" width="600" height="40" class="row"/>
+  <text x="135" y="763" class="td">Q3-DOWN-XS CUDA / q4_0 / Vulkan</text>
+  <text x="615" y="763" text-anchor="end" class="metric">5.54 / 6.51 / 7.05</text>
+  <text x="700" y="763" text-anchor="end" class="small">4K</text>
+
+  <text x="130" y="802" class="muted">Ukuran berkas: Q4_K_M 16.53 GiB • IQ4_XS 15.28 GiB • Q3-DOWN-XS 7.91 GiB.</text>
+
+  <rect x="780" y="315" width="580" height="500" class="card"/>
+  <rect x="780" y="315" width="580" height="58" fill="#34d399" fill-opacity="0.10" rx="20"/>
+  <text x="810" y="352" class="card-title">Ternary Bonsai 2 27B</text>
+  <text x="1300" y="352" text-anchor="end" class="small">decode tok/s • konteks</text>
+  <line x1="800" y1="373" x2="1340" y2="373" stroke="#485569"/>
+
+  <rect x="800" y="385" width="540" height="40" class="row"/>
+  <text x="815" y="411" class="td">PTQ1_0 external • PrismML fork</text>
+  <text x="1240" y="411" text-anchor="end" class="metric">19.64</text>
+  <text x="1320" y="411" text-anchor="end" class="small">512</text>
+
+  <text x="815" y="459" class="td">Q2_0 external • stock llama.cpp</text>
+  <text x="1240" y="459" text-anchor="end" class="metric">17.13</text>
+  <text x="1320" y="459" text-anchor="end" class="small">512</text>
+
+  <rect x="800" y="473" width="540" height="40" class="row"/>
+  <text x="815" y="499" class="td">Engine PTQ1_0 • tanpa MTP</text>
+  <text x="1240" y="499" text-anchor="end" class="metric">8.1536</text>
+  <text x="1320" y="499" text-anchor="end" class="small">4K</text>
+
+  <text x="815" y="547" class="td">Engine Q2_0 • tanpa MTP</text>
+  <text x="1240" y="547" text-anchor="end" class="metric">8.2092</text>
+  <text x="1320" y="547" text-anchor="end" class="small">4K</text>
+
+  <rect x="800" y="561" width="540" height="40" class="row"/>
+  <text x="815" y="587" class="td">MTP plumbing • MTP2 / no MTP</text>
+  <text x="1240" y="587" text-anchor="end" class="metric">17.7078 / 11.4932</text>
+  <text x="1320" y="587" text-anchor="end" class="small">512</text>
+
+  <text x="815" y="635" class="td">Engine depth-only • PTQ1_0</text>
+  <text x="1240" y="635" text-anchor="end" class="metric">4.5906</text>
+  <text x="1320" y="635" text-anchor="end" class="small">128K</text>
+
+  <rect x="800" y="649" width="540" height="40" class="row"/>
+  <text x="815" y="675" class="td">Engine depth-only • Q2_0</text>
+  <text x="1240" y="675" text-anchor="end" class="metric">0.4655</text>
+  <text x="1320" y="675" text-anchor="end" class="small">128K</text>
+
+  <text x="815" y="723" class="td">PQ2_0 • type 142</text>
+  <text x="1240" y="723" text-anchor="end" class="amber-text">belum diukur</text>
+  <text x="1320" y="723" text-anchor="end" class="small">-</text>
+
+  <text x="810" y="802" class="muted">PTQ1_0 1.75 bpw / 5.54 GiB • Q2_0 2.25 bpw / 7.10 GiB</text>
+
+  <rect x="60" y="930" width="1320" height="500" class="panel"/>
+  <rect x="60" y="930" width="7" height="500" fill="url(#green)" rx="4"/>
+  <text x="105" y="982" class="panel-title">B • Matriks decode tok/s per konteks</text>
+  <text x="105" y="1015" class="muted">64K memakai prompt penuh; 128K adalah kapasitas dan speed pada kedalaman pendek, bukan prefill penuh.</text>
+
+  <text x="105" y="1063" class="th">Model / runtime</text>
+  <text x="545" y="1063" text-anchor="end" class="th">512</text>
+  <text x="635" y="1063" text-anchor="end" class="th">4K</text>
+  <text x="725" y="1063" text-anchor="end" class="th">16K</text>
+  <text x="815" y="1063" text-anchor="end" class="th">32K</text>
+  <text x="905" y="1063" text-anchor="end" class="th">64K</text>
+  <text x="995" y="1063" text-anchor="end" class="th">128K</text>
+  <text x="1035" y="1063" class="th">Catatan</text>
+  <line x1="100" y1="1078" x2="1340" y2="1078" stroke="#485569"/>
+
+  <rect x="100" y="1090" width="1240" height="42" class="row"/>
+  <text x="115" y="1117" class="td">Bonsai Q2_0 external</text>
+  <text x="545" y="1117" text-anchor="end" class="metric">17.13</text>
+  <text x="635" y="1117" text-anchor="end" class="metric">12.43</text>
+  <text x="725" y="1117" text-anchor="end" class="metric">7.20</text>
+  <text x="815" y="1117" text-anchor="end" class="metric">3.57</text>
+  <text x="905" y="1117" text-anchor="end" class="metric">2.04</text>
+  <text x="995" y="1117" text-anchor="end" class="metric">3.98</text>
+  <text x="1035" y="1117" class="small">runtime lain</text>
+
+  <text x="115" y="1163" class="td">Bonsai PTQ1_0 PrismML fork</text>
+  <text x="545" y="1163" text-anchor="end" class="metric">19.64</text>
+  <text x="635" y="1163" text-anchor="end" class="metric">15.19</text>
+  <text x="725" y="1163" text-anchor="end" class="metric">11.70</text>
+  <text x="815" y="1163" text-anchor="end" class="metric">7.51</text>
+  <text x="905" y="1163" text-anchor="end" class="metric">3.36</text>
+  <text x="995" y="1163" text-anchor="end" class="metric">2.24</text>
+  <text x="1035" y="1163" class="small">runtime lain</text>
+
+  <rect x="100" y="1178" width="1240" height="42" class="row"/>
+  <text x="115" y="1205" class="td">Qwen Q4_K_M qwen38-engine</text>
+  <text x="545" y="1205" text-anchor="end" class="cyan-text">2.947</text>
+  <text x="635" y="1205" text-anchor="end" class="cyan-text">2.245</text>
+  <text x="725" y="1205" text-anchor="end" class="small">limit 4K</text>
+  <text x="815" y="1205" text-anchor="end" class="small">-</text>
+  <text x="905" y="1205" text-anchor="end" class="small">-</text>
+  <text x="995" y="1205" text-anchor="end" class="small">-</text>
+  <text x="1035" y="1205" class="small">adaptive 3.130 / 2.446</text>
+
+  <text x="115" y="1251" class="td">Qwen Q4_K_M stock llama.cpp</text>
+  <text x="545" y="1251" text-anchor="end" class="cyan-text">2.26</text>
+  <text x="635" y="1251" text-anchor="end" class="cyan-text">2.00</text>
+  <text x="725" y="1251" text-anchor="end" class="cyan-text">1.35</text>
+  <text x="815" y="1251" text-anchor="end" class="small">-</text>
+  <text x="905" y="1251" text-anchor="end" class="small">-</text>
+  <text x="995" y="1251" text-anchor="end" class="small">-</text>
+  <text x="1035" y="1251" class="small">512 / 4K / 16K</text>
+
+  <rect x="100" y="1270" width="620" height="120" class="card"/>
+  <text x="125" y="1304" class="card-title">Engine Bonsai • 4K needle</text>
+  <text x="125" y="1334" class="td">PTQ1_0 <tspan class="metric">8.1536 tok/s</tspan> • Q2_0 <tspan class="metric">8.2092 tok/s</tspan></text>
+  <text x="125" y="1362" class="small">Tanpa MTP; needle MAGENTA-FALCON-42 ditemukan pada kedua packing.</text>
+
+  <rect x="760" y="1270" width="580" height="120" class="card"/>
+  <text x="785" y="1304" class="card-title">Engine Bonsai • 131072 depth-only</text>
+  <text x="785" y="1334" class="td">PTQ1_0 <tspan class="metric">4.5906 tok/s</tspan> • Q2_0 <tspan class="metric">0.4655 tok/s</tspan></text>
+  <text x="785" y="1362" class="small">KV dikosongkan; bukan prefill 128K dan bukan uji retrieval.</text>
+
+  <rect x="60" y="1460" width="1320" height="540" class="panel"/>
+  <rect x="60" y="1460" width="7" height="540" fill="url(#amber)" rx="4"/>
+  <text x="105" y="1512" class="panel-title">C • Intelligence terukur</text>
+  <text x="105" y="1545" class="muted">Referensi Bonsai adalah Qwen Q4_K_M yang dipakai proyek, bukan bobot BF16; sampel task 100–200.</text>
+
+  <text x="105" y="1593" class="th">Ukuran</text>
+  <text x="525" y="1593" text-anchor="end" class="th">Qwen Q4_K_M</text>
+  <text x="725" y="1593" text-anchor="end" class="th">Bonsai Q2_0</text>
+  <text x="905" y="1593" text-anchor="end" class="th">Bonsai PTQ1_0</text>
+  <text x="1065" y="1593" text-anchor="end" class="th">Paired p</text>
+  <text x="1105" y="1593" class="th">Status</text>
+  <line x1="100" y1="1608" x2="1340" y2="1608" stroke="#485569"/>
+
+  <rect x="100" y="1620" width="1240" height="42" class="row"/>
+  <text x="115" y="1647" class="td">WikiText-2 PPL</text>
+  <text x="525" y="1647" text-anchor="end" class="metric">5.916 ± 0.140</text>
+  <text x="725" y="1647" text-anchor="end" class="metric">7.995 ± 0.204</text>
+  <text x="905" y="1647" text-anchor="end" class="metric">8.000 ± 0.204</text>
+  <text x="1065" y="1647" text-anchor="end" class="small">-</text>
+  <text x="1105" y="1647" class="small">PPL naik ~35%</text>
+
+  <text x="115" y="1695" class="td">KLD vs Qwen Q4_K_M</text>
+  <text x="525" y="1695" text-anchor="end" class="small">reference</text>
+  <text x="725" y="1695" text-anchor="end" class="metric">0.3561</text>
+  <text x="905" y="1695" text-anchor="end" class="metric">0.3561</text>
+  <text x="1065" y="1695" text-anchor="end" class="small">-</text>
+  <text x="1105" y="1695" class="small">packing setara</text>
+
+  <rect x="100" y="1708" width="1240" height="42" class="row"/>
+  <text x="115" y="1735" class="td">Same top-1 token</text>
+  <text x="525" y="1735" text-anchor="end" class="small">reference</text>
+  <text x="725" y="1735" text-anchor="end" class="metric">76.48%</text>
+  <text x="905" y="1735" text-anchor="end" class="metric">76.45%</text>
+  <text x="1065" y="1735" text-anchor="end" class="small">-</text>
+  <text x="1105" y="1735" class="small">23,5% beda</text>
+
+  <text x="115" y="1783" class="td">HellaSwag N=100</text>
+  <text x="525" y="1783" text-anchor="end" class="metric">83.0%</text>
+  <text x="725" y="1783" text-anchor="end" class="metric">72.0%</text>
+  <text x="905" y="1783" text-anchor="end" class="metric">72.0%</text>
+  <text x="1065" y="1783" text-anchor="end" class="metric">0.001</text>
+  <text x="1105" y="1783" class="amber-text">signifikan</text>
+
+  <rect x="100" y="1796" width="1240" height="42" class="row"/>
+  <text x="115" y="1823" class="td">Winogrande N=200</text>
+  <text x="525" y="1823" text-anchor="end" class="metric">77.5%</text>
+  <text x="725" y="1823" text-anchor="end" class="metric">73.5%</text>
+  <text x="905" y="1823" text-anchor="end" class="metric">73.5%</text>
+  <text x="1065" y="1823" text-anchor="end" class="metric">0.268</text>
+  <text x="1105" y="1823" class="small">tidak signifikan</text>
+
+  <text x="115" y="1871" class="td">ARC-Challenge N=100</text>
+  <text x="525" y="1871" text-anchor="end" class="metric">52.0%</text>
+  <text x="725" y="1871" text-anchor="end" class="metric">48.0%</text>
+  <text x="905" y="1871" text-anchor="end" class="muted">-</text>
+  <text x="1065" y="1871" text-anchor="end" class="metric">0.481</text>
+  <text x="1105" y="1871" class="small">tidak signifikan</text>
+
+  <rect x="100" y="1884" width="1240" height="42" class="row"/>
+  <text x="115" y="1911" class="td">MMLU N=150</text>
+  <text x="525" y="1911" text-anchor="end" class="metric">43.3%</text>
+  <text x="725" y="1911" text-anchor="end" class="metric">46.7%</text>
+  <text x="905" y="1911" text-anchor="end" class="muted">-</text>
+  <text x="1065" y="1911" text-anchor="end" class="metric">0.383</text>
+  <text x="1105" y="1911" class="small">tidak signifikan</text>
+
+  <rect x="100" y="1944" width="1240" height="36" fill="#fbbf24" fill-opacity="0.08" rx="10"/>
+  <text x="120" y="1968" class="td">Q3-DOWN-XS: PPL <tspan class="metric">8.4615</tspan> (+22% vs Q4_K_M), KLD <tspan class="metric">0.2728</tspan>, same-top-p 78.2%.</text>
+
+  <rect x="60" y="2030" width="1320" height="390" class="panel"/>
+  <rect x="60" y="2030" width="7" height="390" fill="url(#cyan)" rx="4"/>
+  <text x="105" y="2082" class="panel-title">D • Batas engine dan interpretasi</text>
+
+  <rect x="100" y="2110" width="620" height="190" class="card"/>
+  <text x="125" y="2146" class="card-title">Kuantisasi di jalur engine</text>
+  <text x="125" y="2180" class="td">Qwen: Q3_K, Q4_K, Q5_K, Q6_K, Q8_0, IQ4_NL, IQ3_S, IQ4_XS.</text>
+  <text x="125" y="2212" class="td">Bonsai: PTQ1_0 dan Q2_0 dengan basis Hadamard.</text>
+  <text x="125" y="2244" class="td">PQ2_0 type 142: <tspan class="amber-text">belum didukung dan belum diukur</tspan>.</text>
+  <text x="125" y="2276" class="small">Kernel ternary v2: 135/135 byte-identical terhadap referensi a89f467.</text>
+
+  <rect x="760" y="2110" width="580" height="190" class="card"/>
+  <text x="785" y="2146" class="card-title">Konteks dan kernel</text>
+  <text x="785" y="2180" class="td">Qwen K-quant maksimum 8192; Bonsai maksimum 131072.</text>
+  <text x="785" y="2212" class="td">≤8192 shared-memory; di atasnya tiled prefill + split-K decode.</text>
+  <text x="785" y="2244" class="td">State round-trip Qwen, PTQ1_0, Q2_0 PASS pada konfigurasi sama.</text>
+  <text x="785" y="2276" class="small">Prefill penuh 128K belum dijalankan; kualitas 128K belum diukur.</text>
+
+  <rect x="100" y="2320" width="1240" height="70" class="card"/>
+  <text x="125" y="2348" class="card-title">Cara membaca angka</text>
+  <text x="125" y="2374" class="td">--depth-bench mengosongkan KV: biaya decode pada kedalaman N, bukan prefill penuh atau bukti kualitas retrieval.</text>
+
+  <rect x="80" y="2400" width="1280" height="80" class="chip"/>
+  <text x="120" y="2432" class="footer">Sumber: bench/results/bonsai128k/, ternary_bonsai_comparison.md, RUNS.md, INTEL.md</text>
+  <text x="120" y="2458" class="footer">Klaim C-73..C-88 • Server 69/69 PASS setelah perbaikan Pool • SVG statis tanpa script/event</text>
 </svg>
