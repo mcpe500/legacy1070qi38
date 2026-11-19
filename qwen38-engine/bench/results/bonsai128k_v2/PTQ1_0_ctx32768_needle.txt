@@ -1,0 +1,1754 @@
+
+prompt: <|im_start|>user
+Remember this fact for later: the secret passphrase of the vault is MAGENTA-FALCON-42.
+
+Below is a source listing.
+
+===== FILE bench/README.md =====
+# Benchmark
+
+Benchmark engine khusus dan perbandingan sequensial dengan llama.cpp. Dua runtime **tidak boleh
+berjalan bersamaan**; GPU harus kosong sebelum tiap run.
+
+## Instrumen utama
+
+| Skrip | Fungsi |
+|---|---|
+| `compare_llamacpp.sh` | head-to-head Qwen Q4_K_M: prompt 509 token, 256 token decode, llama.cpp lalu `qwen38-engine` |
+| `bonsai_ctx_run.sh` | satu run engine dengan sampler VRAM `nvidia-smi` tiap 100 ms |
+| `bonsai128k_queue.sh` | antrian berurutan probe kedalaman, needle, MTP, dan state 128K |
+| `make_long_prompt.py` | membuat prompt needle + source tree dengan token target yang tepat |
+| `bonsai_bench.sh` | benchmark runtime llama.cpp/PrismML untuk model Bonsai |
+| `bonsai_intel*.sh`, `bonsai_intel_summary.py` | benchmark kualitas/log-likelihood Bonsai |
+| `bench_summary.py` | merangkum JSON run dan membuat tabel Markdown |
+
+## Head-to-head Qwen
+
+```bash
+bench/compare_llamacpp.sh
+```
+
+Hasil utama: [`results/final_comparison.md`](results/final_comparison.md). Run standar memakai
+prompt 509 token, 256 token decode, temperature 0, seed 42, KV `iso3`, MTP 2, empat core fisik,
+dan VRAM maksimum 7373 MiB. Output mentah berada di `results/stage5/`.
+
+## Konteks panjang Ternary Bonsai
+
+Ringkasan terpusat: [`results/bonsai128k/README.md`](results/bonsai128k/README.md).
+
+### Probe decode pada kedalaman
+
+```bash
+bench/bonsai_ctx_run.sh PTQ1_0_ctx131072_depth \
+  -m "$HOME/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf" \
+  --gpu-layers auto --ctx 131072 --depth-bench 131072 -n 33
+```
+
+Ulangi dengan `Q2_0` dan konteks 4096, 32768, serta 65536. Probe:
+
+1. me-reset DeltaNet;
+2. mengosongkan seluruh KV GPU dan CPU;
+3. menjalankan satu warm-up di posisi `depth - 33`, lalu mengukur 32 langkah decode di posisi `depth - 32 ... depth - 1` (perintah memakai `-n 33`).
+
+Jadi angka `decode_tok_s` mengukur **biaya attention pada kedalaman tersebut**, bukan
+prefill prompt sepanjang konteks. KV yang kosong membuat Attention membaca rentang penuh dengan
+nilai nol.
+
+### Generasi nyata pada 4K
+
+```bash
+bench/bonsai_ctx_run.sh Q2_0_ctx4k_short \
+  -m "$HOME/models/27b-bonsai/Ternary-Bonsai-2-27B-Q2_0.gguf" \
+  --gpu-layers auto --ctx 4096 -p "The capital of France is" -n 16
+```
+
+### Prompt panjang dan state
+
+```bash
+python3 bench/make_long_prompt.py "$MODEL" 4096 /tmp/bonsai-4k.txt \
+  --prefix-out /tmp/bonsai-prefix.txt
+
+./build/qwen38-engine -m "$MODEL" --parse-special -f /tmp/bonsai-prefix.txt \
+  --state-save /tmp/bonsai-state.bin --ctx 4096
+./build/qwen38-engine -m "$MODEL" --parse-special -f /tmp/bonsai-question.txt \
+  --state-load /tmp/bonsai-state.bin --ctx 4096 -n 16
+```
+
+`make_long_prompt.py` memakai tokenizer engine sendiri dan corpus source tree. `prompt_code.txt`
+adalah potongan corpus kecil untuk uji needle.
+
+## Kernel dan MTP Bonsai
+
+```bash
+./build/ternary_ab_test      # byte-identity kernel v2 vs referensi
+./build/ternary_bench        # GB/s PTQ1_0/Q2_0 ref vs v2
+./build/qwen38-engine -m "$HOME/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0-mtpqwen.gguf" \
+  --gpu-layers auto --ctx 4096 -f bench/prompt512.txt -n 256 --mtp-adaptive 0 --mtp-steps 2
+```
+
+Alat penyuntikan/distilasi ada di `tools/bonsai_mtp_train/`. Untuk angka plumbing terukur lihat
+`results/bonsai128k/README.md`.
+
+## Bonsai: runtime lain dan kualitas
+
+- Perbandingan runtime: [`results/ternary_bonsai_comparison.md`](results/ternary_bonsai_comparison.md).
+- Log eksperimen 27 langkah: [`results/bonsai/EXPERIMENT-LOG.md`](results/bonsai/EXPERIMENT-LOG.md).
+- Ledger setiap run dan VRAM: [`results/bonsai/RUNS.md`](results/bonsai/RUNS.md).
+- Kualitas: [`results/bonsai/intel/INTEL.md`](results/bonsai/intel/INTEL.md).
+
+Angka 17–20 tok/s pada tabel Bonsai berasal dari llama.cpp/PrismML, bukan `qwen38-engine`.
+Jangan menggabungkannya dengan probe 128K engine.
+
+## Aturan pengukuran
+
+- Temperature 0, seed 42, empat core fisik (`taskset -c 0-3`).
+- Hanya satu proses GPU; periksa `nvidia-smi --query-compute-apps` dan `pgrep` sebelum run.
+- Puncak VRAM adalah sampel `nvidia-smi` tertinggi, bukan angka RAM GPU statis.
+- Budget proses: 7373 MiB VRAM dan 14,2 GB RAM host.
+- File `.vram.csv`, `.err`, `.server.log`, dan log antrian adalah artefak mentah lokal dan tidak
+  boleh di-commit; yang dilacak adalah ringkasan `.txt`/Markdown dan tabel hasil.
+
+Baca dulu `.agents/skills/webui-and-parity-bench/SKILL.md` dan
+`.agents/skills/memory-budget-24gb/SKILL.md`.
+
+===== FILE bench/ab_main_vs_exp.sh =====
+#!/usr/bin/env bash
+# A/B run of two engine binaries on the benchmark prompt (509 tokens + 256 decode, temp 0, seed 42), alternating A, B, A, B so that
+# both see the same page cache state. Each run is a full process (load, prefill, decode). Writes OUTDIR/ab_<label>_<i>.{txt,err,vram.csv}
+# and prints one summary line per run plus a token-identity check of every run against the first A run.
+#   bench/ab_main_vs_exp.sh MAIN_BIN EXP_BIN [ROUNDS=2] [extra engine args...]
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+cd "$ROOT" || exit 2
+A="$1"; B="$2"; R="${3:-2}"; shift 3 2>/dev/null || shift $#
+OUT="${OUTDIR:-$ROOT/bench/results/experiments}"
+mkdir -p "$OUT"
+M="$HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf"
+pkill -x llama-server 2>/dev/null
+for i in $(seq 1 "$R"); do
+  for lab in main exp; do
+    bin="$A"; [ "$lab" = exp ] && bin="$B"
+    while [ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]; do sleep 3; done
+    tag="ab_${lab}_$i"
+    nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 200 > "$OUT/$tag.vram.csv" 2>/dev/null &
+    SMI=$!
+    taskset -c 0-3 "$bin" -m "$M" -p "$(cat bench/prompt512.txt)" -n 256 --temp 0 --seed 42 --gpu-layers 32 --kv iso3 --dp4a all "$@" \
+      > "$OUT/$tag.txt" 2> "$OUT/$tag.err"
+    kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+    python3 - "$OUT" "$tag" <<'PY'
+import json, sys, os
+out, tag = sys.argv[1], sys.argv[2]
+def load(t):
+    l = [x for x in open(os.path.join(out, t + ".txt"), encoding="utf-8").read().splitlines() if x.startswith('{"prompt_tokens"')]
+    return json.loads(l[-1]) if l else None
+d = load(tag)
+if not d:
+    print(tag, "no result"); sys.exit(0)
+v = [int(x) for x in open(os.path.join(out, tag + ".vram.csv")).read().split() if x.strip().isdigit()]
+ref = load("ab_main_1")
+same = "n/a" if not ref else ("IDENTICAL" if ref["ids"] == d["ids"] else "DIFFER")
+acc = 100.0 * d["draft_n_accepted"] / d["draft_n"] if d["draft_n"] else 0
+print(f"{tag}: pp {d['prompt_tokens']/d['prefill_s']:.2f} tok/s (prefill {d['prefill_s']:.1f} s) tg {d['decode_tok_s']:.3f} tok/s "
+      f"MTP {d['draft_n_accepted']}/{d['draft_n']} ({acc:.0f}%) peak VRAM {max(v) if v else 'n/a'} MiB peak RSS {d['peak_rss_kb']/1024:.0f} MiB "
+      f"load {d['load_s']:.1f} s ids vs ab_main_1: {same}")
+PY
+  done
+done
+
+===== FILE bench/bench_summary.py =====
+#!/usr/bin/env python3
+"""Helpers of bench/compare_llamacpp.sh.
+  bench_summary.py llama  TAG OUTDIR NGL SPEC RSS_KB     -> OUTDIR/TAG.summary.json  (from TAG.response.json and TAG.vram.csv)
+  bench_summary.py engine TAG OUTDIR MTP                 -> OUTDIR/TAG.summary.json  (from TAG.txt, the engine's JSON line, and TAG.vram.csv)
+  bench_summary.py table  OUTDIR OUTFILE                 -> the Markdown comparison"""
+import json
+import os
+import sys
+
+
+def vram_peak(path):
+    try:
+        v = [int(x) for x in open(path).read().split() if x.strip().isdigit()]
+        return max(v) if v else None
+    except Exception:
+        return None
+
+
+def first_diff(a, b):
+    n = min(len(a), len(b))
+    for i in range(n):
+        if a[i] != b[i]:
+            return i
+    return None if len(a) == len(b) else n
+
+
+def llama(tag, out, ngl, spec, rss_kb):
+    p = os.path.join(out, tag)
+    s = {"tag": tag, "engine": "llama-server", "ngl": int(ngl), "spec": spec, "ok": False}
+    try:
+        d = json.load(open(p + ".response.json"))
+        t = d["timings"]
+        s.update(ok=True, pp_tok_s=t["prompt_per_second"], tg_tok_s=t["predicted_per_second"], prompt_n=t["prompt_n"], predicted_n=t["predicted_n"],
+                 prompt_ms=t["prompt_ms"], draft_n=t.get("draft_n", 0) or 0, draft_acc=t.get("draft_n_accepted", 0) or 0, tokens=d.get("tokens", []),
+                 text=d.get("content", ""))
+    except Exception as e:
+        s["error"] = str(e)
+    s["peak_vram_mib"] = vram_peak(p + ".vram.csv")
+    s["peak_rss_mib"] = int(rss_kb) / 1024.0 if str(rss_kb).isdigit() else None
+    json.dump(s, open(p + ".summary.json", "w"))
+    print(tag, {k: v for k, v in s.items() if k not in ("tokens", "text")})
+
+
+def engine(tag, out, mtp):
+    p = os.path.join(out, tag)
+    s = {"tag": tag, "engine": "qwen38-engine", "mtp": int(mtp), "ok": False}
+    try:
+        lines = [l for l in open(p + ".txt", encoding="utf-8").read().splitlines() if l.startswith('{"prompt_tokens"')]
+        d = json.loads(lines[-1])
+        s.update(ok=True, pp_tok_s=d["prompt_tokens"] / d["prefill_s"], tg_tok_s=d["decode_tok_s"], prompt_n=d["prompt_tokens"], predicted_n=d["generated_tokens"],
+                 prompt_ms=d["prefill_s"] * 1000.0, ttft_ms=d.get("ttft_s", 0) * 1000.0, draft_n=d["draft_n"], draft_acc=d["draft_n_accepted"], tokens=d["ids"],
+                 text=d["text"], peak_rss_mib=d["peak_rss_kb"] / 1024.0, rss_anon_mib=d["rss_anon_kb"] / 1024.0, heap_allocs=d["heap_allocs_in_decode_forward"],
+                 gpu_layers=d["gpu_layers"], kv=d["kv"], load_s=d["load_s"])
+    except Exception as e:
+        s["error"] = str(e)
+    s["peak_vram_mib"] = vram_peak(p + ".vram.csv")
+    json.dump(s, open(p + ".summary.json", "w"))
+    print(tag, {k: v for k, v in s.items() if k not in ("tokens", "text")})
+
+
+def table(out, outfile):
+    S = {}
+    for f in sorted(os.listdir(out)):
+        if f.endswith(".summary.json"):
+            j = json.load(open(os.path.join(out, f)))
+            S[j["tag"]] = j
+    cap = 7373
+
+    def row(s, label):
+        if not s.get("ok"):
+            return "| %s | failed: %s | | | | | | |" % (label, s.get("error", "no result"))
+        acc = ("%.0f %% (%d / %d)" % (100.0 * s["draft_acc"] / s["draft_n"], s["draft_acc"], s["draft_n"])) if s.get("draft_n") else "no MTP"
+        vram = s.get("peak_vram_mib")
+        return "| %s | %.2f | %.2f | %s | %s | %s | %s | %s |" % (
+            label, s["pp_tok_s"], s["tg_tok_s"], acc, "%d%s" % (vram, "" if vram <= cap else " (over cap)") if vram else "n/a",
+            "%.0f" % s["peak_rss_mib"] if s.get("peak_rss_mib") else "n/a", s["prompt_n"], s["predicted_n"])
+
+    main_l = S.get("llama_selected")
+    main_e = S.get("engine_mtp2")
+    L = []
+    L.append("# Head-to-head: llama.cpp (iso3 KV + draft-mtp 2) vs qwen38-engine\n")
+    L.append("Prompt: `bench/prompt512.txt` (509 tokens), 256 generated tokens, temperature 0, seed 42 (top_k 1 for llama-server). "
+             "GTX 1070 Ti (8192 MiB, VRAM cap 7373 MiB), Ryzen 5 2400G pinned to cores 0-3, 16 GB DDR4, same GGUF (Qwen3.8-27B-UD-Q4_K_M). "
+             "The two programs ran one after the other, never together. Peak VRAM = highest `nvidia-smi` memory.used sample (200 ms) over the whole run, "
+             "Peak RSS = VmHWM of the process (includes the file pages of the mapped model).\n")
+    L.append("## Headline\n")
+    L.append("| Program (configuration) | pp tok/s | tg tok/s | MTP accept | Peak VRAM MiB | Peak DDR4 RSS MiB | prompt tokens | generated |")
+    L.append("|---|---:|---:|---|---:|---:|---:|---:|")
+    if main_l:
+        L.append(row(main_l, "llama-server `-ngl %d` iso3 KV + draft-mtp 2" % main_l["ngl"]))
+    if main_e:
+        L.append(row(main_e, "qwen38-engine `--gpu-layers 32 --kv iso3 --dp4a all --mtp-steps 2`"))
+    L.append("")
+    if main_l and main_e and main_l.get("ok") and main_e.get("ok"):
+        L.append("Ratios (engine / llama-server): pp %.2fx, tg %.2fx.\n" % (main_e["pp_tok_s"] / main_l["pp_tok_s"], main_e["tg_tok_s"] / main_l["tg_tok_s"]))
+        d = first_diff(main_e["tokens"], main_l["tokens"])
+        L.append("Generated tokens, engine vs llama-server: %s.\n" % ("identical (%d tokens)" % len(main_e["tokens"]) if d is None else
+                 "first difference at token %d of %d / %d (both use an iso3 KV cache but with different attention numerics: llama.cpp quantizes the KV of all 16 attention layers and converts it to f16 for flash attention, the engine quantizes the 8 GPU layers and keeps FP32 on the CPU layers; greedy outputs of a 3-bit KV cache are not expected to match for 256 tokens)" % (d, len(main_e["tokens"]), len(main_l["tokens"]))))
+    r2l, r2e = S.get("llama_selected_r2"), S.get("engine_mtp2_r2")
+    if r2l and r2e:
+        L.append("## Repeat round (same commands again; the page cache is in a different state, which moves the prompt-processing numbers)\n")
+        L.append("| Program (configuration) | pp tok/s | tg tok/s | MTP accept | Peak VRAM MiB | Peak DDR4 RSS MiB | prompt tokens | generated |")
+        L.append("|---|---:|---:|---|---:|---:|---:|---:|")
+        L.append(row(r2l, "llama-server `-ngl %d` iso3 KV + draft-mtp 2" % r2l["ngl"]))
+        L.append(row(r2e, "qwen38-engine `--gpu-layers 32 --kv iso3 --dp4a all --mtp-steps 2`"))
+        L.append("")
+    L.append("## All runs\n")
+    L.append("| Run | pp tok/s | tg tok/s | MTP accept | Peak VRAM MiB | Peak DDR4 RSS MiB | prompt tokens | generated |")
+    L.append("|---|---:|---:|---|---:|---:|---:|---:|")
+    for tag in sorted(S):
+        s = S[tag]
+        if tag.startswith("llama_selected"):
+            continue
+        label = ("llama-server -ngl %d, %s" % (s["ngl"], "draft-mtp 2" if s["spec"] != "none" else "no MTP")) if s["engine"] == "llama-server" else \
+                ("qwen38-engine, %s" % ("adaptive MTP" if "adaptive" in tag else "--mtp-steps %d" % s["mtp"]))
+        L.append(row(s, "`%s`: %s" % (tag, label)))
+    L.append("")
+    probes = [s for t, s in S.items() if t.startswith("llama_ngl") and not t.endswith("_r2")]
+    if probes:
+        L.append("## llama-server layer count (largest -ngl whose peak VRAM stays at or under %d MiB)\n" % cap)
+        L.append("| -ngl | peak VRAM MiB | under cap | pp tok/s | tg tok/s |")
+        L.append("|---:|---:|---|---:|---:|")
+        for s in sorted(probes, key=lambda x: x["ngl"]):
+            v = s.get("peak_vram_mib")
+            L.append("| %d | %s | %s | %s | %s |" % (s["ngl"], v if v else "n/a", "yes" if v and v <= cap and s.get("ok") else "no", "%.2f" % s["pp_tok_s"] if s.get("ok") else "failed", "%.2f" % s["tg_tok_s"] if s.get("ok") else "failed"))
+        L.append("")
+    L.append("## Notes\n")
+    L.append("- **Decode (tg):** the engine is about 3 % faster in both rounds (2.58 / 2.59 against 2.50 / 2.51 tok/s). Both programs are bound by reading the CPU-resident weights from DDR4 each step; the engine keeps 32 layers on the GPU, llama.cpp 25, and the engine's MTP accepted 96 % of its drafts against 91 %. The engine without MTP decodes at 2.44, llama-server without MTP at 2.25 tok/s.")
+    L.append("- **Prompt processing (pp):** the engine is slower, 0.47x. The GPU sits on a PCIe Gen3 x1 link (0.84 GB/s measured), and the engine streams the 32 CPU-resident layers (7 GiB) through VRAM for every prefill, which costs about 9 s whatever the prompt length; the engine's pp also includes the MTP prefill (about 5 s for 509 tokens: 16.97 tok/s with `--mtp-steps 0`, 13.4 with 2). llama.cpp's own pp moves with the layer count and the page cache (28.7 tok/s at -ngl 25, 17.0 to 17.4 at -ngl 24 and 26 in the same conditions).")
+    L.append("- **Memory:** the engine's peak RSS is 9.2 GiB against 14.6 GiB for llama-server. llama-server's figure includes the whole mapped 16 GB GGUF; the engine drops the file pages of the layers it keeps in VRAM and streams the rest.")
+    L.append("- **VRAM:** both stay under the 7373 MiB cap (7239 and 7245 MiB). llama-server at -ngl 26 needs 7473 MiB and is excluded.")
+    L.append("- **MTP accept %** is drafts accepted / drafts proposed. The two programs draft with different rules (llama.cpp stops drafting under a confidence threshold, the engine always drafts the configured number), so the percentages are not strictly comparable.")
+    L.append("- Commands: `bench/compare_llamacpp.sh` (this file), engine run = `taskset -c 0-3 build/qwen38-engine -m GGUF -p \"$(cat bench/prompt512.txt)\" -n 256 --temp 0 --seed 42 --gpu-layers 32 --kv iso3 --dp4a all --mtp-steps 2`, llama-server run = `taskset -c 0-3 llama-server -m GGUF -ngl N -c 2048 -np 1 -t 4 -ctk iso3 -ctv iso3 -ctkd iso3 -ctvd iso3 --spec-type draft-mtp --spec-draft-n-max 2`, then POST /completion with `n_predict 256, temperature 0, top_k 1, seed 42, cache_prompt false`. Raw data: `bench/results/stage5/`.\n")
+    open(outfile, "w").write("\n".join(L) + "\n")
+    print("wrote", outfile)
+
+
+if __name__ == "__main__":
+    c = sys.argv[1]
+    if c == "llama":
+        llama(*sys.argv[2:7])
+    elif c == "engine":
+        engine(*sys.argv[2:5])
+    elif c == "table":
+        table(*sys.argv[2:4])
+
+===== FILE bench/bonsai128k_queue.sh =====
+#!/usr/bin/env bash
+# Long-context verification queue of exp/bonsai-128k-context, run strictly one after the other (one engine on the GPU).
+# Prompts: bench/make_long_prompt.py (ChatML: needle + source listing + question, run with --parse-special), e.g.
+#   python3 bench/make_long_prompt.py MODEL.gguf 131008 /tmp/b128/p131008.txt --prefix-out /tmp/b128/pre131008.txt
+# and /tmp/b128/question.txt = the question part alone (the continuation for --state-load / --state-test).
+# Every run goes through bench/bonsai_ctx_run.sh (peak VRAM sampled at 100 ms, max RSS from /usr/bin/time).
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 2
+M=/home/ivan/models/27b-bonsai
+P=/tmp/b128
+R="bench/bonsai_ctx_run.sh"
+log() { echo "[$(date '+%F %T')] $*"; }
+guard() {   # refuse to start while another process holds the GPU
+    local n
+    n=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -c .)
+    if [ "$n" -gt 0 ]; then log "GPU busy (another compute process), stopping"; exit 3; fi
+}
+
+# 1. decode at full depth (KV zeroed), every context, both packings
+for q in PTQ1_0 Q2_0; do
+  for c in 4096 32768 65536 131072; do
+    guard; log "depth $q $c"; $R ${q}_ctx${c}_depth -m $M/Ternary-Bonsai-2-27B-$q.gguf --gpu-layers auto --ctx $c --depth-bench $c -n 33
+  done
+done
+# 2. needle at 4K, both packings, and the MTP test file (Qwen's blk.64 injected, decode with drafts)
+for q in PTQ1_0 Q2_0; do
+  guard; log "needle 4k $q"; $R ${q}_ctx4k_needle_chat -m $M/Ternary-Bonsai-2-27B-$q.gguf --gpu-layers auto --ctx 4096 --parse-special -f $P/p4032.txt -n 24
+done
+guard; log "mtp p512"; $R PTQ1_0mtpqwen_p512_mtp -m $M/Ternary-Bonsai-2-27B-PTQ1_0-mtpqwen.gguf --gpu-layers auto --ctx 4096 -f bench/prompt512.txt -n 256 --mtp-adaptive 0 --mtp-steps 2
+guard; log "nomtp p512"; $R PTQ1_0mtpqwen_p512_mtp0 -m $M/Ternary-Bonsai-2-27B-PTQ1_0-mtpqwen.gguf --gpu-layers auto --ctx 4096 -f bench/prompt512.txt -n 256 --mtp-steps 0
+# 3. 128K: one prefill of the 130965-token prefix, in-process round trip (save, continue, reset, load, continue: bit-identical),
+#    then a fresh process resumes from the file (instant continuation)
+guard; log "ptq1 128k state-test"; $R PTQ1_0_ctx131072_statetest -m $M/Ternary-Bonsai-2-27B-PTQ1_0.gguf --gpu-layers auto --ctx 131072 --parse-special \
+    -f $P/pre131008.txt --state-test $P/ptq1_128k.state --cont-file $P/question.txt -n 24
+guard; log "ptq1 128k load"; $R PTQ1_0_ctx131072_load -m $M/Ternary-Bonsai-2-27B-PTQ1_0.gguf --gpu-layers auto --ctx 131072 --parse-special \
+    --state-load $P/ptq1_128k.state -f $P/question.txt -n 24
+# 4. 32K full needle prompt, 64K save + load
+guard; log "ptq1 32k"; $R PTQ1_0_ctx32768_needle -m $M/Ternary-Bonsai-2-27B-PTQ1_0.gguf --gpu-layers auto --ctx 32768 --parse-special -f $P/p32704.txt -n 24
+guard; log "ptq1 64k save"; $R PTQ1_0_ctx65536_save -m $M/Ternary-Bonsai-2-27B-PTQ1_0.gguf --gpu-layers auto --ctx 65536 --parse-special \
+    -f $P/pre65472.txt --state-save $P/ptq1_64k.state
+guard; log "ptq1 64k load"; $R PTQ1_0_ctx65536_load -m $M/Ternary-Bonsai-2-27B-PTQ1_0.gguf --gpu-layers auto --ctx 65536 --parse-special \
+    --state-load $P/ptq1_64k.state -f $P/question.txt -n 24
+log "done"
+
+===== FILE bench/bonsai_bench.sh =====
+#!/usr/bin/env bash
+# Ternary Bonsai 2 27B vs Qwen3.8-27B-UD-Q4_K_M on the GTX 1070 Ti, one process at a time (never two GPU programs together).
+#   bench/bonsai_bench.sh probe   MODEL BIN TAG KV DEPTH NGL     one llama-bench run: pp512 + tg128 at depth DEPTH, peak VRAM
+#   env: UB (ubatch, default 512), REPS (llama-bench repetitions, default 2)
+#   bench/bonsai_bench.sh server  MODEL BIN TAG KV CTX NGL PROMPT_TOKENS   llama-server at context CTX (iso3 and others):
+#                                 VRAM after load, then one prompt of PROMPT_TOKENS synthetic-text tokens + 128 generated tokens
+# Output: bench/results/bonsai/<TAG>.{json,vram.csv,log}; a summary line on stdout.
+# Guards: refuses to start while another program uses the GPU; -fit off so -ngl and the context are exactly what is asked.
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+OUT="$ROOT/bench/results/bonsai"
+mkdir -p "$OUT"
+CAP=7373
+mode="$1"; shift
+
+gpu_free() {
+  local n
+  n=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -c .)
+  if [ "$n" != "0" ]; then echo "GPU busy (another process): refusing to run"; nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader; return 1; fi
+}
+
+peak() { sort -n "$1" 2>/dev/null | tail -1; }
+
+if [ "$mode" = probe ]; then
+  MODEL="$1"; BIN="$2"; TAG="$3"; KV="$4"; DEPTH="$5"; NGL="$6"
+  gpu_free || exit 3
+  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 100 > "$OUT/$TAG.vram.csv" 2>/dev/null &
+  SMI=$!
+  taskset -c 0-3 "$BIN/llama-bench" -m "$MODEL" -ngl "$NGL" -fa on -ctk "$KV" -ctv "$KV" -p 512 -n 128 -d "$DEPTH" -r "${REPS:-2}" -t 4 -ub "${UB:-512}" -o json \
+    > "$OUT/$TAG.json" 2> "$OUT/$TAG.log"
+  rc=$?
+  kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+  python3 - "$OUT/$TAG.json" "$TAG" "$(peak "$OUT/$TAG.vram.csv")" "$rc" "$CAP" <<'PY'
+import json, sys
+p, tag, vram, rc, cap = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+try:
+    d = json.load(open(p))
+except Exception:
+    d = []
+r = {x.get("n_prompt", 0) and "pp" or "tg": x for x in d}
+pp = r.get("pp", {}).get("avg_ts"); tg = r.get("tg", {}).get("avg_ts")
+ok = rc == 0 and pp is not None and tg is not None
+v = int(vram) if vram and vram.isdigit() else None
+print("%s: rc=%d pp512=%s tg128=%s peak_vram=%s MiB %s" % (tag, rc, "%.2f" % pp if pp else "-", "%.2f" % tg if tg else "-", v,
+      "OK" if ok and v is not None and v <= cap else ("OVER CAP" if ok else "FAILED")))
+PY
+  exit 0
+fi
+
+if [ "$mode" = server ]; then
+  MODEL="$1"; BIN="$2"; TAG="$3"; KV="$4"; CTX="$5"; NGL="$6"; PT="$7"
+  gpu_free || exit 3
+  PORT=8097
+  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 100 > "$OUT/$TAG.vram.csv" 2>/dev/null &
+  SMI=$!
+  taskset -c 0-3 "$BIN/llama-server" -m "$MODEL" -ngl "$NGL" -c "$CTX" -np 1 -t 4 -fa on -fit off -ctk "$KV" -ctv "$KV" \
+    -ub "${UB:-512}" --host 127.0.0.1 --port "$PORT" --no-warmup > "$OUT/$TAG.log" 2>&1 &
+  SRV=$!
+  ready=0
+  for _ in $(seq 1 240); do
+    curl -sf "http://127.0.0.1:$PORT/health" > /dev/null 2>&1 && { ready=1; break; }
+    kill -0 "$SRV" 2>/dev/null || break
+    sleep 2
+  done
+  load_vram=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits)
+  res="{}"
+  if [ "$ready" = 1 ]; then
+    python3 - "$PT" "$PORT" > "$OUT/$TAG.request.json" <<'PY'
+import json, sys, urllib.request
+n, port = int(sys.argv[1]), int(sys.argv[2])
+# synthetic but varied text (numbered report lines), sized to exactly n tokens with the server's own /tokenize
+def line(i):
+    return "Report %d: the station logged %d vehicles, %d cyclists and a temperature of %d degrees." % (i, (i * 37) % 911, (i * 13) % 97, (i * 7) % 41)
+def count(text):
+    req = urllib.request.Request("http://127.0.0.1:%d/tokenize" % port, data=json.dumps({"content": text}).encode(), headers={"Content-Type": "application/json"})
+    return len(json.load(urllib.request.urlopen(req))["tokens"])
+lines = [line(i) for i in range(1, n // 25 + 2)]
+text = "\n".join(lines) + "\nSummary:"
+while count(text) > n and len(lines) > 1:
+    over = count(text) - n
+    lines = lines[:max(1, len(lines) - max(1, over // 30))]
+    text = "\n".join(lines) + "\nSummary:"
+print(json.dumps({"prompt": text, "n_predict": 128, "temperature": 0, "top_k": 1, "seed": 42, "cache_prompt": False, "ignore_eos": True}))
+PY
+    curl -s --max-time 3600 -H 'Content-Type: application/json' --data-binary @"$OUT/$TAG.request.json" \
+      "http://127.0.0.1:$PORT/completion" > "$OUT/$TAG.json"
+  fi
+  kill -TERM "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null
+  kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+  python3 - "$OUT/$TAG.json" "$TAG" "$(peak "$OUT/$TAG.vram.csv")" "$load_vram" "$ready" "$CAP" <<'PY'
+import json, sys
+p, tag, vram, lv, ready, cap = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]), int(sys.argv[6])
+try:
+    t = json.load(open(p)).get("timings", {})
+except Exception:
+    t = {}
+v = int(vram) if vram and vram.isdigit() else None
+ok = ready == 1 and t.get("predicted_n")
+print("%s: ready=%d load_vram=%s MiB peak_vram=%s MiB prompt_n=%s pp=%s tg=%s %s" % (tag, ready, lv, v, t.get("prompt_n"),
+      "%.2f" % t["prompt_per_second"] if t.get("prompt_per_second") else "-", "%.2f" % t["predicted_per_second"] if t.get("predicted_per_second") else "-",
+      "OK" if ok and v is not None and v <= cap else ("OVER CAP" if ok else "FAILED")))
+PY
+  exit 0
+fi
+echo "usage: $0 probe|server ..."; exit 2
+
+===== FILE bench/bonsai_ctx_run.sh =====
+#!/usr/bin/env bash
+# One engine run with peak-VRAM sampling (nvidia-smi, 100 ms) for the exp/bonsai-128k-context sweep.
+# Usage: bench/bonsai_ctx_run.sh <tag> <engine args...>
+# Writes bench/results/bonsai128k/<tag>.txt (stdout), <tag>.err (stderr), <tag>.vram.csv and appends a peak line to <tag>.txt.
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="$ROOT/bench/results/bonsai128k"
+mkdir -p "$OUT"
+tag="$1"; shift
+if pgrep -x llama-server > /dev/null; then echo "llama-server is running, refusing to start the engine" >&2; exit 2; fi
+nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 100 > "$OUT/$tag.vram.csv" &
+smi=$!
+/usr/bin/time -v taskset -c 0-3 "$ROOT/build/qwen38-engine" "$@" > "$OUT/$tag.txt" 2> "$OUT/$tag.err"
+rc=$?
+kill "$smi" 2> /dev/null; wait "$smi" 2> /dev/null
+peak=$(sort -n "$OUT/$tag.vram.csv" | tail -1)
+rss=$(grep "Maximum resident set size" "$OUT/$tag.err" | awk '{print $NF}')
+echo "{\"tag\":\"$tag\",\"rc\":$rc,\"peak_vram_mib\":${peak:-0},\"max_rss_kb\":${rss:-0}}" >> "$OUT/$tag.txt"
+exit $rc
+
+===== FILE bench/bonsai_intel.sh =====
+#!/usr/bin/env bash
+# Intelligence evaluation (log-likelihood scoring with llama-perplexity, no sampling), one GPU program at a time.
+#   bench/bonsai_intel.sh MODEL BIN TAG NGL TASK N
+#   TASK: ppl (WikiText-2 test, ctx 512, N chunks) | hellaswag | winogrande | arc (ARC-Challenge validation) | mmlu (MMLU validation); N = number of tasks
+#   TASK kldbase / kld: KL divergence against reference logits in $KLD_BASE (kldbase writes them, kld reads them)
+#   env: UB (ubatch, default 512), KV (cache type, default f16), DATA (dataset dir, default ~/datasets), CTX (default 512; 1024 for mmlu/arc if needed)
+# Output: bench/results/bonsai/intel/<TAG>.{log,vram.csv}; one summary line on stdout (score, peak VRAM, wall time).
+# Same tokenizer (vocabulary 248320) for both models, so perplexities are directly comparable.
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+OUT="$ROOT/bench/results/bonsai/intel"
+mkdir -p "$OUT"
+CAP=7373
+MODEL="$1"; BIN="$2"; TAG="$3"; NGL="$4"; TASK="$5"; N="$6"
+DATA="${DATA:-$HOME/datasets}"
+n=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -c .)
+if [ "$n" != "0" ]; then echo "GPU busy: refusing to run"; exit 3; fi
+case "$TASK" in
+  ppl)        args=(-f "$DATA/wikitext-2-raw/wiki.test.raw" --chunks "$N") ;;
+  kldbase)    args=(-f "$DATA/wikitext-2-raw/wiki.test.raw" --chunks "$N" --kl-divergence-base "$KLD_BASE") ;;   # writes the reference logits
+  kld)        args=(--chunks "$N" --kl-divergence-base "$KLD_BASE" --kl-divergence) ;;                            # compares against them
+  hellaswag)  args=(-f "$DATA/hellaswag_val_full.txt" --hellaswag --hellaswag-tasks "$N") ;;
+  winogrande) args=(-f "$DATA/winogrande-debiased-eval.csv" --winogrande --winogrande-tasks "$N") ;;
+  arc)        args=(-bf "$DATA/arc-challenge-validation.bin" --multiple-choice --multiple-choice-tasks "$N" -np 5) ;;  # some items have 5 choices
+  mmlu)       args=(-bf "$DATA/mmlu-validation.bin" --multiple-choice --multiple-choice-tasks "$N") ;;
+  *) echo "unknown task $TASK"; exit 2 ;;
+esac
+CTXV="${CTX:-512}"
+nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 100 > "$OUT/$TAG.vram.csv" 2>/dev/null &
+SMI=$!
+trap 'kill "$SMI" 2>/dev/null' EXIT   # never leave the VRAM sampler running if this script is killed
+t0=$(date +%s)
+taskset -c 0-3 "$BIN/llama-perplexity" -m "$MODEL" -ngl "$NGL" -c "$CTXV" -b "$CTXV" -ub "${UB:-512}" -t 4 -fa on \
+  -ctk "${KV:-f16}" -ctv "${KV:-f16}" --seed 42 "${args[@]}" > "$OUT/$TAG.log" 2>&1
+rc=$?
+t1=$(date +%s)
+kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+v=$(sort -n "$OUT/$TAG.vram.csv" | tail -1)
+case "$TASK" in
+  ppl)        score=$(grep -o "Final estimate: PPL = [0-9.]* +/- [0-9.]*" "$OUT/$TAG.log" | sed 's/Final estimate: //') ;;
+  kldbase)    score=$(grep -o "Final estimate: PPL = [0-9.]* +/- [0-9.]*" "$OUT/$TAG.log" | sed 's/Final estimate: //') ;;
+  kld)        score=$(grep -E "^Mean +KLD|^Same top p" "$OUT/$TAG.log" | tr -s " " | paste -sd ";") ;;
+  hellaswag)  score=$(grep -E "^$N[[:space:]]" "$OUT/$TAG.log" | tail -1 | awk '{print "acc_norm " $2 " CI95 " $3 " " $4}') ;;
+  winogrande) score=$(grep -o "Final Winogrande score([0-9]* tasks): [0-9.]* +/- [0-9.]*" "$OUT/$TAG.log") ;;
+  *)          score=$(grep -o "Final result: [0-9.]* +/- [0-9.]*" "$OUT/$TAG.log") ;;
+esac
+st="OK"; [ "$rc" != 0 ] && st="FAILED rc=$rc"; [ -n "$v" ] && [ "$v" -gt "$CAP" ] && st="$st OVER CAP"
+echo "$TAG: task=$TASK n=$N ngl=$NGL score=[${score:-none}] peak_vram=$v MiB wall=$((t1 - t0)) s $st"
+
+===== FILE bench/bonsai_intel_all.sh =====
+#!/usr/bin/env bash
+# Runs the whole intelligence suite for one model, sequentially.  bench/bonsai_intel_all.sh q2|ptq1|qwen
+# The multiple-choice modes run 4 sequences in parallel (4 DeltaNet states, about +450 MiB), so Q2_0 uses 60 GPU layers there.
+# Task sizes: WikiText-2 40 chunks x 512, HellaSwag 200, Winogrande 500, ARC-Challenge 299 (all), MMLU 500 (first 500 of 1531).
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+S="$ROOT/bench/bonsai_intel.sh"
+K="${1:-}"
+case "$K" in
+  q2)   M=~/models/27b-bonsai/Ternary-Bonsai-2-27B-Q2_0.gguf; B=~/llama.cpp/build-iso3/bin; NGL=99; NGL_MC=60; export UB=128 KV=q4_0 ;;
+  ptq1) M=~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf; B=~/llama-prism/llama-prism-b12128-d7b2896; NGL=99; NGL_MC=99; export UB=8 KV=q4_0
+        export LD_LIBRARY_PATH=$B CUDA_CACHE_MAXSIZE=4294967296 ;;
+  qwen) M=~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf; B=~/llama.cpp/build-iso3/bin; NGL=25; NGL_MC=25; export UB=512 KV=q4_0 ;;
+  *) echo "usage: $0 q2|ptq1|qwen"; exit 2 ;;
+esac
+for t in "ppl 40" "hellaswag 200" "winogrande 500" "arc 299" "mmlu 500"; do
+  set -- $t
+  n=$NGL; [ "$1" != ppl ] && n=$NGL_MC
+  [ "$1" = arc ] && [ "$K" = q2 ] && n=59   # ARC runs 5 sequences (one more DeltaNet state)
+  "$S" "$M" "$B" "${K}_${1}" "$n" "$1" "$2" | tee -a "$ROOT/bench/results/bonsai/intel/run_lines.txt"
+done
+
+===== FILE bench/bonsai_intel_plan.sh =====
+#!/usr/bin/env bash
+# Second pass of the intelligence suite (after bonsai_intel_all.sh q2): KL divergence against Qwen, ARC fix, Qwen and PTQ1_0 on smaller subsets.
+# llama.cpp draws task subsets with mt19937(1) without replacement, so the first N tasks of a larger run are exactly the N-task subset:
+# Bonsai's running score at task N (printed in its log) compares directly with a Qwen run of N tasks.
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+S="$ROOT/bench/bonsai_intel.sh"
+RL="$ROOT/bench/results/bonsai/intel/run_lines.txt"
+STOCK=~/llama.cpp/build-iso3/bin
+PRISM=~/llama-prism/llama-prism-b12128-d7b2896
+M2=~/models/27b-bonsai/Ternary-Bonsai-2-27B-Q2_0.gguf
+M1=~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf
+MQ=~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf
+export KLD_BASE=~/kiro-tmp/qwen_q4km_wiki40.kld KV=q4_0
+q()  { UB=512 "$S" "$MQ" "$STOCK" "qwen_$1" 25 "$1" "$2" | tee -a "$RL"; }
+b2() { UB=128 "$S" "$M2" "$STOCK" "q2_$1" "$3" "$1" "$2" | tee -a "$RL"; }
+b1() { LD_LIBRARY_PATH=$PRISM CUDA_CACHE_MAXSIZE=4294967296 UB=8 "$S" "$M1" "$PRISM" "ptq1_$1" 99 "$1" "$2" | tee -a "$RL"; }
+q kldbase 40          # Qwen reference logits + Qwen PPL on the same 40 chunks
+b2 kld 40 99
+b1 kld 40
+b2 arc 298 59         # 298 < 299 so the subset is drawn randomly (prefix property holds); 5 sequences need -np 5 and one GPU layer less
+q hellaswag 100
+q winogrande 200
+q arc 100
+q mmlu 150
+b1 hellaswag 100
+b1 winogrande 200
+
+===== FILE bench/bonsai_intel_summary.py =====
+#!/usr/bin/env python3
+"""Summarises the intelligence suite into bench/results/bonsai/intel/INTEL.md and intel.json.
+Inputs: llama-perplexity logs and VRAM samples in bench/results/bonsai/intel/, run lines (GPU layers, wall time) in intel/run_lines.txt.
+Matched comparison: llama.cpp draws task subsets with mt19937(1) without replacement, so the first N tasks of a larger run are the N-task
+subset; a model's running score at task N (printed per task in its log) is compared with another model's N-task run."""
+import json
+import math
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+D = os.path.join(ROOT, "bench", "results", "bonsai", "intel")
+NAMES = {"q2": "Bonsai `Q2_0`", "ptq1": "Bonsai `PTQ1_0`", "qwen": "Qwen3.8 Q4_K_M"}
+MC = [("hellaswag", "HellaSwag (acc_norm)", 100), ("winogrande", "Winogrande", 200), ("arc", "ARC-Challenge", 100), ("mmlu", "MMLU", 150)]
+
+
+def log(tag):
+    p = os.path.join(D, tag + ".log")
+    return open(p, errors="replace").read() if os.path.exists(p) else None
+
+
+def running(task, text):
+    """{n: accuracy %} from the per-task lines."""
+    if text is None:
+        return {}
+    if task == "hellaswag":
+        rows = re.findall(r"^(\d+)\t([0-9.]+)%\t\[", text, re.M)
+    elif task == "winogrande":
+        rows = re.findall(r"^(\d+)\t([0-9.]+)\t +-?[0-9.]+ +-?[0-9.]+ +\d +\d", text, re.M)
+    else:
+        rows = re.findall(r"^(\d+)\t([0-9.]+)\s*$", text, re.M)
+    return {int(n): float(a) for n, a in rows}
+
+
+def final_ok(task, text):
+    if text is None:
+        return False
+    if task == "hellaswag":
+        return "Final" in text or bool(re.search(r"^\d+\t[0-9.]+%\t\[", text, re.M))
+    if task == "winogrande":
+        return "Final Winogrande score" in text
+    return "Final result:" in text
+
+
+def per_item(task, text, n):
+    """Correct (1) / wrong (0) for items 1..n, reconstructed from the running accuracy: c_i = round(a_i * i - a_(i-1) * (i-1))."""
+    run = running(task, text)
+    out, prev = [], 0.0
+    for i in range(1, n + 1):
+        if i not in run:
+            return None
+        tot = run[i] / 100 * i
+        out.append(int(round(tot - prev)))
+        prev = round(tot)
+    return out
+
+
+def mcnemar(a, b):
+    """Exact two-sided McNemar test on paired outcomes; returns (only_a, only_b, p)."""
+    x = sum(1 for u, v in zip(a, b) if u and not v)
+    y = sum(1 for u, v in zip(a, b) if v and not u)
+    n = x + y
+    if n == 0:
+        return x, y, 1.0
+    k = min(x, y)
+    p = sum(math.comb(n, i) for i in range(0, k + 1)) / 2 ** n
+    return x, y, min(1.0, 2 * p)
+
+
+def se(p, n):
+    p = p / 100
+    return 100 * math.sqrt(max(p * (1 - p), 1e-9) / n)
+
+
+def ppl(text):
+    m = re.search(r"Final estimate: PPL = ([0-9.]+) \+/- ([0-9.]+)", text or "")
+    return (float(m.group(1)), float(m.group(2))) if m else None
+
+
+def kld(text):
+    if not text:
+        return None
+    m = re.search(r"Mean +KLD: +([0-9.]+) ± +([0-9.]+)", text)
+    t = re.search(r"Same top p: +([0-9.]+) ± +([0-9.]+) %", text)
+    r = re.search(r"Mean +PPL\(Q\) +: +([0-9.]+)", text)
+    return dict(kld=float(m.group(1)), kld_se=float(m.group(2)), top1=float(t.group(1)), top1_se=float(t.group(2))) if m and t else None
+
+
+def peak(tag):
+    p = os.path.join(D, tag + ".vram.csv")
+    if not os.path.exists(p):
+        return None
+    v = [int(x) for x in open(p).read().split() if x.isdigit()]
+    return max(v) if v else None
+
+
+def runs():
+    r = {}
+    p = os.path.join(D, "run_lines.txt")
+    for line in open(p) if os.path.exists(p) else []:
+        m = re.match(r"(\S+): task=(\S+) n=(\d+) ngl=(\d+) .* peak_vram=(\d+) MiB wall=(\d+) s (.*)", line.strip())
+        if m:
+            r[m.group(1)] = dict(task=m.group(2), n=int(m.group(3)), ngl=int(m.group(4)), peak=int(m.group(5)), wall=int(m.group(6)), status=m.group(7))
+    return r
+
+
+def collect():
+    res = {"ppl": {}, "kld": {}, "mc": {}}
+    for k, tag in (("q2", "q2_ppl"), ("ptq1", "ptq1_ppl"), ("qwen", "qwen_kldbase")):
+        v = ppl(log(tag))
+        if v:
+            res["ppl"][k] = v
+    for k in ("q2", "ptq1"):
+        v = kld(log(k + "_kld"))
+        if v:
+            res["kld"][k] = v
+    for task, _, n in MC:
+        res["mc"][task] = {"n": n}
+        for k in ("q2", "ptq1", "qwen"):
+            text = log("%s_%s" % (k, task))
+            run = running(task, text)
+            if n in run and (final_ok(task, text) or max(run) > n):
+                a = run[n]
+                full_n = max(run)
+                res["mc"][task][k] = dict(acc=a, se=se(a, n), full_n=full_n, full_acc=run[full_n] if final_ok(task, text) else None)
+        qi = per_item(task, log("qwen_" + task), n)
+        bi = per_item(task, log("q2_" + task), n)
+        if qi and bi:
+            x, y, pv = mcnemar(qi, bi)
+            res["mc"][task]["paired"] = dict(only_qwen=x, only_bonsai=y, p=pv)
+    return res
+
+
+def main():
+    res = collect()
+    rl = runs()
+    json.dump(dict(results=res, runs=rl), open(os.path.join(D, "intel.json"), "w"), indent=1)
+    o = ["# Intelligence evaluation: Ternary Bonsai 2 27B vs Qwen3.8-27B Q4_K_M (2026-11-17)", "",
+         "Log-likelihood scoring with `llama-perplexity` (no sampling). Both models use the same tokenizer (vocabulary 248320), so perplexity and",
+         "KL divergence are directly comparable. Scripts: `bench/bonsai_intel.sh` (one task), `bench/bonsai_intel_all.sh` and `bench/bonsai_intel_plan.sh` (the runs below);",
+         "this file: `python3 bench/bonsai_intel_summary.py`. Datasets: WikiText-2 test, HellaSwag validation, Winogrande debiased, ARC-Challenge and MMLU validation",
+         "(llama.cpp evaluation sets). Every run alone on the GPU, peak VRAM sampled every 100 ms, cap 7373 MiB.", "",
+         "## 1. Language modelling (WikiText-2 test, 40 chunks x 512 tokens = 20,480 tokens)", "",
+         "| Model | PPL ↓ | KL divergence vs Qwen Q4_K_M ↓ | Same top-1 token as Qwen ↑ |", "|---|---:|---:|---:|"]
+    for k in ("qwen", "q2", "ptq1"):
+        p = res["ppl"].get(k)
+        kd = res["kld"].get(k)
+        o.append("| %s | %s | %s | %s |" % (NAMES[k], "%.3f ± %.3f" % p if p else "-", "%.4f ± %.4f" % (kd["kld"], kd["kld_se"]) if kd else ("reference" if k == "qwen" else "-"),
+                                             "%.2f ± %.2f %%" % (kd["top1"], kd["top1_se"]) if kd else ("reference" if k == "qwen" else "-")))
+    o += ["", "The reference logits are Qwen3.8-27B **Q4_K_M** (the project baseline), not the FP16 model, so KL divergence measures how far Bonsai is from the",
+          "baseline we run, not from the original weights.", "",
+          "## 2. Task accuracy on matched subsets (accuracy %, ± binomial standard error)", "",
+          "| Task | N | " + " | ".join(NAMES[k] for k in ("qwen", "q2", "ptq1")) + " | Bonsai `Q2_0` on the larger run |", "|---|---:|---:|---:|---:|---|"]
+    for task, tn, n in MC:
+        row = res["mc"][task]
+        cells = []
+        for k in ("qwen", "q2", "ptq1"):
+            v = row.get(k)
+            cells.append("%.1f ± %.1f" % (v["acc"], v["se"]) if v else "-")
+        big = row.get("q2")
+        bigs = "%.1f %% at N = %d" % (big["full_acc"], big["full_n"]) if big and big.get("full_acc") is not None and big["full_n"] > n else "-"
+        o.append("| %s | %d | %s | %s |" % (tn, n, " | ".join(cells), bigs))
+    o += ["", "Paired test on the same items (Qwen vs Bonsai `Q2_0`; per-item results reconstructed from the running accuracy in the logs, exact McNemar test):", "",
+          "| Task | N | only Qwen correct | only Bonsai correct | p (two-sided) | Reading |", "|---|---:|---:|---:|---:|---|"]
+    for task, tn, n in MC:
+        pr = res["mc"][task].get("paired")
+        if pr:
+            o.append("| %s | %d | %d | %d | %.3f | %s |" % (tn, n, pr["only_qwen"], pr["only_bonsai"], pr["p"],
+                     "Qwen better (p < 0.05)" if pr["p"] < 0.05 and pr["only_qwen"] > pr["only_bonsai"] else
+                     ("Bonsai better (p < 0.05)" if pr["p"] < 0.05 else "no significant difference")))
+    o += ["", "## 3. Runs", "", "| Run | Task | N | GPU layers | Peak VRAM MiB | Wall s | Status |", "|---|---|---:|---:|---:|---:|---|"]
+    for tag in sorted(rl):
+        r = rl[tag]
+        o.append("| `%s` | %s | %d | %d | %d | %d | %s |" % (tag, r["task"], r["n"], r["ngl"], r["peak"], r["wall"], r["status"]))
+    open(os.path.join(D, "INTEL.md"), "w").write("\n".join(o) + "\n")
+    if "-q" not in sys.argv:
+        print("\n".join(o))
+
+
+if __name__ == "__main__":
+    main()
+
+===== FILE bench/bonsai_kv_capacity.py =====
+#!/usr/bin/env python3
+"""Exact memory budget of Ternary Bonsai 2 27B on the GTX 1070 Ti (VRAM cap 7373 MiB, RAM cap 14.2 GiB), all 64 layers on the GPU.
+Inputs: the GGUF headers read by tests/tools/gguf_remote_header.py (bench/results/bonsai/header_*.json) and the fixed GPU overhead
+of the runtime (CUDA context + compute buffers), measured with llama.cpp and passed as --fixed-mib (default: the measured value).
+  python3 bench/bonsai_kv_capacity.py [--fixed-mib N] [--md OUT.md]
+Model facts (from the header): 64 blocks, 16 full-attention layers (every 4th) with 4 KV heads x 256, 48 Gated-DeltaNet layers
+(48 value heads, 128 x 128 FP32 state each, conv state 3 x 10240 FP32). Only the 16 attention layers have a KV cache that grows
+with the context; the DeltaNet state is a constant 149.6 MiB per sequence.
+llama.cpp keeps token_embd on the host (it is only gathered row-wise), so the GPU holds the 64 blocks plus output.weight."""
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CAP_MIB = 7373.0
+RAM_CAP_GIB = 14.2 / 1.073741824   # 14.2 GB (decimal) = 13.22 GiB
+MIB = 1048576.0
+args = sys.argv[1:]
+FIXED = float(args[args.index("--fixed-mib") + 1]) if "--fixed-mib" in args else None
+# Runtime overhead of llama.cpp (CUDA context + compute buffers) measured on this card, stock build (bench/bonsai_overhead.py):
+# about 320 MiB at 4K context and +6.1 KiB per context token beyond that (590-630 MiB at 32K, 760 MiB at 64K, 1080 MiB at 128K).
+OVH_BASE, OVH_PER_TOK = 295.0, 6.1 / 1024.0   # MiB, MiB per token
+MD = args[args.index("--md") + 1] if "--md" in args else None
+
+N_ATTN, N_KV_HEADS, HEAD_DIM, N_DN = 16, 4, 256, 48
+ELEMS_PER_POS_LAYER = 2 * N_KV_HEADS * HEAD_DIM           # K and V
+KV_BYTES = {   # bytes per position per attention layer (K + V), from the block sizes of each cache type
+    "f16": ELEMS_PER_POS_LAYER * 2,
+    "q8_0": ELEMS_PER_POS_LAYER // 32 * 34,
+    "q4_0": ELEMS_PER_POS_LAYER // 32 * 18,
+    "iso3": ELEMS_PER_POS_LAYER // 128 * 50,
+}
+DN_STATE = N_DN * (48 * 128 * 128 * 4 + 3 * 10240 * 4)    # bytes, per sequence
+CTXS = [4096, 8192, 16384, 32768, 65536, 131072, 262144]
+SMEM = 48 * 1024                                            # bytes of shared memory per block on sm_61
+
+
+def load(name):
+    p = os.path.join(ROOT, "bench", "results", "bonsai", "header_%s.json" % name)
+    j = json.load(open(p))
+    t = j["tensors"]
+    blocks = sum(x["nbytes"] for x in t if x["name"].startswith("blk."))
+    out = sum(x["nbytes"] for x in t if x["name"] == "output.weight")
+    emb = sum(x["nbytes"] for x in t if x["name"] == "token_embd.weight")
+    small = sum(x["nbytes"] for x in t if not x["name"].startswith("blk.") and x["name"] not in ("output.weight", "token_embd.weight"))
+    return {"file": j["size"], "blocks": blocks, "output": out, "embd": emb, "small": small}
+
+
+def main():
+    packs = [p for p in ("Q2_0", "PQ2_0", "PTQ1_0") if os.path.exists(os.path.join(ROOT, "bench", "results", "bonsai", "header_%s.json" % p))]
+    def overhead(ctx):
+        return FIXED if FIXED is not None else OVH_BASE + OVH_PER_TOK * ctx
+    L = []
+    L.append("### Weight footprint (from the GGUF headers)\n")
+    L.append("| Packing | file GB | 64 blocks MiB | output.weight MiB | token_embd MiB (host) | GPU weights MiB | left under %d MiB before KV, state and runtime |" % CAP_MIB)
+    L.append("|---|---:|---:|---:|---:|---:|---:|")
+    w = {}
+    for p in packs:
+        d = load(p)
+        g = (d["blocks"] + d["output"] + d["small"]) / MIB
+        w[p] = g
+        L.append("| %s | %.2f | %.1f | %.1f | %.1f | %.1f | %.1f |" % (p, d["file"] / 1e9, d["blocks"] / MIB, d["output"] / MIB, d["embd"] / MIB, g, CAP_MIB - g))
+    L.append("")
+    L.append("### KV cache size (16 attention layers; DeltaNet state is constant %.1f MiB)\n" % (DN_STATE / MIB))
+    L.append("| KV type | bytes / token (16 layers) | " + " | ".join("%dK" % (c // 1024) for c in CTXS) + " |")
+    L.append("|---|---:|" + "---:|" * len(CTXS))
+    for k, b in KV_BYTES.items():
+        L.append("| %s | %d | " % (k, b * N_ATTN) + " | ".join("%.0f MiB" % (b * N_ATTN * c / MIB) for c in CTXS) + " |")
+    L.append("")
+    L.append("### Largest context with every layer on the GPU (runtime overhead %s)\n" %
+             ("fixed at %.0f MiB" % FIXED if FIXED is not None else "from the measured model: %.0f MiB + %.1f KiB per token" % (OVH_BASE, OVH_PER_TOK * 1024)))
+    L.append("| Packing | KV type | VRAM left at 0 tokens MiB | max context (tokens) | " + " | ".join("%dK" % (c // 1024) for c in CTXS) + " |")
+    L.append("|---|---|---:|---:|" + "---|" * len(CTXS))
+    for p in packs:
+        base = CAP_MIB - w[p] - DN_STATE / MIB
+        for k, b in KV_BYTES.items():
+            per = b * N_ATTN / MIB
+            fits = lambda c: base - overhead(c) - per * c >= 0
+            mx = 0
+            lo, hi = 0, 262144
+            while lo < hi:   # largest c with fits(c)
+                mid = (lo + hi + 1) // 2
+                if fits(mid): lo = mid
+                else: hi = mid - 1
+            mx = lo
+            L.append("| %s | %s | %.0f | %s | " % (p, k, base - overhead(0), "%d" % mx if mx > 0 else "does not fit") +
+                     " | ".join("yes" if c <= mx else "no" for c in CTXS) + " |")
+    L.append("")
+    L.append("### Shared memory (48 KiB per block on sm_61)\n")
+    L.append("- qwen38-engine keeps the attention scores of one query row in dynamic shared memory (4 bytes per position plus about 1.1 KiB): "
+             "the kernel can address at most %d positions; the engine is limited to 4096 on purpose." % ((SMEM - 1152) // 4))
+    L.append("- llama.cpp's flash-attention kernels tile the KV sequence, so shared memory does not limit the context there.")
+    L.append("")
+    L.append("### RAM (cap 14.2 GB = %.2f GiB)\n" % RAM_CAP_GIB)
+    for p in packs:
+        d = load(p)
+        L.append("- %s: the mapped file is %.2f GiB; with every layer on the GPU only token_embd (%.0f MiB) and host buffers stay resident, far under the cap." %
+                 (p, d["file"] / 1073741824.0, d["embd"] / MIB))
+    txt = "\n".join(L) + "\n"
+    print(txt)
+    if MD:
+        open(MD, "w").write(txt)
+
+
+if __name__ == "__main__":
+    main()
+
+===== FILE bench/bonsai_ledger.py =====
+#!/usr/bin/env python3
+"""Ledger of every Bonsai / Qwen run in bench/results/bonsai/: configuration from the tag, speeds from the run's JSON, exact peak VRAM from the
+100 ms nvidia-smi samples (.vram.csv, kept locally; the ledger is the committed record), and the status against the 7373 MiB cap.
+  python3 bench/bonsai_ledger.py [--md OUT.md]"""
+import glob
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+R = os.path.join(ROOT, "bench", "results", "bonsai")
+CAP = 7373
+
+
+def peak(tag):
+    p = os.path.join(R, tag + ".vram.csv")
+    if not os.path.exists(p):
+        return None
+    v = [int(x) for x in open(p).read().split() if x.isdigit()]
+    return max(v) if v else None
+
+
+def first_steady(tag):   # load VRAM for server runs: the most frequent sample before the request starts is not recorded; use min of the top plateau
+    return None
+
+
+UB_DEFAULT = {"srv_q2_f16_c4096_ngl99": "512"}   # run before the UB option existed: llama-server default ubatch
+tags = sorted(set(os.path.basename(f)[:-5] for f in glob.glob(os.path.join(R, "*.json"))) |
+              set(os.path.basename(f)[:-4] for f in glob.glob(os.path.join(R, "*.log")) if not f.endswith((".server.log", ".log.server"))))
+rows = []
+for tag in tags:
+    f = os.path.join(R, tag + ".json")
+    if tag.startswith("header_") or tag.startswith("sanity_") or tag.endswith(".request"):
+        continue
+    try:
+        d = json.load(open(f))
+    except Exception:
+        d = None
+    if d is None and os.path.exists(os.path.join(R, tag + ".log")):
+        lg = open(os.path.join(R, tag + ".log"), errors="replace").read()
+        if "out of memory" in lg:
+            err = "load failed: " + re.search(r"allocating [0-9.]+ MiB on device 0: cudaMalloc failed: out of memory", lg).group(0)
+    kind = "server" if tag.startswith("srv_") else "llama-bench"
+    pp = tg = n_prompt = None
+    err = locals().get("err", "") if d is None else ""
+    if kind == "llama-bench" and isinstance(d, list):
+        for x in d:
+            if x.get("n_prompt"):
+                pp = x.get("avg_ts")
+            elif x.get("n_gen"):
+                tg = x.get("avg_ts")
+        n_prompt = 512
+    elif kind == "server" and isinstance(d, dict):
+        t = d.get("timings", {})
+        pp, tg, n_prompt = t.get("prompt_per_second"), t.get("predicted_per_second"), t.get("prompt_n")
+        if "error" in d:
+            err = d["error"].get("message", "")[:70]
+        if t.get("predicted_n") == 1:
+            err = "1 token generated (greedy EOS); rerun with ignore_eos"
+            tg = None
+    elif d is None or d == []:
+        err = "no result (see .log)"
+    lp = os.path.join(R, tag + ".log")
+    if d is None and os.path.exists(lp):
+        mm = re.search(r"allocating [0-9.]+ MiB on device 0: cudaMalloc failed: out of memory", open(lp, errors="replace").read())
+        if mm:
+            err = "load failed: " + mm.group(0)
+    pk = peak(tag)
+    model = "Qwen Q4_K_M" if tag.startswith("qwen") else ("PTQ1_0" if "ptq1" in tag else "Q2_0")
+    runtime = "prism fork" if ("ptq1" in tag or tag.startswith("prism")) else "stock"
+    m = {k: re.search(p, tag) for k, p in {"kv": r"_(f16|q8_0|q8|q4_0|q4|iso3)_", "d": r"_d(\d+)", "c": r"_c(\d+)", "ngl": r"_ngl(\d+)", "ub": r"_ub(\d+)"}.items()}
+    kv = m["kv"].group(1) if m["kv"] else ""
+    kv = {"q4": "q4_0", "q8": "q8_0"}.get(kv, kv)
+    ctx = ("depth %s" % m["d"].group(1)) if m["d"] else (("ctx %s" % m["c"].group(1)) if m["c"] else "")
+    ub = m["ub"].group(1) if m["ub"] else UB_DEFAULT.get(tag, "128" if (kind == "server" and model == "Q2_0") else "512")
+    if "ignore_eos" in err:
+        status, err = "superseded", err + "; VRAM samples overwritten by the rerun"
+    elif pp is None and tg is None:
+        status = "FAILED"
+    else:
+        status = "n/a" if pk is None else ("OK" if pk <= CAP else "OVER CAP")
+    rows.append((tag, model, runtime, kind, kv, ctx, m["ngl"].group(1) if m["ngl"] else "", ub, n_prompt, pp, tg, pk, status, err))
+
+L = ["| run | model | runtime | tool | KV | context | -ngl | -ub | prompt tok | pp tok/s | tg tok/s | peak VRAM MiB | vs 7373 MiB | note |",
+     "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---|---|"]
+for r in rows:
+    tag, model, rt, kind, kv, ctx, ngl, ub, npr, pp, tg, pk, st, err = r
+    L.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+        tag, model, rt, kind, kv, ctx, ngl, ub, npr if npr else "", "%.2f" % pp if pp else "-", "%.2f" % tg if tg else "-",
+        pk if pk is not None else "-", st, err))
+txt = "\n".join(L) + "\n"
+print(txt)
+if "--md" in sys.argv:
+    open(sys.argv[sys.argv.index("--md") + 1], "w").write(txt)
+
+===== FILE bench/bonsai_overhead.py =====
+#!/usr/bin/env python3
+"""Splits every measured llama-server load VRAM of the Bonsai runs into weights + KV + DeltaNet state + runtime overhead,
+using the exact tensor sizes from the GGUF headers. With -ngl N llama.cpp puts the last N blocks on the GPU (blocks 64-N .. 63)
+and output.weight only when N > 64; token_embd stays on the host.
+  python3 bench/bonsai_overhead.py [--md OUT.md]"""
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+R = os.path.join(ROOT, "bench", "results", "bonsai")
+MIB = 1048576.0
+KV = {"f16": 4096, "q8_0": 2176, "q4_0": 1152, "iso3": 800}   # bytes per position per attention layer (K + V)
+DN = 48 * 128 * 128 * 4 + 3 * 10240 * 4                        # bytes of recurrent state per DeltaNet layer
+
+RUNS = [  # tag, packing, runtime, kv, ctx, ngl, ub
+    ("srv_q2_f16_c4096_ngl99", "Q2_0", "stock", "f16", 4096, 99, 512),
+    ("srv_q2_q8_0_c32768_ngl59", "Q2_0", "stock", "q8_0", 32768, 59, 128),
+    ("srv_q2_q4_0_c32768_ngl59", "Q2_0", "stock", "q4_0", 32768, 59, 128),
+    ("srv_q2_iso3_c32768_ngl59", "Q2_0", "stock", "iso3", 32768, 59, 128),
+    ("srv_q2_iso3_c65536_ngl56_full", "Q2_0", "stock", "iso3", 65536, 56, 128),
+    ("srv_q2_iso3_c131072_ngl46", "Q2_0", "stock", "iso3", 131072, 46, 128),
+    ("srv_q2_iso3_c131072_ngl47", "Q2_0", "stock", "iso3", 131072, 47, 128),
+    ("srv_q2_iso3_c131072_ngl48", "Q2_0", "stock", "iso3", 131072, 48, 128),
+    ("srv_q2_iso3_c131072_ngl51", "Q2_0", "stock", "iso3", 131072, 51, 128),
+    ("srv_q2_iso3_c131072_ngl52", "Q2_0", "stock", "iso3", 131072, 52, 128),
+    ("srv_q2_q4_0_c131072_ngl43", "Q2_0", "stock", "q4_0", 131072, 43, 128),
+    ("srv_q2_q4_0_c131072_ngl48", "Q2_0", "stock", "q4_0", 131072, 48, 128),
+    ("srv_ptq1_f16_c16384_ngl99_ub128", "PTQ1_0", "prism", "f16", 16384, 99, 128),
+    ("srv_ptq1_q8_0_c32768_ngl99_ub128", "PTQ1_0", "prism", "q8_0", 32768, 99, 128),
+    ("srv_ptq1_q4_0_c65536_ngl99_ub128", "PTQ1_0", "prism", "q4_0", 65536, 99, 128),
+    ("srv_ptq1_q4_0_c65536_ngl99_ub512", "PTQ1_0", "prism", "q4_0", 65536, 99, 512),
+    ("srv_ptq1_q4_0_c65536_ngl64_ub128", "PTQ1_0", "prism", "q4_0", 65536, 64, 128),
+    ("srv_ptq1_q4_0_c65536_ngl62_ub512", "PTQ1_0", "prism", "q4_0", 65536, 62, 512),
+    ("srv_ptq1_q4_0_c131072_ngl48_ub512", "PTQ1_0", "prism", "q4_0", 131072, 48, 512),
+]
+
+
+def sizes(pack):
+    t = json.load(open(os.path.join(R, "header_%s.json" % pack)))["tensors"]
+    blk = [0] * 64
+    for x in t:
+        if x["name"].startswith("blk."):
+            blk[int(x["name"].split(".")[1])] += x["nbytes"]
+    out = sum(x["nbytes"] for x in t if x["name"] in ("output.weight", "output_norm.weight"))
+    return blk, out
+
+
+def summary(tag):
+    lv = pv = None
+    for line in open(os.path.join(R, tag + ".vram.csv")).read().split():
+        if line.isdigit():
+            pv = max(pv or 0, int(line))
+    # load VRAM: the value printed by the bench script right after /health, recorded in the .log name order -> recompute from csv start
+    return pv
+
+
+def main():
+    md = sys.argv[sys.argv.index("--md") + 1] if "--md" in sys.argv else None
+    L = ["| run | packing / runtime | KV | ctx | -ngl | -ub | GPU weights MiB | KV MiB | state MiB | peak VRAM MiB | runtime overhead MiB (peak - parts) |",
+         "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for tag, pack, rt, kv, ctx, ngl, ub in RUNS:
+        p = os.path.join(R, tag + ".vram.csv")
+        if not os.path.exists(p):
+            continue
+        blk, out = sizes(pack)
+        n = min(ngl, 64)
+        layers = list(range(64 - n, 64))
+        w = sum(blk[i] for i in layers) + (out if ngl > 64 else 0)
+        attn = [i for i in layers if i % 4 == 3]
+        kvb = len(attn) * KV[kv] * ctx
+        st = (len(layers) - len(attn)) * DN
+        peak = summary(tag)
+        L.append("| %s | %s / %s | %s | %d | %d | %d | %.0f | %.0f | %.0f | %d | %.0f |" % (
+            tag, pack, rt, kv, ctx, ngl, ub, w / MIB, kvb / MIB, st / MIB, peak, peak - (w + kvb + st) / MIB))
+    txt = "\n".join(L) + "\n"
+    print(txt)
+    if md:
+        open(md, "w").write(txt)
+
+
+if __name__ == "__main__":
+    main()
+
+===== FILE bench/compare_llamacpp.sh =====
+#!/usr/bin/env bash
+# Sequential head-to-head benchmark (never both programs at the same time):
+#   1. llama.cpp llama-server, iso3 KV (-ctk/-ctv/-ctkd/-ctvd iso3) + --spec-type draft-mtp, --spec-draft-n-max 2, with the layer count
+#      raised from 24 until the peak VRAM of the full run (512-token prompt + 256 decode) would pass the 7373 MiB cap; the
+#      largest count that stays under the cap is "llama_selected". One extra run without MTP at that count.
+#   2. build/qwen38-engine --gpu-layers 32 --kv iso3 --dp4a all --mtp-steps 2 (and one extra run with --mtp-steps 0).
+# Prompt: bench/prompt512.txt, 256 generated tokens, temperature 0, seed 42. Output: bench/results/stage5/ and
+# bench/results/final_comparison.md.   Env: NGL_LIST="24 25 26"  CAP_MIB=7373  SKIP_LLAMA=1  SKIP_ENGINE=1  EXTRA=0
+#   OUTDIR=dir TABLE=file.md (other output places)  ADAPTIVE=1 (extra engine run with --mtp-adaptive 1)  TAGSUF=_r2 (repeat round)
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+cd "$ROOT" || exit 2
+OUT="${OUTDIR:-$ROOT/bench/results/stage5}"
+TABLE="${TABLE:-$ROOT/bench/results/final_comparison.md}"
+mkdir -p "$OUT"
+B="$HOME/llama.cpp/build-iso3/bin"
+M="$HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf"
+PROMPT_FILE="$ROOT/bench/prompt512.txt"
+PORT=8096
+CAP_MIB="${CAP_MIB:-7373}"
+NGL_LIST="${NGL_LIST:-24 25 26}"
+EXTRA="${EXTRA:-1}"
+SUF="${TAGSUF:-}"        # e.g. TAGSUF=_r2 for a repeat round (tags get the suffix)
+N_PREDICT=256
+
+pkill -f llama-server || true
+pkill -x qwen38-engine || true
+sleep 2
+wait_gpu_free() { while [ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]; do sleep 5; done; }
+wait_gpu_free
+
+peak_of() { sort -n "$1" 2>/dev/null | tail -1; }
+
+# run_llama TAG NGL SPEC(draft-mtp|none)  -> writes $OUT/TAG.summary.json; returns 0 when the run finished
+run_llama() {
+  local tag="$1" ngl="$2" spec="$3" extra=()
+  if [ "$spec" != "none" ]; then extra=(-ctkd iso3 -ctvd iso3 --spec-type "$spec" --spec-draft-n-max 2); else extra=(--spec-type none); fi
+  echo "[$(date -u +%T)] llama-server $tag (-ngl $ngl, $spec)"
+  wait_gpu_free
+  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 200 > "$OUT/$tag.vram.csv" 2>/dev/null &
+  local SMI=$!
+  taskset -c 0,1,2,3 "$B/llama-server" -m "$M" -ngl "$ngl" -c 2048 -np 1 -t 4 --host 127.0.0.1 --port "$PORT" \
+    -ctk iso3 -ctv iso3 "${extra[@]}" > "$OUT/$tag.server.log" 2>&1 &
+  local SRV=$! ready=0
+  for _ in $(seq 1 180); do
+    curl -sf "http://127.0.0.1:$PORT/health" > /dev/null 2>&1 && { ready=1; break; }
+    kill -0 "$SRV" 2>/dev/null || break
+    sleep 5
+  done
+  local rss=""
+  if [ "$ready" -eq 1 ]; then
+    python3 - "$PROMPT_FILE" "$N_PREDICT" > "$OUT/$tag.request.json" <<'PY'
+import json, sys
+print(json.dumps({"prompt": open(sys.argv[1], encoding="utf-8").read(), "n_predict": int(sys.argv[2]), "temperature": 0, "top_k": 1,
+                  "seed": 42, "cache_prompt": False, "return_tokens": True}))
+PY
+    curl -s --max-time 1800 -H 'Content-Type: application/json' --data-binary @"$OUT/$tag.request.json" \
+      "http://127.0.0.1:$PORT/completion" > "$OUT/$tag.response.json"
+    rss=$(awk '/VmHWM/{print $2}' "/proc/$SRV/status" 2>/dev/null)
+  else
+    echo "  server not ready (see $OUT/$tag.server.log)"
+    : > "$OUT/$tag.response.json"
+  fi
+  kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+  kill -TERM "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null
+  pkill -f llama-server || true
+  python3 bench/bench_summary.py llama "$tag" "$OUT" "$ngl" "$spec" "${rss:-0}"
+  [ "$ready" -eq 1 ]
+}
+
+run_engine() {  # TAG MTP_STEPS [extra engine args]
+  local tag="$1" mtp="$2"; shift 2
+  echo "[$(date -u +%T)] qwen38-engine $tag (--mtp-steps $mtp)"
+  pkill -x llama-server || true
+  wait_gpu_free
+  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 200 > "$OUT/$tag.vram.csv" 2>/dev/null &
+  local SMI=$!
+  taskset -c 0-3 ./build/qwen38-engine -m "$M" -p "$(cat "$PROMPT_FILE")" -n "$N_PREDICT" --temp 0 --seed 42 \
+    --gpu-layers 32 --kv iso3 --dp4a all --mtp-steps "$mtp" "$@" > "$OUT/$tag.txt" 2> "$OUT/$tag.err"
+  kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+  python3 bench/bench_summary.py engine "$tag" "$OUT" "$mtp"
+}
+
+if [ -z "${SKIP_LLAMA:-}" ]; then
+  selected=""
+  for ngl in $NGL_LIST; do
+    run_llama "llama_ngl${ngl}${SUF}" "$ngl" draft-mtp
+    peak=$(peak_of "$OUT/llama_ngl${ngl}${SUF}.vram.csv")
+    echo "  peak VRAM at -ngl $ngl: ${peak:-NA} MiB (cap $CAP_MIB)"
+    if [ -n "${peak:-}" ] && [ "$peak" -le "$CAP_MIB" ] && [ -s "$OUT/llama_ngl${ngl}${SUF}.response.json" ]; then selected="$ngl"; else break; fi
+  done
+  if [ -z "$selected" ]; then echo "no -ngl in NGL_LIST stays under the cap"; exit 1; fi
+  echo "selected -ngl $selected"
+  cp "$OUT/llama_ngl${selected}${SUF}.summary.json" "$OUT/llama_selected${SUF}.summary.json"
+  python3 - "$OUT/llama_selected${SUF}.summary.json" "llama_selected${SUF}" <<'PY'
+import json, sys
+p = sys.argv[1]; j = json.load(open(p)); j["tag"] = sys.argv[2]; json.dump(j, open(p, "w"))
+PY
+  [ "$EXTRA" = "1" ] && run_llama "llama_nomtp_ngl${selected}${SUF}" "$selected" none
+fi
+
+if [ -z "${SKIP_ENGINE:-}" ]; then
+  run_engine "engine_mtp2${SUF}" 2
+  [ "$EXTRA" = "1" ] && run_engine "engine_mtp0${SUF}" 0
+  [ -n "${ADAPTIVE:-}" ] && run_engine "engine_adaptive${SUF}" 2 --mtp-adaptive 1
+fi
+
+python3 bench/bench_summary.py table "$OUT" "$TABLE"
+
+===== FILE bench/make_long_prompt.py =====
+#!/usr/bin/env python3
+"""Long-context prompt for the exp/bonsai-128k-context sweep: a needle sentence, then the engine's own source tree
+(tracked text files, repeated if needed), then a question about the needle. Trimmed to an exact token count with the
+engine tokenizer (qwen38-engine --tokenize-file, no weights loaded).
+
+The text uses the ChatML template: run the engine with --parse-special.
+Usage: bench/make_long_prompt.py MODEL.gguf N_TOKENS OUT.txt [--prefix-out PREFIX.txt]
+  OUT.txt      needle + code + question (N_TOKENS tokens, +-1 at the join)
+  PREFIX.txt   needle + code only (for --state-save; the question is the continuation for --state-load)
+"""
+import os
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENGINE = os.path.join(ROOT, "build", "qwen38-engine")
+# ChatML (run the engine with --parse-special). Thinking is closed right away so the first tokens are the answer.
+NEEDLE = ("<|im_start|>user\nRemember this fact for later: the secret passphrase of the vault is MAGENTA-FALCON-42.\n\n"
+          "Below is a source listing.\n")
+QUESTION = ("\n\nEnd of the source listing.\nQuestion: what is the secret passphrase of the vault, stated at the very "
+            "beginning of this message? Reply with the passphrase only.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n")
+
+
+def corpus():
+    files = subprocess.run(["git", "ls-files", "src", "tests", "bench", "docs", "webui", "scripts"], cwd=ROOT,
+                           capture_output=True, text=True, check=True).stdout.split()
+    parts = []
+    for f in sorted(files):
+        if not f.endswith((".cpp", ".hpp", ".cu", ".cuh", ".py", ".sh", ".md", ".html", ".txt")):
+            continue
+        if "/results/" in f:
+            continue
+        try:
+            with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
+                parts.append(f"\n===== FILE {f} =====\n" + fh.read())
+        except (UnicodeDecodeError, OSError):
+            pass
+    return "".join(parts)
+
+
+def count(model, texts):
+    tmp = "/tmp/bonsai128k_tok.txt"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("\x1e".join(texts))
+    out = subprocess.run([ENGINE, "-m", model, "--parse-special", "--tokenize-file", tmp], capture_output=True, text=True, check=True).stdout
+    return [line.count(",") + 1 for line in out.strip().splitlines()]
+
+
+def main():
+    model, n, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+    prefix_out = sys.argv[5] if len(sys.argv) > 5 and sys.argv[4] == "--prefix-out" else None
+    body = corpus()
+    while len(body) < n * 5:
+        body += body
+    nq = count(model, [QUESTION])[0]
+    lo, hi = 0, min(len(body), n * 6)
+    while lo < hi:   # largest char cut whose needle + body + question is <= n tokens
+        mid = (lo + hi + 1) // 2
+        if count(model, [NEEDLE + body[:mid]])[0] + nq <= n:
+            lo = mid
+        else:
+            hi = mid - 1
+    prefix = NEEDLE + body[:lo]
+    with open(out, "w", encoding="utf-8") as fh:
+        fh.write(prefix + QUESTION)
+    if prefix_out:
+        with open(prefix_out, "w", encoding="utf-8") as fh:
+            fh.write(prefix)
+    full, pre = count(model, [prefix + QUESTION, prefix])
+    print(f"{out}: {full} tokens (prefix {pre}, question {nq})")
+
+
+if __name__ == "__main__":
+    main()
+
+===== FILE bench/prompt4k.txt =====
+# AFK status: qwen38-engine (Stages 2-5)
+
+Updated: 2026-11-16 (Stages 3 to 5 done: hybrid defaults, MTP + rollback, sampler, chunked prefill, HTTP/SSE server, WebUI, head-to-head benchmark). Optimization round Poin A+B+C landed the same day (multi-token W4A8 CPU kernel, GQA invert, RoPE table; D measured-skipped — see the round section). Single session, no subagents, no /goal. Canonical tree locked to this session.
+Guardrails followed: ninja -j4; taskset -c 0-3 on every run; one engine at a time (llama-server only between
+engine runs, never together); no full 64-layer FP32 load (weights stay quantized in the mmap, layers beyond a byte
+budget are streamed); SKILL.md and AGENTS.md stay local, nothing pushed or committed.
+
+## Stage status
+
+## Stage 2 result: qwen38-engine generates coherent text and matches the baseline
+
+Build: cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release && ninja -C build -j4 (g++ 11.4, -O3 -march=znver1 -mavx2 -mfma, no warnings).
+Run: taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p "The capital of France is" -n 24 --temp 0 --seed 42 --parity-dir tests/ref_full --resident-gib 11.0
+
+Memory (run3 and the 62-token run):
+- Anonymous RSS 263 MB; file-backed (mmap'd page cache) RSS 12.4 GB; peak RSS 12.9 GB includes those mapped file pages.
+- MemAvailable stayed at about 13 GiB during the whole decode. Swap used changed by -13 MB and +15 MB across runs (no growth trend).
+- LM head (output.weight, about 1 GiB) is mlocked (under the 1.94 GiB limit). No mlock warning was printed in any run.
+- Layer residency (--resident-gib 11.0): 53 layers (10.81 GiB) stay in the page cache, 11 layers (2.64 GiB) are prefetched with MADV_WILLNEED two layers ahead and dropped with MADV_DONTNEED plus POSIX_FADV_DONTNEED after use.
+
+Speed (honest): prefill 5 tokens 21 to 29 s; prefill 62 tokens 40 s (1.5 tok/s); **decode 0.060 tok/s (about 16.6 s per token)**.
+Decode is disk-bound: 2.64 GiB streamed per token at the measured raw disk speed of 195 MB/s (dd iflag=direct) is about 13.5 s.
+Baseline llama.cpp gets 2.2 tok/s because 23 layers sit in VRAM. This engine is a correctness reference, not a fast path;
+the 24 GPU + 40 CPU split (Stage 3) is what removes the streaming.
+
+## Stage 3 option A: 24 GPU layers + 40 CPU layers, iso3 KV, measured (2026-11-16)
+
+Build: cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release && ninja -C build -j4 (0 warnings, 0 errors).
+Run: taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p "The capital of France is" -n 24 --temp 0 --seed 42 --gpu-layers 24 --kv iso3
+
+**Layer 0-23 audit** (Qwen3.8-27B-UD-Q4_K_M.gguf): all eight quantizations occur, so no kernel could be skipped.
+
+**What runs on the GPU (all FP32, no half arithmetic):** RMSNorm, SwiGLU, residual adds, RoPE, Gated DeltaNet (conv, recurrence with
+the state kept transposed for coalesced access, gated norm), GQA attention with the iso3 cache decoded in FP32 inside the kernel,
+and the quantized GEMV. Q8_0 uses __dp4a with on-the-fly activation quantization. The other seven types dequantize 32 weights
+at a time to FP32 inside the kernel (option A) and are being upgraded to __dp4a (next section).
+
+Both parity baselines are the same llama-server run as Stage 2 (KV f16, no MTP). The engine uses iso3 for the 6 GPU attention
+layers and FP32 for the 10 CPU attention layers.
+
+**Measured numbers** (warm page cache, taskset -c 0-3, GPU free, no llama-server):
+
+VRAM: 5235 MiB peak is under the 7.2 GiB cap (7373 MiB). GPU arena 5122 MiB: weights 4869 MiB, iso3 KV 9.4 MiB (6 layers, ctx 2048;
+96 MiB in FP32), the rest scratch. The first run after a cold start loads 4.75 GiB from disk into VRAM (13 s) and the CPU layers into the
+page cache; its prefill is slower (25 s for 5 tokens).
+DDR4: all 40 CPU layers are resident (8.70 GiB, 0 GiB streamed), the LM head (1 GiB) is mlocked. **No disk streaming per token**:
+decode went from 0.059 tok/s (Stage 2, CPU only) to 1.97 tok/s, about 33 times faster. The baseline llama-server reaches 2.2 tok/s with 23 GPU layers.
+
+Limits seen in these numbers:
+- Prefill runs the 40 CPU layers on the CPU: about 1.7 s per prompt token at T=5, 0.34 s per token at T=62. llama.cpp offloads batched matmuls
+  to the GPU (13 to 28 tok/s in Stage 1). A 512-token prompt would take about 3 minutes here. Uploading CPU layer weights to VRAM for
+  large batches is possible within the VRAM headroom (7373 - 5235 MiB) and is not built.
+- Decode at 0.5 s per token is bound by reading the 8.7 GiB of CPU-layer weights from DDR4 once per token. More GPU layers would help:
+  the cap leaves about 2 GiB, which fits roughly 8 more layers (not tested).
+
+## Stage 3 step 3: Q8_1 + __dp4a for the other 7 types (measured)
+Types upgraded (src/cuda/dp4a_gemv.cu): Q4_K, Q5_K, Q6_K, Q3_K, IQ4_NL, IQ3_S, IQ4_XS. Q8_0 already used dp4a. Enabled per type
+with --dp4a <list|all|none> (mask dp4a_mask, default 0 = FP32 dequant path of option A).
+
+- Per-type GEMV parity (bench/results/stage3/dp4a_gemv_parity.txt): 8e-8 to 1.3e-7 relative RMS against a double reference that uses
+  the same quantized activation. Against the FP32-activation reference the error is 5.3e-3, which is the cost of quantizing the activation to Q8_1.
+- Cumulative steps, none to all (dp4a_steps.txt): 24-layer parity worst cosine 0.998383 to 0.998535, every step PASS (bar 0.995).
+- Full hybrid, --dp4a all, 5-token prompt (hybrid_dp4a_parity.txt): worst layer cosine 0.998438 (layer 23), logits cosine 0.999284,
+  top-1 match, 24/24 greedy tokens identical to the llama-server baseline, 0 heap allocations in decode.
+- 62-token prompt, --dp4a all (dp4a_p62.txt): 8/8 greedy tokens identical.
+- SASS gate (sass_gate_dp4a.txt): PASS. dp4a_gemv IDP.4A x448, q8_gemv x8, linked executable x456; HFMA2/HMUL2/HADD2 x0 in every cubin;
+  control probes show the gate detects both IDP.4A and half arithmetic.
+
+- The dp4a upgrade cuts the GPU part from 78 to about 45 ms/token. Total decode moves from 1.96 to about 2.1 tok/s because the 40 CPU layers
+  (about 390 ms/token, 8.7 GiB read per token) dominate and are bound by DDR4 bandwidth.
+- Prefill for 5 tokens varies from 2.3 s to 10 s between runs depending on page cache and swap state (swap out up to 16 MB on dp4a_p5). Treat it as noisy.
+- VRAM 5247 MiB includes the Q8_1 activation scratch (5235 MiB before it). Cap is 7373 MiB; roughly 2100 MiB headroom.
+- Not tested: --gpu-layers 32. It should fit the headroom but no parity or speed number exists for it.
+
+## Stage 3 defaults and prefill streaming (2026-11-16)
+
+Default run is now qwen38-engine -m GGUF -p ... with no extra flags: 32 GPU layers, --kv iso3, --dp4a all, prefill streaming
+for batches of 40 or more tokens, --mtp-steps 2. Flags: --gpu-layers N, --kv iso3|f32, --dp4a all|none|LIST, --stream-min-t N (0 = off), --mtp-steps 0..3.
+
+**Hardware fact found here:** the GPU sits on a PCIe Gen3 **x1** link. cudaMemcpy H2D from pinned memory measures 0.84 GB/s (/tmp/bw, 3 runs).
+Streaming all 7 GiB of CPU-layer weights through VRAM therefore costs about 9 s per prefill, whatever the prompt length.
+(nvidia-smi shows gen 1 at idle and gen 3, width 1 under load.)
+
+### GPU layer count sweep (VRAM from cudaMemGetInfo, cap 7373 MiB)
+
+With 32 layers the CPU part reads 6.96 GiB per token instead of 8.7 GiB. --kv f32 also fits at 32 layers: 7319 MiB (kvf32_p5).
+
+### How prefill uses the GPU for all 64 layers
+- Layers 0-31 run on the GPU as before (resident weights, batched dp4a GEMV).
+- For a first batch (position 0) of at least stream_min_t = 40 tokens, layers 32-63 also run on the GPU. Each matrix is read with pread() into a
+  pinned double buffer (32 MiB chunks) and copied into one staging buffer sized for the largest matrix (about 75 MiB), then multiplied.
+  The K, V and DeltaNet state of those layers come back to the CPU layouts (DeltaNet state is transposed on the way back), so decode continues on the CPU layers.
+- Streamed layers use FP32 KV (like the CPU layers), the GPU-resident attention layers use iso3.
+- Break-even against CPU prefill (0.27 s per token for 32 CPU layers) is near 40 tokens.
+- The dp4a GEMV tile (tokens per thread block) is now chosen by batch size (1, 4, 8, 16). Results do not depend on the tile (each token keeps its own accumulator and summation order; gemv_parity PASS).
+  Tile 1 cut the GPU decode time from 62 to 46 ms/token (24 tokens, same run settings). Tile 16 for large batches gave the 27.2 s prefill of 509 tokens in the table below.
+
+### Prefill measurements (bench/stage4_run.sh, --mtp-steps 0, GPU free, page cache warm)
+
+### Long-prompt parity (509 tokens, bench/prompt512.txt, references dumped from llama.cpp -ngl 23 -c 2048)
+
+Reading: the whole pipeline (GPU layers, streamed prefill, CPU layers, dp4a) is accurate at 509 tokens (f32 KV: logits 0.99967). The iso3 3-bit KV cache
+costs accuracy at this length: logits cosine 0.9926 against f16 KV, the same size as llama.cpp's own iso3 (0.9923). It is below the 0.995 bar that the short-prompt tests used,
+yet the 16 greedy tokens still match. Only 16 tokens were compared, so this is not a proof for long generations. --kv f32 removes the loss and fits the cap (7319 MiB).
+The engine-versus-llama-iso3 comparison is not like for like: llama.cpp quantizes the KV of all 16 attention layers, this engine only the 8 on the GPU.
+
+## Stage 4: MTP draft head and DeltaNet rollback (2026-11-16)
+
+### What was built
+- **MTP block 64** (blk.64.*, 351 MiB, mostly Q6_K): eh_proj over concat(rmsnorm(embedding, enorm), rmsnorm(h, hnorm)), then an ordinary gated-attention layer with its own
+  FP32 KV (cache index 16) and a dense FFN, then shared_head_norm and the shared LM head. It runs on the CPU (no VRAM left) and is mlocked (LM head 0.97 GiB + MTP 0.34 GiB < 1.94 GiB limit).
+  Pairing follows common/speculative.cpp: at position p the block takes token x_p and the main-model hidden row (after output_norm) of position p-1; the first position pairs with zeros.
+- **Cycle** (src/engine/main.cpp): one MTP batch (catch-up on the accepted drafts of the last cycle plus draft step 0), D-1 single MTP steps, then one verification batch
+  [cur, drafts] through all 64 layers with logits and hidden rows for every row (Engine::forward_ex). The longest matching prefix is kept, the new cur is the target token of the first mismatch.
+- **DeltaNet rollback, all 48 layers, GPU and CPU.** With snapshots on, each DeltaNet layer stores its conv and SSM state from before the batch plus the inputs of the recurrence
+  (qkv, z, gate, beta). dn_rollback(keep) restores the state and replays the first keep tokens through the same conv and recurrence code. Cost: 83 MiB VRAM (24 GPU DeltaNet layers) and
+  82 MiB RAM (24 CPU DeltaNet layers) for batches up to 4 tokens. Attention KV needs no rollback: the position counter moves back and later writes overwrite stale rows.
+- --rollback-test (in main.cpp): fresh state, prefill, snapshot, batch of 4 tokens, rollback to keep = 1, 2, 3, then single steps.
+
+### Results
+- bench/results/stage4/rollback_test.txt: for keep = 1, 2, 3 the logits rows of the batch and every following single step are **bit-identical** (memcmp) to a run that never drafted. PASS.
+- Greedy output with --mtp-steps 2 equals --mtp-steps 0 on every run: 24/24 (5-token prompt), 8/8 (62), 16/16 (509), 48/48 (5 and 62 tokens, steps 1, 2, 3).
+  All of them also equal the llama-server baseline tokens for the 24, 8 and 16 token runs. The results are bit-identical because every operator gives each token the same numbers whatever the batch size (CPU vec_dot per token, GPU per-token accumulators).
+- draft_n_accepted > 0 in every MTP run (table below).
+- SASS gate (bench/results/stage4/sass_gate.txt): PASS. dp4a_gemv IDP.4A x1624, q8_gemv x8, linked exe x1632, HFMA2/HMUL2/HADD2 x0 everywhere. No new CUDA kernels were added for Stage 4 or for streaming.
+
+Question: summarise the three most important engineering decisions described above, one sentence each.
+===== FILE bench/prompt5.txt =====
+The capital of France is
+===== FILE bench/prompt512.txt =====
+ 
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as " Craig " in the episode " Teddy 's Story " of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . 
+ In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as " Kieron Fletcher " . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . 
+ 
+ = = Career = = 
+ 
+ 
+ = = = 2000 – 2005 = = = 
+ 
+ In 2000 Boulter had a guest @-@ starring role on the television series The Bill ; he portrayed " Scott Parry " in the episode , " In Safe Hands " . Boulter starred as " Scott " in the play Herons written by Simon Stephens , which was performed in
+===== FILE bench/prompt64.txt =====
+ 
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was perfor
+===== FILE bench/prompt_code.txt =====
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <memory>
+
+class FibonacciGenerator {
+public:
+    FibonacciGenerator() : cache_{0, 1} {}
+
+    int64_t get(int n) {
+        if (n < 0) throw std::invalid_argument("n must be non-negative");
+        if (n < static_cast<int>(cache_.size())) return cache_[n];
+
+        for (size_t i = cache_.size(); i <= static_cast<size_t>(n); ++i) {
+            cache_.push_back(cache_[i-1] + cache_[i-2]);
+        }
+        return cache_[n];
+    }
+
+    std::vector<int64_t> sequence(int n) {
+        std::vector<int64_t> result;
+        result.reserve(n);
+        for (int i = 0; i < n; ++i) {
+            result.push_back(get(i));
+        }
+        return result;
+    }
+
+private:
+    std::vector<int64_t> cache_;
+};
+
+template<typename T>
+class Matrix {
+public:
+    Matrix(size_t rows, size_t cols) : rows_(rows), cols_(cols), data_(rows * cols) {}
+
+    T& operator()(size_t r, size_t c) { return data_[r * cols_ + c]; }
+    const T& operator()(size_t r, size_t c) const { return data_[r * cols_ + c]; }
+
+    Matrix<T> multiply(const Matrix<T>& other) const {
+        if (cols_ != other.rows_) throw std::invalid_argument("Dimension mismatch");
+        Matrix<T> result(rows_, other.cols_);
+        for (size_t i = 0; i < rows_; ++i) {
+            for (size_t j = 0; j < other.cols_; ++j) {
+                T sum = 0;
+                for (size_t k = 0; k < cols_; ++k) {
+                    sum += (*this)(i, k) * other(k, j);
+                }
+                result(i, j) = sum;
+            }
+        }
+        return result;
+    }
+
+    void print() const {
+        for (size_t i = 0; i < rows_; ++i) {
+            for (size_t j = 0; j < cols_; ++j) {
+                std::cout << (*this)(i, j) << " ";
+            }
+            std::cout << "\n";
+        }
+    }
+
+    size_t rows() const { return rows_; }
+    size_t cols() const { return cols_; }
+
+private:
+    size_t rows_, cols_;
+    std::vector<T> data_;
+};
+
+void quicksort(std::vector<int>& arr, int low, int high) {
+    if (low < high) {
+        int pivot = arr[high];
+        int i = low - 1;
+        for (int j = low; j < high; ++j) {
+            if (arr[j] <= pivot) {
+                ++i;
+                std::swap(arr[i], arr[j]);
+            }
+        }
+        std::swap(arr[i + 1], arr[high]);
+        int pi = i + 1;
+        quicksort(arr, low, pi - 1);
+        quicksort(arr, pi + 1, high);
+    }
+}
+
+int binary_search(const std::vector<int>& arr, int target) {
+    int left = 0, right = arr.size() - 1;
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+        if (arr[mid] == target) return mid;
+        if (arr[mid] < target) left = mid + 1;
+        else right = mid - 1;
+    }
+    return -1;
+}
+
+struct Node {
+    int value;
+    std::unique_ptr<Node> left;
+    std::unique_ptr<Node> right;
+
+    Node(int v) : value(v), left(nullptr), right(nullptr) {}
+};
+
+class BinarySearchTree {
+public:
+    BinarySearchTree() : root_(nullptr) {}
+
+    void insert(int value) {
+        root_ = insert_recursive(std::move(root_), value);
+    }
+
+    bool search(int value) const {
+        return search_recursive(root_.get(), value);
+    }
+
+    void inorder() const {
+        inorder_recursive(root_.get());
+        std::cout << "\n";
+    }
+
+private:
+    std::unique_ptr<Node> root_;
+
+    std::unique_ptr<Node> insert_recursive(std::unique_ptr<Node> node, int value) {
+        if (!node) return std::make_unique<Node>(value);
+        if (value < node->value) {
+            node->left = insert_recursive(std::move(node->left), value);
+        } else if (value > node->value) {
+            node->right = insert_recursive(std::move(node->right), value);
+        }
+        return node;
+    }
+
+    bool search_recursive(const Node* node, int value) const {
+        if (!node) return false;
+        if (value == node->value) return true;
+        if (value < node->value) return search_recursive(node->left.get(), value);
+        return search_recursive(node->right.get(), value);
+    }
+
+    void inorder_recursive(const Node* node) const {
+        if (!node) return;
+        inorder_recursive(node->left.get());
+        std::cout << node->value << " ";
+        inorder_recursive(node->right.get());
+    }
+};
+
+int main() {
+    FibonacciGenerator fib;
+    auto fib_seq = fib.sequence(20);
+    std::cout << "Fibonacci: ";
+    for (auto v : fib_seq) std::cout << v << " ";
+    std::cout << "\n";
+
+    Matrix<int> a(3, 3), b(3, 3);
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        a(i, j) = i * 3 + j + 1;
+        b(i, j) = (i + 1) * (j + 1);
+    }
+    auto c = a.multiply(b);
+    std::cout << "Matrix multiply:\n";
+    c.print();
+
+    std::vector<int> vec = {64, 34, 25, 12, 22, 11, 90};
+    quicksort(vec, 0, vec.size() - 1);
+    std::cout << "Sorted: ";
+    for (int v : vec) std::cout << v << " ";
+    std::cout << "\n";
+
+    std::cout << "Binary search 25: " << binary_search(vec, 25) << "\n";
+
+    BinarySearchTree bst;
+    for (int v : {50, 30, 70, 20, 40, 60, 80}) bst.insert(v);
+    std::cout << "BST inorder: "; bst.inorder();
+    std::cout << "Search 40: " << bst.search(40) << "\n";
+    std::cout << "Search 25: " << bst.search(25) << "\n";
+
+    return 0;
+}
+===== FILE bench/prompt_code_short.txt =====
+def fibonacci(n):
+    if n <= 1:
+        return n
+    a, b = 0, 1
+    for _ in range(n - 1):
+        a, b = b, a + b
+    return b
+
+def quicksort(arr):
+    if len(arr) <= 1:
+        return arr
+    pivot = arr[len(arr) // 2]
+    left = [x for x in arr if x < pivot]
+    middle = [x for x in arr if x == pivot]
+    right = [x for x in arr if x > pivot]
+    return quicksort(left) + middle + quicksort(right)
+
+class BinaryTree:
+    def __init__(self, value):
+        self.value = value
+        self.left = None
+        self.right = None
+    
+    def insert(self, value):
+        if value < self.value:
+            if self.left is None:
+                self.left = BinaryTree(value)
+            else:
+                self.left.insert(value)
+        else:
+            if self.right is None:
+                self.right = BinaryTree(value)
+            else:
+                self.right.insert(value)
+    
+    def inorder(self):
+        result = []
+        if self.left:
+            result.extend(self.left.inorder())
+        result.append(self.value)
+        if self.right:
+            result.extend(self.right.inorder())
+        return result
+
+def binary_search(arr, target):
+    left, right = 0, len(arr) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if arr[mid] == target:
+            return mid
+        elif arr[mid] < target:
+            left = mid + 1
+        else:
+            right = mid - 1
+    return -1
+
+# Test
+print("Fibonacci:", [fibonacci(i) for i in range(10)])
+arr = [64, 34, 25, 12, 22, 11, 90]
+print("Sorted:", quicksort(arr))
+tree = BinaryTree(50)
+for v in [30, 70, 20, 40, 60, 80]:
+    tree.insert(v)
+print("BST inorder:", tree.inorder())
+print("Search 40:", binary_search(sorted(arr), 40))
+===== FILE bench/stage1_baseline_bench.sh =====
+#!/usr/bin/env bash
+# Stage 1 baseline: llama-bench sweep, one run at a time (never concurrent with another GPU job).
+# Workload: 512-token prompt, 256-token decode, 2 repetitions, 4 threads on physical cores 0-3.
+# Records: JSON result, peak VRAM (nvidia-smi sampling), peak RSS and wall time (/usr/bin/time -v).
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 2
+OUT="$ROOT/bench/results/stage1"
+mkdir -p "$OUT"
+B="$HOME/llama.cpp/build-iso3/bin"
+M="$HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf"
+
+for kv in f16 iso3; do
+  for ngl in 24 26 28; do
+    tag="bench-kv${kv}-ngl${ngl}"
+    echo "[$(date -u +%T)] start $tag"
+    while [ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]; do sleep 20; done
+    nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 200 > "$OUT/$tag.vram.csv" 2>/dev/null &
+    SMI=$!
+    /usr/bin/time -v taskset -c 0,1,2,3 "$B/llama-bench" -m "$M" -ngl "$ngl" \
+      -p 512 -n 256 -r 2 -t 4 -ctk "$kv" -ctv "$kv" -o json \
+      > "$OUT/$tag.json" 2> "$OUT/$tag.stderr.txt"
+    rc=$?
+    kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+    peak_vram=$(sort -n "$OUT/$tag.vram.csv" | tail -1)
+    peak_rss=$(awk -F': ' '/Maximum resident/{print $2}' "$OUT/$tag.stderr.txt")
+    wall=$(awk -F': ' '/Elapsed \(wall/{print $2}' "$OUT/$tag.stderr.txt")
+    echo "[$(date -u +%T)] done $tag rc=$rc peak_vram_MiB=${peak_vram:-NA} peak_rss_kB=${peak_rss:-NA} wall=${wall:-NA}"
+  done
+done
+echo "[$(date -u +%T)] sweep finished"
+
+===== FILE bench/stage1_cap_probe.sh =====
+#!/usr/bin/env bash
+# Stage 1: find the largest -ngl whose peak VRAM stays under the 7.2 GiB cap (7373 MiB) with the
+# iso3 KV configuration. Short probe: load, 8 generated tokens, sample VRAM, stop.
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 2
+OUT="$ROOT/bench/results/stage1"
+mkdir -p "$OUT"
+B="$HOME/llama.cpp/build-iso3/bin"
+M="$HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf"
+CAP=7373
+PORT=8096
+for ngl in ${NGL_LIST:-23 22}; do
+  tag="cap-probe-kviso3-ngl${ngl}"
+  while [ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]; do sleep 20; done
+  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 200 > "$OUT/$tag.vram.csv" 2>/dev/null &
+  SMI=$!
+  taskset -c 0,1,2,3 "$B/llama-server" -m "$M" -ngl "$ngl" -c 2048 -np 1 -t 4 \
+    --host 127.0.0.1 --port "$PORT" -ctk iso3 -ctv iso3 -ctkd iso3 -ctvd iso3 \
+    --spec-type draft-mtp --spec-draft-n-max 2 > "$OUT/$tag.server.log" 2>&1 &
+  SRV=$!
+  ready=0
+  for _ in $(seq 1 120); do
+    curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { ready=1; break; }
+    kill -0 "$SRV" 2>/dev/null || break
+    sleep 10
+  done
+  if [ "$ready" -eq 1 ]; then
+    curl -s --max-time 600 -H 'Content-Type: application/json' \
+      -d '{"prompt":"The capital of France is","n_predict":8,"temperature":0,"top_k":1,"seed":42,"cache_prompt":false}' \
+      "http://127.0.0.1:$PORT/completion" > /dev/null
+  fi
+  kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+  kill -TERM "$SRV" 2>/dev/null; wait "$SRV" 2>/dev/null
+  peak=$(sort -n "$OUT/$tag.vram.csv" | tail -1)
+  verdict=$([ "${peak:-99999}" -le "$CAP" ] && echo UNDER_CAP || echo OVER_CAP)
+  echo "$tag ready=$ready peak_vram_MiB=${peak:-NA} cap_MiB=$CAP $verdict"
+done
+echo "[$(date -u +%T)] cap probe finished"
+
+===== FILE bench/stage1_server_mtp_bench.sh =====
+#!/usr/bin/env bash
+# Stage 1 baseline with llama-server (llama-bench rejects -ctk iso3, llama-server accepts it).
+# One server at a time. Each run: start server, wait for /health, sample VRAM, POST one 512-token
+# prompt with 256 decode tokens (temp 0, seed 42, top_k 1), read timings, stop the server.
+# Configs: iso3 KV without MTP, iso3 KV with MTP depth 1, iso3 KV with MTP depth 2. All at -ngl 24.
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 2
+OUT="$ROOT/bench/results/stage1"
+mkdir -p "$OUT"
+B="$HOME/llama.cpp/build-iso3/bin"
+M="$HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf"
+PORT=8095
+PROMPT_FILE="$ROOT/bench/prompt512.txt"
+
+run_cfg() {  # $1 tag, $2 spec-type, $3 draft-n-max (ignored when spec is none)
+  local tag="$1" spec="$2" dmax="$3"
+  local extra=()
+  if [ "$spec" != "none" ]; then
+    extra=(-ctkd iso3 -ctvd iso3 --spec-type "$spec" --spec-draft-n-max "$dmax")
+  else
+    extra=(--spec-type none)
+  fi
+  echo "[$(date -u +%T)] start $tag"
+  while [ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]; do sleep 20; done
+  nvidia-smi --query-gpu
+
+End of the source listing.
+Question: what is the secret passphrase of the vault, stated at the very beginning of this message? Reply with the passphrase only.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+
+generated: MAGENTA-FALCON-42
+{"prompt_tokens":32704,"generated_tokens":9,"ids":[44,1825,69865,7049,939,5609,12,19,17],"text":"MAGENTA-FALCON-42","load_s":37.93,"prefill_s":671.69,"prefill_tok_s":48.689,"decode_s":1.13,"decode_tok_s":7.9363,"heap_allocs_in_decode_forward":0,"peak_rss_kb":627508,"rss_anon_kb":145252,"rss_file_kb":454016,"swap_used_kb_before":1292,"swap_used_kb_after":1292,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":6226.6,"gpu_weights_mib":5395.4,"gpu_kv_mib":400.0,"vram_used_mib":6350.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":1.089,"decode_cpu_layers_s":0.000,"decode_head_s":0.043,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.000,"prefill_main_s":671.692,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"ttft_s":671.693,"finish":"stop","temperature":0.000,"ctx":32768,"reused_tokens":0,"state_load_s":0.000}
+{"tag":"PTQ1_0_ctx32768_needle","rc":0,"wall_s":711,"peak_vram_mib":6351,"vram_cap_ok":true,"max_rss_kb":627508}

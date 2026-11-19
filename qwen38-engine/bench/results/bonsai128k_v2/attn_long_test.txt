@@ -1,0 +1,59 @@
+[PASS] kv=f32  n=   300 fast(ctx 8192) vs tiled(ctx 16384): max_abs 1.252e-06 rms 1.079e-01 rel 1.160e-05
+[PASS] kv=f32  n=  4096 fast(ctx 8192) vs tiled(ctx 16384): max_abs 8.792e-07 rms 8.445e-02 rel 1.041e-05
+[PASS] kv=f32  n=  6000 fast(ctx 8192) vs tiled(ctx 16384): max_abs 6.333e-07 rms 8.396e-02 rel 7.543e-06
+[PASS] kv=f32  n=  8192 fast(ctx 8192) vs tiled(ctx 16384): max_abs 6.035e-07 rms 8.369e-02 rel 7.211e-06
+[PASS] kv=f32  n=   100 split-K(64 slices) vs double ref: max_abs 7.652e-07 rms 1.377e-01 rel 5.557e-06
+[PASS] kv=f32  n=   100 tiled(ctx 131072) vs double ref: max_abs 6.460e-07 rms 1.377e-01 rel 4.691e-06 (needle out[1][0][0] gpu 0.449255 ref 0.449255)
+[PASS] kv=f32  n=  4096 split-K(64 slices) vs double ref: max_abs 1.649e-07 rms 8.445e-02 rel 1.953e-06
+[PASS] kv=f32  n=  4096 tiled(ctx 131072) vs double ref: max_abs 7.464e-07 rms 8.445e-02 rel 8.838e-06 (needle out[1][0][0] gpu 0.449255 ref 0.449255)
+[PASS] kv=f32  n= 32768 split-K(64 slices) vs double ref: max_abs 1.649e-07 rms 8.319e-02 rel 1.982e-06
+[PASS] kv=f32  n= 32768 tiled(ctx 131072) vs double ref: max_abs 1.937e-07 rms 8.319e-02 rel 2.329e-06 (needle out[1][0][0] gpu 0.449255 ref 0.449255)
+[PASS] kv=f32  n= 65536 split-K(64 slices) vs double ref: max_abs 1.649e-07 rms 8.311e-02 rel 1.984e-06
+[PASS] kv=f32  n= 65536 tiled(ctx 131072) vs double ref: max_abs 1.717e-07 rms 8.311e-02 rel 2.065e-06 (needle out[1][0][0] gpu 0.449255 ref 0.449255)
+[PASS] kv=f32  n=131072 split-K(64 slices) vs double ref: max_abs 1.649e-07 rms 8.308e-02 rel 1.985e-06
+[PASS] kv=f32  n=131072 tiled(ctx 131072) vs double ref: max_abs 1.649e-07 rms 8.308e-02 rel 1.985e-06 (needle out[1][0][0] gpu 0.449255 ref 0.449255)
+[PASS] kv=f32  n=   100 prefill T=64 vs double ref: reuse kernel rel 8.002e-06, sliced rel 4.371e-06, old tiled rel 1.079e-05
+[PASS] kv=f32  n=  4096 prefill T=64 vs double ref: reuse kernel rel 1.243e-04, sliced rel 5.572e-05, old tiled rel 1.346e-04
+[PASS] kv=f32  n=  8193 prefill T=64 vs double ref: reuse kernel rel 1.358e-04, sliced rel 4.400e-05, old tiled rel 1.405e-04
+[PASS] kv=f32  n= 32768 prefill T=64 vs double ref: reuse kernel rel 1.213e-04, sliced rel 3.589e-05, old tiled rel 1.189e-04
+[PASS] kv=f32  n= 65536 prefill T=64 vs double ref: reuse kernel rel 6.297e-05, sliced rel 2.820e-05, old tiled rel 6.198e-05
+[PASS] kv=f32  n=131072 prefill T=64 vs double ref: reuse kernel rel 7.259e-05, sliced rel 1.359e-05, old tiled rel 7.259e-05
+[PASS] kv=f32  n=   100 prefill T=37 vs double ref: reuse kernel rel 6.205e-06, sliced rel 3.667e-06, old tiled rel 8.429e-06
+[PASS] kv=f32  n=  4096 prefill T=37 vs double ref: reuse kernel rel 1.119e-04, sliced rel 2.755e-05, old tiled rel 1.186e-04
+[PASS] kv=f32  n=  8193 prefill T=37 vs double ref: reuse kernel rel 9.249e-05, sliced rel 3.379e-05, old tiled rel 8.722e-05
+[PASS] kv=f32  n= 32768 prefill T=37 vs double ref: reuse kernel rel 9.461e-05, sliced rel 2.302e-05, old tiled rel 9.275e-05
+[PASS] kv=f32  n= 65536 prefill T=37 vs double ref: reuse kernel rel 4.136e-05, sliced rel 1.651e-05, old tiled rel 4.212e-05
+[PASS] kv=f32  n=131072 prefill T=37 vs double ref: reuse kernel rel 4.142e-05, sliced rel 8.470e-06, old tiled rel 4.506e-05
+[TIME] kv=f32  n=131072 T=64: reuse kernel 86.76 ms, reuse + slices 74.13 ms, old tiled 1715.18 ms (23.1x)
+[PASS] kv=iso3 n=   300 fast(ctx 8192) vs tiled(ctx 16384): max_abs 1.550e-06 rms 1.195e-01 rel 1.296e-05
+[PASS] kv=iso3 n=  4096 fast(ctx 8192) vs tiled(ctx 16384): max_abs 2.384e-06 rms 8.855e-02 rel 2.693e-05
+[PASS] kv=iso3 n=  6000 fast(ctx 8192) vs tiled(ctx 16384): max_abs 2.146e-06 rms 8.692e-02 rel 2.469e-05
+[PASS] kv=iso3 n=  8192 fast(ctx 8192) vs tiled(ctx 16384): max_abs 1.341e-06 rms 8.600e-02 rel 1.559e-05
+[PASS] kv=iso3 n=   100 split-K(64 slices) vs double ref: max_abs 8.383e-07 rms 1.454e-01 rel 5.766e-06
+[PASS] kv=iso3 n=   100 tiled(ctx 131072) vs double ref: max_abs 8.383e-07 rms 1.454e-01 rel 5.766e-06 (needle out[1][0][0] gpu 0.382880 ref 0.382880)
+[PASS] kv=iso3 n=  4096 split-K(64 slices) vs double ref: max_abs 2.309e-07 rms 8.855e-02 rel 2.608e-06
+[PASS] kv=iso3 n=  4096 tiled(ctx 131072) vs double ref: max_abs 1.784e-06 rms 8.855e-02 rel 2.015e-05 (needle out[1][0][0] gpu 0.382880 ref 0.382880)
+[PASS] kv=iso3 n= 32768 split-K(64 slices) vs double ref: max_abs 1.627e-07 rms 8.455e-02 rel 1.924e-06
+[PASS] kv=iso3 n= 32768 tiled(ctx 131072) vs double ref: max_abs 6.844e-07 rms 8.455e-02 rel 8.094e-06 (needle out[1][0][0] gpu 0.382880 ref 0.382880)
+[PASS] kv=iso3 n= 65536 split-K(64 slices) vs double ref: max_abs 1.627e-07 rms 8.441e-02 rel 1.927e-06
+[PASS] kv=iso3 n= 65536 tiled(ctx 131072) vs double ref: max_abs 4.056e-07 rms 8.441e-02 rel 4.805e-06 (needle out[1][0][0] gpu 0.382880 ref 0.382880)
+[PASS] kv=iso3 n=131072 split-K(64 slices) vs double ref: max_abs 1.627e-07 rms 8.436e-02 rel 1.929e-06
+[PASS] kv=iso3 n=131072 tiled(ctx 131072) vs double ref: max_abs 2.992e-07 rms 8.436e-02 rel 3.546e-06 (needle out[1][0][0] gpu 0.382880 ref 0.382880)
+[PASS] kv=iso3 n=   100 prefill T=64 vs double ref: reuse kernel rel 8.768e-06, sliced rel 4.861e-06, old tiled rel 7.548e-06
+[PASS] kv=iso3 n=  4096 prefill T=64 vs double ref: reuse kernel rel 1.013e-04, sliced rel 4.636e-05, old tiled rel 9.497e-05
+[PASS] kv=iso3 n=  8193 prefill T=64 vs double ref: reuse kernel rel 1.822e-04, sliced rel 3.987e-05, old tiled rel 1.729e-04
+[PASS] kv=iso3 n= 32768 prefill T=64 vs double ref: reuse kernel rel 8.574e-05, sliced rel 2.687e-05, old tiled rel 7.962e-05
+[PASS] kv=iso3 n= 65536 prefill T=64 vs double ref: reuse kernel rel 6.228e-05, sliced rel 3.708e-05, old tiled rel 6.859e-05
+[PASS] kv=iso3 n=131072 prefill T=64 vs double ref: reuse kernel rel 4.736e-05, sliced rel 2.300e-05, old tiled rel 4.637e-05
+[PASS] kv=iso3 n=   100 prefill T=37 vs double ref: reuse kernel rel 1.029e-05, sliced rel 6.180e-06, old tiled rel 9.800e-06
+[PASS] kv=iso3 n=  4096 prefill T=37 vs double ref: reuse kernel rel 8.378e-05, sliced rel 3.227e-05, old tiled rel 7.737e-05
+[PASS] kv=iso3 n=  8193 prefill T=37 vs double ref: reuse kernel rel 1.510e-04, sliced rel 2.930e-05, old tiled rel 1.446e-04
+[PASS] kv=iso3 n= 32768 prefill T=37 vs double ref: reuse kernel rel 6.668e-05, sliced rel 1.729e-05, old tiled rel 6.192e-05
+[PASS] kv=iso3 n= 65536 prefill T=37 vs double ref: reuse kernel rel 4.608e-05, sliced rel 1.199e-05, old tiled rel 5.093e-05
+[PASS] kv=iso3 n=131072 prefill T=37 vs double ref: reuse kernel rel 3.675e-05, sliced rel 1.311e-05, old tiled rel 3.581e-05
+[TIME] kv=iso3 n=131072 T=64: reuse kernel 116.21 ms, reuse + slices 96.90 ms, old tiled 2178.52 ms (22.5x)
+attn_long_test: PASS (0 failing cases)
+
+real	12m8.068s
+user	12m5.911s
+sys	0m2.151s

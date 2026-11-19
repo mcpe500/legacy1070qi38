@@ -364,6 +364,12 @@ int main(int argc, char ** argv) {
             const bool same_tok = o1 == o2, same_lg = lg1 == lg2;
             std::printf("state round trip: prefix %zu tokens, continuation %zu tokens, state %.1f MiB, save %.2f s, load %.2f s\n",
                         ids.size(), c_ids.size(), static_cast<double>(bytes) / 1048576.0, save_s, load2_s);
+            std::printf("{\"state_test_prefill_tokens\":%zu,\"prefill_s\":%.2f,\"prefill_tok_s\":%.3f,\"state_mib\":%.1f,\"save_s\":%.2f,"
+                        "\"load_s\":%.2f,\"cont_prefill_s_mem\":%.3f,\"cont_prefill_s_file\":%.3f,\"decode_tok_s\":%.4f,\"ctx\":%d,"
+                        "\"gpu_layers\":%d,\"t_max\":%d,\"vram_used_mib\":%.1f}\n",
+                        ids.size(), s0.prefill_s, s0.prefill_s > 0 ? ids.size() / s0.prefill_s : 0.0, static_cast<double>(bytes) / 1048576.0,
+                        save_s, load2_s, s1.prefill_s, s2.prefill_s, s2.decode_s > 0 ? s2.generated / s2.decode_s : 0.0, cfg.ctx_max,
+                        cfg.gpu_layers, eng.config().t_max, cfg.gpu_layers > 0 ? eng.vram_used_mib() : 0.0);
             std::printf("in-memory: reused %d, %zu tokens: %s\n", s1.reused_tokens, o1.size(), json_escape(eng.tok.decode(o1, false)).c_str());
             std::printf("from file: reused %d, %zu tokens: %s\n", s2.reused_tokens, o2.size(), json_escape(eng.tok.decode(o2, false)).c_str());
             std::printf("state round trip: tokens %s, first logits row %s -> %s\n", same_tok ? "identical" : "DIFFER",

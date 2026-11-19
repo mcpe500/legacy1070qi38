@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdlib>
 
 #include "f16bits.hpp"
 #include "ops.cuh"
@@ -512,13 +513,6 @@ constexpr int kPP = 16;                // positions per K/V tile
 constexpr int kQG = NH / NKV;          // 6 query heads per KV group
 constexpr int kPrefillPartRows = kSplitTMax * kSplits;   // (token x slice) rows of the shared partial buffer per head
 
-__device__ __forceinline__ void dot8_rows(const float (&q)[kQG][8], const float4 a, const float4 b, float (&part)[kQG]) {
-#pragma unroll
-    for (int r = 0; r < kQG; ++r)
-        part[r] = q[r][0] * a.x + q[r][1] * a.y + q[r][2] * a.z + q[r][3] * a.w + q[r][4] * b.x + q[r][5] * b.y + q[r][6] * b.z +
-                  q[r][7] * b.w;
-}
-
 // v[0..7] (one value per position of a group of 8, partial over this lane's dims) -> sum over the 32 lanes of
 // v[(lane >> 2) & 7], returned in every lane.
 __device__ __forceinline__ float reduce_scatter8(float (&v)[8], int lane) {
@@ -545,26 +539,39 @@ __device__ __forceinline__ float reduce_scatter8(float (&v)[8], int lane) {
     return e;
 }
 
-template <bool ISO3>
-__global__ void __launch_bounds__(256) attention_kernel_prefill(const float * __restrict__ qbuf, const float * __restrict__ qfull,
+template <bool ISO3, int HPW>
+__global__ void __launch_bounds__(kPQ * (kQG / HPW) * 32) attention_kernel_prefill(const float * __restrict__ qbuf, const float * __restrict__ qfull,
                                                                 const uint8_t * __restrict__ kc, const uint8_t * __restrict__ vc,
                                                                 float * __restrict__ attn_o, float * __restrict__ part, int T,
                                                                 int pos0, int ns) {
     __shared__ float4 ks[kPP][HD / 4], vs[kPP][HD / 4];   // 2 x 16 KiB
+    // iso3: the raw bytes of the tile (100 contiguous bytes per position and group, for K and V) are staged with
+    // coalesced 32-bit loads, then dequantized from shared memory; codebook in shared memory, the quaternion of the
+    // thread's group index (always tid & 31) in registers.
+    __shared__ uint32_t raw[ISO3 ? 2 : 1][ISO3 ? kPP : 1][25];
+    __shared__ float s_cb[8];
+    constexpr int WPT = kQG / HPW;               // warps per query token
+    constexpr int NT = kPQ * WPT * 32;           // threads per block
     const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
     const int t0 = blockIdx.x * kPQ, g = blockIdx.y, sp = blockIdx.z;
-    const int t = t0 + warp;
+    const int t = t0 + warp / WPT, hb = (warp % WPT) * HPW;   // token and first head (within the group) of this warp
     const bool live = t < T;
     const int qpos = pos0 + (live ? t : T - 1);                  // last position this row may see
     const int last = pos0 + min(t0 + kPQ, T) - 1;                // last position any row of the block sees
     const int chunk = ((last + 1 + ns - 1) / ns + kPP - 1) / kPP * kPP;
     const int js = sp * chunk, je = min(last + 1, js + chunk);
     const float kq_scale = 1.0f / sqrtf(static_cast<float>(HD));
+    float qw = 0.f, qxq = 0.f, qyq = 0.f, qzq = 0.f;
+    if (ISO3) {
+        if (tid < 8) s_cb[tid] = iso3_codebook[tid];
+        const int gi = tid & 31;
+        qw = iso3_quat_w[gi]; qxq = -iso3_quat_x[gi]; qyq = -iso3_quat_y[gi]; qzq = -iso3_quat_z[gi];
+    }
 
-    float q[kQG][8], o[kQG][8], m[kQG], l[kQG];
+    float q[HPW][8], o[HPW][8], m[HPW], l[HPW];
 #pragma unroll
-    for (int r = 0; r < kQG; ++r) {
-        const float4 * qp = reinterpret_cast<const float4 *>(qbuf + (static_cast<int64_t>(live ? t : 0) * NH + g * kQG + r) * HD + lane * 8);
+    for (int r = 0; r < HPW; ++r) {
+        const float4 * qp = reinterpret_cast<const float4 *>(qbuf + (static_cast<int64_t>(live ? t : 0) * NH + g * kQG + hb + r) * HD + lane * 8);
         const float4 a = qp[0], b = qp[1];
         q[r][0] = a.x * kq_scale; q[r][1] = a.y * kq_scale; q[r][2] = a.z * kq_scale; q[r][3] = a.w * kq_scale;
         q[r][4] = b.x * kq_scale; q[r][5] = b.y * kq_scale; q[r][6] = b.z * kq_scale; q[r][7] = b.w * kq_scale;
@@ -578,25 +585,34 @@ __global__ void __launch_bounds__(256) attention_kernel_prefill(const float * __
         const int np = min(kPP, je - j0);
         __syncthreads();   // previous tile fully consumed
         if (ISO3) {
-            // 2 tensors x 16 positions x 2 halves x 32 groups of 4 values = 2048 groups, 8 per thread
+            for (int i = tid; i < 2 * kPP * 25; i += NT) {
+                const int kv = i / (kPP * 25), rem = i % (kPP * 25), p = rem / 25, w = rem % 25;
+                raw[kv][p][w] = p < np ? __ldg(reinterpret_cast<const uint32_t *>((kv ? vc : kc) + static_cast<int64_t>(j0 + p) * 400 + g * 100) + w)
+                                       : 0u;
+            }
+            __syncthreads();
+            // 2 tensors x 16 positions x 2 halves x 32 groups of 4 values = 2048 groups; the group index is tid & 31
 #pragma unroll
-            for (int i = 0; i < 8; ++i) {
-                const int idx = tid + 256 * i;
+            for (int i = 0; i < 2048 / NT; ++i) {
+                const int idx = tid + NT * i;
                 const int kv = idx >> 10, rem = idx & 1023, p = rem >> 6, hf = (rem >> 5) & 1, gi = rem & 31;
-                float4 val = make_float4(0.f, 0.f, 0.f, 0.f);
-                if (p < np) {
-                    const uint8_t * b = (kv ? vc : kc) + (static_cast<int64_t>(j0 + p) * 8 + g * 2 + hf) * 50;
-                    float r4[4];
-                    iso3_group(b, gi, r4);
-                    const float nm = iso3_norm(b);
-                    val = make_float4(r4[0] * nm, r4[1] * nm, r4[2] * nm, r4[3] * nm);
-                }
-                (kv ? vs : ks)[p][hf * 32 + gi] = val;
+                const uint8_t * blk = reinterpret_cast<const uint8_t *>(raw[kv][p]) + hf * 50;
+                const uint32_t qsb = blk[2 + gi];
+                const uint32_t sg = (blk[34 + (gi >> 1)] >> (4 * (gi & 1))) & 0xF;
+                float qv[4];
+#pragma unroll
+                for (int c = 0; c < 4; ++c) qv[c] = s_cb[((qsb >> (2 * c)) & 3) | (((sg >> c) & 1) << 2)];
+                const float r0 = qw * qv[0] - qxq * qv[1] - qyq * qv[2] - qzq * qv[3];
+                const float r1 = qw * qv[1] + qxq * qv[0] + qyq * qv[3] - qzq * qv[2];
+                const float r2 = qw * qv[2] - qxq * qv[3] + qyq * qv[0] + qzq * qv[1];
+                const float r3 = qw * qv[3] + qxq * qv[2] - qyq * qv[1] + qzq * qv[0];
+                const float nm = f16_to_f32(static_cast<uint32_t>(blk[0]) | (static_cast<uint32_t>(blk[1]) << 8));
+                (kv ? vs : ks)[p][hf * 32 + gi] = p < np ? make_float4(r0 * nm, r1 * nm, r2 * nm, r3 * nm) : make_float4(0.f, 0.f, 0.f, 0.f);
             }
         } else {
 #pragma unroll
-            for (int i = 0; i < 8; ++i) {
-                const int idx = tid + 256 * i;
+            for (int i = 0; i < 2048 / NT; ++i) {
+                const int idx = tid + NT * i;
                 const int kv = idx >> 10, rem = idx & 1023, p = rem >> 6, c = rem & 63;
                 float4 val = make_float4(0.f, 0.f, 0.f, 0.f);
                 if (p < np)
@@ -610,27 +626,28 @@ __global__ void __launch_bounds__(256) attention_kernel_prefill(const float * __
         if (!live || nv <= 0) continue;          // warp-uniform
 
         // scores: two groups of 8 positions; lane holds the score of position (lane >> 2) & 7 of each group
-        float s[2][kQG];
+        float s[2][HPW];
 #pragma unroll
         for (int c = 0; c < 2; ++c) {
-            float pv[kQG][8];
+            float pv[HPW][8];
 #pragma unroll
             for (int pp = 0; pp < 8; ++pp) {
-                float d[kQG];
-                dot8_rows(q, ks[c * 8 + pp][lane * 2], ks[c * 8 + pp][lane * 2 + 1], d);
+                const float4 a = ks[c * 8 + pp][lane * 2], b = ks[c * 8 + pp][lane * 2 + 1];
 #pragma unroll
-                for (int r = 0; r < kQG; ++r) pv[r][pp] = d[r];
+                for (int r = 0; r < HPW; ++r)
+                    pv[r][pp] = q[r][0] * a.x + q[r][1] * a.y + q[r][2] * a.z + q[r][3] * a.w + q[r][4] * b.x + q[r][5] * b.y +
+                                q[r][6] * b.z + q[r][7] * b.w;
             }
             const int pos_rel = c * 8 + ((lane >> 2) & 7);
 #pragma unroll
-            for (int r = 0; r < kQG; ++r) {
+            for (int r = 0; r < HPW; ++r) {
                 const float v = reduce_scatter8(pv[r], lane);
                 s[c][r] = pos_rel < nv ? v : -INFINITY;
             }
         }
         // online softmax per row; every value appears in 4 lanes (bits 0 and 1 of the lane)
 #pragma unroll
-        for (int r = 0; r < kQG; ++r) {
+        for (int r = 0; r < HPW; ++r) {
             float tm = fmaxf(s[0][r], s[1][r]);
             tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 4));
             tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 8));
@@ -653,7 +670,7 @@ __global__ void __launch_bounds__(256) attention_kernel_prefill(const float * __
             const float4 a = vs[p][lane * 2], b = vs[p][lane * 2 + 1];
             const int src = (p & 7) * 4;
 #pragma unroll
-            for (int r = 0; r < kQG; ++r) {
+            for (int r = 0; r < HPW; ++r) {
                 const float w = __shfl_sync(0xffffffffu, p < 8 ? s[0][r] : s[1][r], src);
                 o[r][0] += w * a.x; o[r][1] += w * a.y; o[r][2] += w * a.z; o[r][3] += w * a.w;
                 o[r][4] += w * b.x; o[r][5] += w * b.y; o[r][6] += w * b.z; o[r][7] += w * b.w;
@@ -662,8 +679,8 @@ __global__ void __launch_bounds__(256) attention_kernel_prefill(const float * __
     }
     if (!live) return;
 #pragma unroll
-    for (int r = 0; r < kQG; ++r) {
-        const int h = g * kQG + r;
+    for (int r = 0; r < HPW; ++r) {
+        const int h = g * kQG + hb + r;
         if (ns == 1) {
             const float inv = 1.0f / l[r];
             const float * gp = qfull + static_cast<int64_t>(t) * (NH * 2 * HD) + h * 2 * HD + HD + lane * 8;
@@ -786,10 +803,19 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
             ns = std::max(1, std::min(want, kPrefillPartRows / T));
         }
         const dim3 gp(qt, NKV, ns);
-        if (iso3) attention_kernel_prefill<true><<<gp, 256, 0, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
-                                                                    static_cast<const uint8_t *>(vcache), attn_o, part, T, pos0, ns);
-        else attention_kernel_prefill<false><<<gp, 256, 0, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
-                                                                static_cast<const uint8_t *>(vcache), attn_o, part, T, pos0, ns);
+        static int hpw = -1;
+        if (hpw < 0) { const char * e = std::getenv("QWEN_ATTN_HPW"); hpw = e ? std::atoi(e) : 6; }
+        const uint8_t * k8 = static_cast<const uint8_t *>(kcache), * v8 = static_cast<const uint8_t *>(vcache);
+        if (hpw == 6) {   // 8 warps, 6 heads each (178 registers: one block per SM)
+            if (iso3) attention_kernel_prefill<true, 6><<<gp, 256, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+            else attention_kernel_prefill<false, 6><<<gp, 256, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+        } else if (hpw == 2) {   // 24 warps, 2 heads each
+            if (iso3) attention_kernel_prefill<true, 2><<<gp, 768, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+            else attention_kernel_prefill<false, 2><<<gp, 768, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+        } else {   // 16 warps, 3 heads each
+            if (iso3) attention_kernel_prefill<true, 3><<<gp, 512, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+            else attention_kernel_prefill<false, 3><<<gp, 512, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+        }
         if (ns > 1) attention_combine_n<<<grid, 256, 0, s>>>(part, qfull, attn_o, ns);
         return cudaGetLastError();
     }

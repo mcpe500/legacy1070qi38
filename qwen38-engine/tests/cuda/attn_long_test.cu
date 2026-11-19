@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "iso3_ref.hpp"
@@ -110,6 +111,7 @@ template <class A, class B> Err compare(const A & a, const B & b) {
 
 int main(int argc, char ** argv) {
     const int max_n = argc > 1 ? std::atoi(argv[1]) : 131072;
+    const bool time_only = argc > 2 && std::string(argv[2]) == "time";   // skip the parity cases (kernel tuning)
     std::mt19937 rng(1234);
     std::normal_distribution<float> nd(0.0f, 1.0f);
     std::vector<float> q(static_cast<size_t>(TMAX) * NH * HD), qfull(static_cast<size_t>(TMAX) * NH * 2 * HD);
@@ -142,6 +144,7 @@ int main(int argc, char ** argv) {
 
         // 1. fast vs tiled on the same bytes
         for (int n : {300, 4096, 6000, 8192}) {
+            if (time_only) break;
             if (n > max_n) continue;
             const std::vector<float> fast = run_gpu(d, n, iso3, 8192), tiled = run_gpu(d, n, iso3, 16384);
             const Err e = compare(tiled, fast);
@@ -152,7 +155,7 @@ int main(int argc, char ** argv) {
         }
         // 2. tiled vs double reference
         for (int n : {100, 4096, 32768, 65536, 131072}) {
-            if (n > max_n) continue;
+            if (n > max_n || time_only) continue;
             const std::vector<float> tiled = run_gpu(d, n, iso3, 131072);
             std::vector<double> ref;
             reference(q, qfull, Kh, Vh, n, ref);
@@ -175,7 +178,7 @@ int main(int argc, char ** argv) {
         // 4. prefill: T query rows at pos0 = n - T (the queries of a chunk see a growing causal window)
         for (int T : {64, 37}) {
             for (int n : {100, 4096, 8193, 32768, 65536, 131072}) {
-                if (n > max_n) continue;
+                if (n > max_n || time_only) continue;
                 std::vector<double> ref;
                 reference(q, qfull, Kh, Vh, n, ref, T);
                 const std::vector<float> one = run_gpu(d, n, iso3, 131072, false, T);   // one slice, direct output
