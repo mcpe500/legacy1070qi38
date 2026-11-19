@@ -42,8 +42,8 @@ int main() {
     std::uniform_int_distribution<int> byte(0, 255), code(0, 2);
     std::uniform_real_distribution<float> sc(0.002f, 0.05f);
     ternary_ptq1_init();
-    const int Tmax = 37, widths[] = {5120, 6144, 17408}, outs[] = {1027, 4093};
-    const int Ts[] = {1, 2, 3, 4, 5, 8, 13, 16, 37};
+    const int Tmax = 64, widths[] = {5120, 6144, 17408}, outs[] = {1027, 4093};
+    const int Ts[] = {1, 2, 3, 4, 5, 6, 8, 13, 16, 31, 37, 64};
     ActQ8 a1, a2;
     CK(actq8_alloc(a1, Tmax, 17408));
     CK(actq8_alloc(a2, Tmax, 17408));

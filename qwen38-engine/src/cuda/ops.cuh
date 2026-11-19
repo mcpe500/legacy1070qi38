@@ -39,3 +39,6 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
                          float * part = nullptr);
 // Scratch for the split-K decode attention (ctx_max > 8192, T <= 8): floats `part` must hold. Without it the tiled kernel runs.
 size_t op_attention_part_floats();
+// Prefill (ctx_max > 8192, T > 8) uses the query-tiled K/V-reuse kernel (one block per KV group and 8 query tokens).
+// Tests and benchmarks can switch back to the per-(token, head) tiled reference kernel with this flag.
+void op_attention_set_tiled_ref(bool on);

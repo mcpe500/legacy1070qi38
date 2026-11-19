@@ -19,9 +19,9 @@ int main() {
         {"ffn_up 5120x17408", 5120, 17408}, {"ffn_down 17408x5120", 17408, 5120}, {"attn_qkv 5120x10240", 5120, 10240},
         {"attn_k 5120x1024", 5120, 1024}, {"lm_head 5120x248320", 5120, 248320}};
     ActQ8 a;
-    CK(actq8_alloc(a, 16, 17408));
+    CK(actq8_alloc(a, 64, 17408));
     std::mt19937 rng(3);
-    std::vector<float> x(16 * 17408);
+    std::vector<float> x(64 * 17408);
     std::normal_distribution<float> nd;
     for (float & v : x) v = nd(rng);
     float * dxin;
@@ -31,7 +31,7 @@ int main() {
     CK(cudaEventCreate(&e0));
     CK(cudaEventCreate(&e1));
     for (const Shape & sh : shapes) {
-        CK(actq8_quantize(dxin, sh.in, 16, a, 0));
+        CK(actq8_quantize(dxin, sh.in, 64, a, 0));
         for (int kind = 0; kind < 2; ++kind) {
             const size_t bytes = kind == 0 ? static_cast<size_t>(sh.in / 128) * 28 * sh.out : static_cast<size_t>(sh.in / 64) * 18 * sh.out;
             std::vector<uint8_t> w(bytes);
@@ -41,9 +41,9 @@ int main() {
             uint8_t * dw;
             float * y;
             CK(cudaMalloc(&dw, bytes));
-            CK(cudaMalloc(&y, sizeof(float) * 16 * sh.out));
+            CK(cudaMalloc(&y, sizeof(float) * 64 * sh.out));
             CK(cudaMemcpy(dw, w.data(), bytes, cudaMemcpyHostToDevice));
-            for (int T : {1, 2, 3, 4, 5, 16}) {
+            for (int T : {1, 2, 3, 4, 5, 8, 16, 64}) {
                 for (int v = 0; v < 2; ++v) {
                     auto run = [&]() {
                         if (kind == 0) CK(v ? gemv_ptq1_0_dp4a(dw, sh.in, sh.out, a, T, y, 0) : gemv_ptq1_0_dp4a_ref(dw, sh.in, sh.out, a, T, y, 0));

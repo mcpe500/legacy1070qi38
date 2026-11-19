@@ -5,6 +5,9 @@
 //  2. Tiled path vs a double-precision CPU reference at n = 4096, 32768, 65536 and 131072 positions, both KV formats
 //     (iso3 reference = iso3_dequantize_block_ref of the bytes the GPU stored). A "needle" key at position 7 makes one head
 //     attend almost only there, so a tile bookkeeping error (wrong max, lost tile) shows up as a large error.
+//  4. Prefill path (ctx_max > 8192, T > 8: query-tiled K/V-reuse kernel, with and without position slices) for T = 64 and
+//     T = 37 query rows at pos0 = n - T against the double reference, and the old per-(token, head) tiled kernel as a second
+//     reference (bar: rel < 3e-4 and at most 1.5x the old kernel's error). Timing of both kernels for T = 64 at the largest n.
 // Usage: attn_long_test [max_n=131072]. Exit 0 only if every case passes.
 #include <cuda_runtime.h>
 
@@ -23,7 +26,7 @@
 
 namespace {
 constexpr int NH = 24, NKV = 4, HD = 256, KVW = NKV * HD;
-constexpr int T = 2;   // two query rows: row 0 sees n-1 positions, row 1 sees n
+constexpr int TMAX = 64;   // query rows allocated; the decode cases use T = 2 (row 0 sees n-1 positions, row 1 sees n)
 
 struct Dev {
     float * q = nullptr, * qfull = nullptr, * out = nullptr, * src = nullptr, * part = nullptr;
@@ -54,7 +57,7 @@ std::vector<float> host_rows(const void * cache, int n, bool iso3) {
 }
 
 void reference(const std::vector<float> & q, const std::vector<float> & qfull, const std::vector<float> & K,
-               const std::vector<float> & V, int n, std::vector<double> & out) {
+               const std::vector<float> & V, int n, std::vector<double> & out, int T = 2) {
     out.assign(static_cast<size_t>(T) * NH * HD, 0.0);
     const double scale = 1.0 / std::sqrt(static_cast<double>(HD));
     std::vector<double> sc(static_cast<size_t>(n));
@@ -85,7 +88,7 @@ void reference(const std::vector<float> & q, const std::vector<float> & qfull, c
     }
 }
 
-std::vector<float> run_gpu(const Dev & d, int n, bool iso3, int ctx_max, bool split = false) {
+std::vector<float> run_gpu(const Dev & d, int n, bool iso3, int ctx_max, bool split = false, int T = 2) {
     CK(op_attention(d.q, d.qfull, d.kc, d.vc, d.out, T, n - T, iso3, ctx_max, 0, nullptr, split ? d.part : nullptr));
     CK(cudaDeviceSynchronize());
     std::vector<float> o(static_cast<size_t>(T) * NH * HD);
@@ -109,7 +112,7 @@ int main(int argc, char ** argv) {
     const int max_n = argc > 1 ? std::atoi(argv[1]) : 131072;
     std::mt19937 rng(1234);
     std::normal_distribution<float> nd(0.0f, 1.0f);
-    std::vector<float> q(static_cast<size_t>(T) * NH * HD), qfull(static_cast<size_t>(T) * NH * 2 * HD);
+    std::vector<float> q(static_cast<size_t>(TMAX) * NH * HD), qfull(static_cast<size_t>(TMAX) * NH * 2 * HD);
     for (float & v : q) v = nd(rng);
     for (float & v : qfull) v = nd(rng);
     std::vector<float> K(static_cast<size_t>(max_n) * KVW), V(K.size());
@@ -168,6 +171,49 @@ int main(int argc, char ** argv) {
             std::printf("[%s] kv=%s n=%6d tiled(ctx 131072) vs double ref: max_abs %.3e rms %.3e rel %.3e (needle out[1][0][0] gpu %.6f ref %.6f)\n",
                         ok ? "PASS" : "FAIL", iso3 ? "iso3" : "f32 ", n, e.max_abs, e.rms_ref, e.rel,
                         tiled[static_cast<size_t>(1) * NH * HD], ref[static_cast<size_t>(1) * NH * HD]);
+        }
+        // 4. prefill: T query rows at pos0 = n - T (the queries of a chunk see a growing causal window)
+        for (int T : {64, 37}) {
+            for (int n : {100, 4096, 8193, 32768, 65536, 131072}) {
+                if (n > max_n) continue;
+                std::vector<double> ref;
+                reference(q, qfull, Kh, Vh, n, ref, T);
+                const std::vector<float> one = run_gpu(d, n, iso3, 131072, false, T);   // one slice, direct output
+                const std::vector<float> sl = run_gpu(d, n, iso3, 131072, true, T);     // position slices + combine
+                op_attention_set_tiled_ref(true);
+                const std::vector<float> old = run_gpu(d, n, iso3, 131072, false, T);
+                op_attention_set_tiled_ref(false);
+                const Err e1 = compare(one, ref), e2 = compare(sl, ref), e3 = compare(old, ref);
+                // T = 64 rows of long FP32 sums: the old tiled kernel itself reaches rel 1.7e-4 here (sequential FP32
+                // accumulation over 8193 positions), so the bar is 3e-4 and "no worse than 1.5x the old kernel".
+                const bool ok = e1.rel < 3e-4 && e2.rel < 3e-4 && e1.rel <= 1.5 * e3.rel + 1e-6 && e2.rel <= 1.5 * e3.rel + 1e-6;
+                fails += !ok;
+                std::printf("[%s] kv=%s n=%6d prefill T=%d vs double ref: reuse kernel rel %.3e, sliced rel %.3e, old tiled rel %.3e\n",
+                            ok ? "PASS" : "FAIL", iso3 ? "iso3" : "f32 ", n, T, e1.rel, e2.rel, e3.rel);
+            }
+        }
+        // timing: T = 64 at the largest n (the 128K prefill chunk)
+        {
+            const int T = 64, n = max_n;
+            cudaEvent_t a, b;
+            CK(cudaEventCreate(&a));
+            CK(cudaEventCreate(&b));
+            float ms[3] = {0, 0, 0};
+            for (int k = 0; k < 3; ++k) {
+                op_attention_set_tiled_ref(k == 2);
+                float * prt = k == 1 ? d.part : nullptr;
+                CK(op_attention(d.q, d.qfull, d.kc, d.vc, d.out, T, n - T, iso3, 131072, 0, nullptr, prt));
+                CK(cudaEventRecord(a));
+                const int reps = k == 2 ? 1 : 3;
+                for (int r = 0; r < reps; ++r) CK(op_attention(d.q, d.qfull, d.kc, d.vc, d.out, T, n - T, iso3, 131072, 0, nullptr, prt));
+                CK(cudaEventRecord(b));
+                CK(cudaEventSynchronize(b));
+                CK(cudaEventElapsedTime(&ms[k], a, b));
+                ms[k] /= reps;
+            }
+            op_attention_set_tiled_ref(false);
+            std::printf("[TIME] kv=%s n=%d T=%d: reuse kernel %.2f ms, reuse + slices %.2f ms, old tiled %.2f ms (%.1fx)\n",
+                        iso3 ? "iso3" : "f32 ", n, T, ms[0], ms[1], ms[2], ms[2] / std::min(ms[0], ms[1]));
         }
         CK(cudaFree(d.kc));
         CK(cudaFree(d.vc));
