@@ -99,6 +99,8 @@ class MTPHead(nn.Module):
         """emb, h: [B, L, H] (token embedding of x_p, hidden of p-1), pos: [B, L] absolute positions. Returns f [B, L, H]."""
         d = self.d
         B, L, _ = emb.shape
+        if not torch.is_autocast_enabled():   # CPU smoke run: BF16 teacher tensors into the FP32 student
+            emb, h = emb.to(self.eh_proj.dtype), h.to(self.eh_proj.dtype)
         z = F.linear(torch.cat([rms(emb, self.enorm, d.eps), rms(h, self.hnorm, d.eps)], -1), self.eh_proj)
         n = rms(z, self.attn_norm, d.eps)
         qg = F.linear(n, self.q_proj).view(B, L, d.n_head, 2, d.head_dim)
@@ -256,10 +258,17 @@ def unrolled_loss(student, emb_fn, lm_w, ids, H, args):
 
 
 # ------------------------------------------------------------------------------------------------------------ main
+def random_batches(vocab, seq_len, batch, seed):
+    """--smoke: random token ids (no corpus, no tokenizer), for a pipeline test of the teacher + student + loss + step."""
+    g = torch.Generator().manual_seed(seed)
+    while True:
+        yield torch.randint(0, vocab, (batch, seq_len), generator=g)
+
+
 def train(args):
-    dev = torch.device("cuda")
+    dev = torch.device(args.device)
     torch.backends.cuda.matmul.allow_tf32 = True
-    teacher = Teacher(args.teacher, dev)
+    teacher = Teacher(args.teacher, dev, dtype=torch.float32 if args.teacher_f32 else torch.bfloat16)
     d = teacher.dims
     student = MTPHead(d).to(dev)
     init = load_init(args.init, d)
@@ -268,7 +277,10 @@ def train(args):
         print(f"init: {args.init}")
     n_par = sum(p.numel() for p in student.parameters())
     print(f"student: {n_par / 1e6:.1f}M parameters; teacher dims {vars(d)}")
-    opt = torch.optim.AdamW(student.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.01, fused=True)
+    if args.optim == "sgd":   # --smoke on a small machine: no optimizer state
+        opt = torch.optim.SGD(student.parameters(), lr=args.lr)
+    else:
+        opt = torch.optim.AdamW(student.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.01, fused=dev.type == "cuda")
     step0 = 0
     st_path = os.path.join(args.out, "train_state.pt")
     os.makedirs(args.out, exist_ok=True)
@@ -285,7 +297,9 @@ def train(args):
         p = (s - args.warmup) / max(1, args.steps - args.warmup)
         return args.lr * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(1.0, p))))
 
-    data = packed_batches(args.corpus, teacher.tok, args.seq_len, args.batch, args.seed + step0)
+    vocab = teacher.lm_head.weight.shape[0]
+    data = random_batches(vocab, args.seq_len, args.batch, args.seed + step0) if args.smoke else \
+        packed_batches(args.corpus, teacher.tok, args.seq_len, args.batch, args.seed + step0)
     rng = random.Random(args.seed + 7 * step0)
     lm_w = teacher.lm_head.weight
     emb_fn = lambda t: teacher.embed(t)   # noqa: E731  (frozen, BF16)
@@ -302,7 +316,7 @@ def train(args):
                 keep = args.seq_len - args.onpolicy_new
                 ids = teacher.continue_(ids[:, :keep], args.onpolicy_new)[:, : args.seq_len]
             H = teacher.hidden(ids)
-            with torch.autocast("cuda", dtype=torch.bfloat16):
+            with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
                 loss, logs = unrolled_loss(student, emb_fn, lm_w, ids, H, args)
             (loss / args.grad_accum).backward()
             acc_logs.append(logs)
@@ -390,6 +404,10 @@ def main():
     ap.add_argument("--log-every", type=int, default=10)
     ap.add_argument("--save-every", type=int, default=500)
     ap.add_argument("--seed", type=int, default=1234)
+    ap.add_argument("--device", default="cuda", help="cuda (training) or cpu (--smoke tests)")
+    ap.add_argument("--optim", default="adamw", choices=["adamw", "sgd"])
+    ap.add_argument("--teacher-f32", action="store_true", help="load the teacher in FP32 (CPU smoke tests)")
+    ap.add_argument("--smoke", action="store_true", help="random token ids instead of --corpus (pipeline test)")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--export-init", help="write the dequantized --export-init source as safetensors to --out and exit")
     a = ap.parse_args()
@@ -403,8 +421,8 @@ def main():
         save_file(s.gguf_state(), a.out)
         print(f"wrote {a.out}: {len(sd)} tensors")
         return 0
-    if not (a.teacher and a.corpus and a.out):
-        ap.error("--teacher, --corpus and --out are required")
+    if not (a.teacher and (a.corpus or a.smoke) and a.out):
+        ap.error("--teacher, --corpus (or --smoke) and --out are required")
     train(a)
     return 0
 
