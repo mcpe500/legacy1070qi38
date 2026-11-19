@@ -28,3 +28,7 @@ int64_t gemv_row_bytes(int type, int64_t in);  // bytes of one weight row; 0 if 
 // x: device [T][in] FP32. y: device [T][out] FP32. `in` must be a multiple of 256 (32 for IQ4_NL and Q8_0).
 cudaError_t gemv_fp32(int type, const uint8_t * W, int64_t in, int64_t out, const float * x, int64_t T, float * y,
                       cudaStream_t stream);
+// Two GEMVs with the same input and shape in one launch (BF16 only: ssm_alpha / ssm_beta of Ternary Bonsai). Per row the
+// arithmetic is that of gemv_fp32, so y1 and y2 are bit-identical to two separate calls.
+cudaError_t gemv_fp32_pair(int type, const uint8_t * W1, const uint8_t * W2, int64_t in, int64_t out, const float * x, int64_t T,
+                           float * y1, float * y2, cudaStream_t s);

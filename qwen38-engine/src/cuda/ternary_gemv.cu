@@ -737,6 +737,10 @@ cudaError_t ptq1_prefill_dispatch(const uint8_t * W, int64_t in, int64_t out, co
         case 0: return T <= 8 ? launch_ptq1_tile<8>(W, in, out, a, T, y, s) : launch_ptq1_tile<16>(W, in, out, a, T, y, s);
         case 2: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 4>(W, in, out, a, T, y, s);
         case 4: return T <= 8 ? launch_ptq1_tile2<8, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 1>(W, in, out, a, T, y, s);
+        case 5: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s)
+                              : (T <= 16 ? launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<32, 1>(W, in, out, a, T, y, s));
+        case 6: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s)
+                              : (T <= 16 ? launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<32, 2>(W, in, out, a, T, y, s));
         default: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s);
     }
 }

@@ -21,6 +21,9 @@ cudaError_t op_dn_conv(const float * qkv, const float * conv_w, float * conv_sta
 // state_t holds, per value head, the transposed matrix Mt[i][j] = M[j][i] (j value index, i key index), 128 x 128.
 cudaError_t op_dn_rec(const float * conv_out, const float * gate, const float * beta, const float * z,
                       const float * ssm_norm, float * state_t, float * attn_o, int T, float eps, cudaStream_t s);
+// Reference version of op_dn_rec (state kept in global memory), for the A/B test only.
+cudaError_t op_dn_rec_ref(const float * conv_out, const float * gate, const float * beta, const float * z,
+                      const float * ssm_norm, float * state_t, float * attn_o, int T, float eps, cudaStream_t s);
 
 // Gated Attention. qfull: [T][24 heads][q(256) | gate(256)]. kproj: [T][4][256].
 // Writes qbuf [T][24][256] (RMSNorm + RoPE) and kout [T][4][256] (RMSNorm + RoPE). The RoPE angle tables
@@ -36,7 +39,7 @@ cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool i
 // ctx_max <= 8192: scores in shared memory; above: tiled online softmax (256 positions per tile), up to 131072.
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
                          int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev = nullptr,
-                         float * part = nullptr);
+                         float * part = nullptr, bool long_kernels = false);
 // Scratch for the split-K decode attention (ctx_max > 8192, T <= 8): floats `part` must hold. Without it the tiled kernel runs.
 size_t op_attention_part_floats();
 // Prefill (ctx_max > 8192, T > 8) uses the query-tiled K/V-reuse kernel (one block per KV group and 8 query tokens).

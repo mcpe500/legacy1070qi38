@@ -107,7 +107,59 @@ __global__ void dn_conv_kernel(const float * qkv, const float * w, float * state
 // Gated delta rule for one value head per block (thread j owns column j of Mt, i.e. value index j).
 //   M *= exp(g);  delta_j = (v_j - sum_i M[j][i] k_i) * beta;  M[j][i] += k_i * delta_j;  o_j = scale * sum_i M[j][i] q_i
 // followed by the gated RMSNorm: o -> o / rms(o) * ssm_norm * silu(z).
-__global__ void dn_rec_kernel(const float * conv_out, const float * gate, const float * beta, const float * z,
+// Same recurrence as dn_rec_kernel_ref below, with the 128-value state column of the thread kept in registers for the whole
+// call: the state is read once and written once (the reference reads and writes it twice per token, 4 x 64 KiB per head).
+// Every multiply and add happens in the same order as in the reference, so the result is bit-identical.
+__global__ void __launch_bounds__(DH) dn_rec_kernel(const float * conv_out, const float * gate, const float * beta, const float * z,
+                                                    const float * ssm_norm, float * state_t, float * attn_o, int T, float eps) {
+    __shared__ float qn[DH], kn[DH], red[8];
+    const int h = blockIdx.x, j = threadIdx.x, hk = h % QKH;
+    float * Mt = state_t + static_cast<int64_t>(h) * DH * DH;
+    const float scale = 1.0f / sqrtf(static_cast<float>(DH));
+    float col[DH];
+#pragma unroll
+    for (int i = 0; i < DH; ++i) col[i] = Mt[i * DH + j];
+    for (int t = 0; t < T; ++t) {
+        const float * row = conv_out + static_cast<int64_t>(t) * CONV_CH;
+        const float qv = row[hk * DH + j], kv = row[QKH * DH + hk * DH + j], vj = row[2 * QKH * DH + h * DH + j];
+        const float sq = block_sum(qv * qv, red);
+        const float sk = block_sum(kv * kv, red);
+        const float iq = 1.0f / fmaxf(sqrtf(sq), eps);
+        const float ik = 1.0f / fmaxf(sqrtf(sk), eps);
+        qn[j] = qv * iq;
+        kn[j] = kv * ik;
+        __syncthreads();
+
+        const float ex = expf(gate[t * VH + h]);
+        const float b = beta[t * VH + h];
+        float dot = 0.0f;
+#pragma unroll
+        for (int i = 0; i < DH; ++i) {
+            const float m = col[i] * ex;
+            col[i] = m;
+            dot += m * kn[i];
+        }
+        const float delta = (vj - dot) * b;
+        float o = 0.0f;
+#pragma unroll
+        for (int i = 0; i < DH; ++i) {
+            const float m = col[i] + kn[i] * delta;
+            col[i] = m;
+            o += m * qn[i];
+        }
+        o *= scale;
+        const float ms = block_sum(o * o, red);
+        const float rs = 1.0f / sqrtf(ms / static_cast<float>(DH) + eps);
+        const float zz = z[static_cast<int64_t>(t) * (VH * DH) + h * DH + j];
+        attn_o[static_cast<int64_t>(t) * (VH * DH) + h * DH + j] = o * rs * ssm_norm[j] * silu_f(zz);
+        __syncthreads();
+    }
+#pragma unroll
+    for (int i = 0; i < DH; ++i) Mt[i * DH + j] = col[i];
+}
+
+// Reference (state read and written in global memory twice per token), kept for tests/cuda/dn_rec_ab_test.cu.
+__global__ void dn_rec_kernel_ref(const float * conv_out, const float * gate, const float * beta, const float * z,
                               const float * ssm_norm, float * state_t, float * attn_o, int T, float eps) {
     __shared__ float qn[DH], kn[DH], red[8];
     const int h = blockIdx.x, j = threadIdx.x, hk = h % QKH;
@@ -769,6 +821,11 @@ cudaError_t op_dn_rec(const float * conv_out, const float * gate, const float * 
     dn_rec_kernel<<<VH, DH, 0, s>>>(conv_out, gate, beta, z, ssm_norm, state_t, attn_o, T, eps);
     return cudaGetLastError();
 }
+cudaError_t op_dn_rec_ref(const float * conv_out, const float * gate, const float * beta, const float * z, const float * ssm_norm,
+                          float * state_t, float * attn_o, int T, float eps, cudaStream_t s) {
+    dn_rec_kernel_ref<<<VH, DH, 0, s>>>(conv_out, gate, beta, z, ssm_norm, state_t, attn_o, T, eps);
+    return cudaGetLastError();
+}
 cudaError_t op_rope_table(float * cos_tab, float * sin_tab, int n_pos, float theta_scale, cudaStream_t s) {
     const int n = n_pos * (ROPE_DIM / 2);
     rope_table_kernel<<<(n + 255) / 256, 256, 0, s>>>(cos_tab, sin_tab, n_pos, theta_scale);
@@ -781,9 +838,13 @@ cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * q
     return cudaGetLastError();
 }
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
-                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev, float * part) {
+                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev, float * part,
+                         bool long_kernels) {
     const dim3 grid(T * NH);
-    if (ctx_max > kFastCtxMax && part && T <= kSplitTMax) {
+    // long_kernels (Ternary Bonsai): the split-K decode and K/V-reuse prefill kernels at every ctx_max. Without it (Qwen) the
+    // shared-memory kernel below runs up to 8192 positions, unchanged and bit-identical to the stage 4/5 results.
+    const bool longk = ctx_max > kFastCtxMax || long_kernels;
+    if (longk && part && T <= kSplitTMax) {
         const dim3 g2(T * NKV, kSplits);
         if (iso3) attention_kernel_split<true><<<g2, 256, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache), part, pos0, pos_dev);
         else attention_kernel_split<false><<<g2, 256, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache), part, pos0, pos_dev);
@@ -793,7 +854,7 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
     // Up to 8192 positions the scores fit in dynamic shared memory (32 KiB of the 48 KiB sm_61 limit) and the original
     // kernel runs unchanged (the Qwen path is bit-identical to before). Above that the tiled online-softmax kernel takes
     // over (ctx_max up to 131072, Bonsai path).
-    if (ctx_max > kFastCtxMax && !g_attn_tiled_ref) {
+    if (longk && !g_attn_tiled_ref) {
         // prefill: query-tiled K/V-reuse kernel; slices over the positions while the grid is small and the partial
         // buffer (sized for kSplitTMax x kSplits rows per head) has room
         const int qt = (T + kPQ - 1) / kPQ;

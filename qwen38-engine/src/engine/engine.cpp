@@ -251,6 +251,25 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
                 if (want_stream && n < kLayers && fits(n, true)) { pick = n; stream_on = true; }
                 else if (fits(n, false)) { pick = n; stream_on = false; }
             }
+            // A layer that does not fit runs on the CPU, about 10x slower per token. Smaller prefill chunks shrink the
+            // activation scratch (t_max x about 0.5 MiB) and can bring layers back: try them before giving a layer up.
+            const int t_keep = cfg_.t_max;
+            for (int tm : {256, 128, 64}) {
+                if (pick == kLayers || cfg_.t_max <= tm) break;
+                const int prev_t = cfg_.t_max;
+                cfg_.t_max = tm;
+                int p2 = 0;
+                bool s2 = false;
+                for (int n = kLayers; n > pick && p2 == 0; --n) {
+                    if (want_stream && n < kLayers && fits(n, true)) { p2 = n; s2 = true; }
+                    else if (fits(n, false)) { p2 = n; s2 = false; }
+                }
+                if (p2 > pick) { pick = p2; stream_on = s2; }
+                else cfg_.t_max = prev_t;
+            }
+            if (cfg_.t_max != t_keep)
+                std::fprintf(stderr, "gpu-layers auto: prefill chunk lowered from %d to %d tokens to keep more layers on the GPU\n",
+                             t_keep, cfg_.t_max);
             if (pick == 0) throw std::runtime_error("--gpu-layers auto: not even one layer fits the VRAM budget");
             std::fprintf(stderr, "gpu-layers auto: %d layers fit %.0f MiB at ctx %d (prefill streaming %s)\n", pick,
                          cfg_.vram_budget_mib, cfg_.ctx_max, stream_on ? "on" : "off");

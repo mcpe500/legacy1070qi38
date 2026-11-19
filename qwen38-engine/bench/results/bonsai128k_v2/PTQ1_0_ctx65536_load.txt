@@ -1,0 +1,14 @@
+
+prompt: 
+
+End of the source listing.
+Question: what is the secret passphrase of the vault, stated at the very beginning of this message? Reply with the passphrase only.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+
+generated: MAGENTA-FALCON-42
+{"prompt_tokens":65472,"generated_tokens":9,"ids":[44,1825,69865,7049,939,5609,12,19,17],"text":"MAGENTA-FALCON-42","load_s":45.37,"prefill_s":1.41,"prefill_tok_s":30.575,"decode_s":1.40,"decode_tok_s":6.4294,"heap_allocs_in_decode_forward":0,"peak_rss_kb":570580,"rss_anon_kb":144180,"rss_file_kb":393936,"swap_used_kb_before":652628,"swap_used_kb_after":652884,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":6634.6,"gpu_weights_mib":5395.4,"gpu_kv_mib":800.0,"vram_used_mib":6758.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":1.311,"decode_cpu_layers_s":0.000,"decode_head_s":0.042,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.000,"prefill_main_s":1.406,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"ttft_s":1.407,"finish":"stop","temperature":0.000,"ctx":65536,"reused_tokens":65429,"state_load_s":5.982}
+{"tag":"PTQ1_0_ctx65536_load","rc":0,"wall_s":54,"peak_vram_mib":6759,"vram_cap_ok":true,"max_rss_kb":570580}
