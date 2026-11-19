@@ -1,0 +1,14 @@
+{
+ "source": "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+ "layers": 64,
+ "vocab": 248320,
+ "dtype": "bfloat16",
+ "hadamard_rotated_tensors": 401,
+ "inverse_rotated": [
+  "token_embd.weight"
+ ],
+ "gdn_v_grouped": true,
+ "tokenizer": "built from the GGUF vocabulary (248320 tokens, 247587 merges, 33 special)",
+ "seconds": 2012.7,
+ "bytes": 53792095312
+}

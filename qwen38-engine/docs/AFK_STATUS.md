@@ -600,3 +600,31 @@ Reading rules: depth probes use zeroed KV, one warm-up step at `N-33` and 32 mea
 injected MTP number validates plumbing; a Bonsai-trained head remains future work.
 Raw summaries: `bench/results/bonsai128k/README.md`; claims: `../../spec/research/CLAIMS.md` C-73..C-88.
 
+
+## Branch `exp/bonsai-128k-prefill-opt-v2` (2026-11-19, issue #52)
+
+Full log, including the failed attempts: `bench/results/bonsai128k_v2/EXPERIMENT-LOG.md`. Figure: `docs/figures/52_prefill_kv_reuse_128k.svg`.
+
+| Item | #51 (main) | this branch |
+|---|---|---|
+| 128K prefill PTQ1_0 (130965 tokens) | > 4 h, not finished | **62.9 min** (34.7 tok/s); target < 1 h missed by 2.9 min |
+| Prefill attention, T=64 at n=131072, iso3 | 2178.5 ms | 96.9 ms (K/V reuse 48x, not the 384x target: register and shared-memory limits of sm_61) |
+| PTQ1_0 prefill GEMV ffn_up T=64 | 6941 us | 3089 us (bit-identical) |
+| 128K / 64K state round trip | not run | PASS bit-identical; fresh-process load 2.88 s / 5.98 s |
+| Needle 4K / 32K / 64K / 128K | 4K only | all `MAGENTA-FALCON-42` (PTQ1_0; Q2_0 4K and 32K) |
+| Q2_0 64K peak VRAM | 7417 MiB | 7347 MiB. The 7417 sample does not reproduce in isolation; its +102 MiB is one CUDA context of another process. |
+| PTQ1_0 decode, 509-token prompt, no MTP | 11.49 tok/s | **13.30**; 15 tok/s not reached (GEMV ALU-bound, 86 % of the GPU time) |
+| PTQ1_0 decode, MTP 2 (Qwen blk.64) | 17.71 | **18.48** |
+| Depth probe 4K / 32K / 64K / 128K | 8.53 / 8.79 / 6.76 / 4.59 | 12.68 / 9.29 / 7.06 / 4.72 |
+| BF16 teacher for `train_bonsai_mtp.py` | missing | `tools/bonsai_mtp_train/convert_gguf_to_hf_bf16.py`: 50.1 GiB BF16; 4 layers match the engine at cosine ≥ 0.999998 |
+
+Gates:
+- SASS PASS.
+- `attn_long_test` 52/52.
+- `ternary_ab_test` 180/180.
+- `dn_rec_ab_test` and `iso3_gpu_test` PASS.
+- Tap dump bit-identical to main for prefill and decode.
+- Qwen greedy 48/48 = stage 4, rollback PASS, `server_test` 69/69 (`QWEN_MT_DOT=0`).
+- Every run ≤ 7349 MiB VRAM and ≤ 4.75 GB RSS.
+
+GPU runs are isolated with `bench/gpu_isolate.sh`: the other agent session is paused with SIGSTOP and resumed with SIGCONT, and every run refuses to start on a busy GPU.

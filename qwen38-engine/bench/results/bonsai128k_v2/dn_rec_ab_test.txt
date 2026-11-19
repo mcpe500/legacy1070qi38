@@ -1,0 +1,8 @@
+[PASS] T= 1 state + output bit-identical; ref 62.6 us, new 42.3 us per call
+[PASS] T= 2 state + output bit-identical; ref 109.9 us, new 50.6 us per call
+[PASS] T= 3 state + output bit-identical; ref 144.2 us, new 58.9 us per call
+[PASS] T= 4 state + output bit-identical; ref 181.3 us, new 66.7 us per call
+[PASS] T= 5 state + output bit-identical; ref 212.6 us, new 72.3 us per call
+[PASS] T= 8 state + output bit-identical; ref 334.0 us, new 95.5 us per call
+[PASS] T=64 state + output bit-identical; ref 2562.4 us, new 500.9 us per call
+dn_rec_ab_test: PASS

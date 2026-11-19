@@ -186,7 +186,9 @@ template <> struct Deq<GT_Q8_0> {  // block 34 bytes: d, qs[32] (reference path 
 
 template <int TYPE>
 __global__ void gemv_fp32_kernel(const uint8_t * __restrict__ W, int64_t in, int64_t out, const float * __restrict__ x,
-                                 int T, float * __restrict__ y) {
+                                 int T, float * __restrict__ y, const uint8_t * __restrict__ W2 = nullptr, float * __restrict__ y2 = nullptr) {
+    // blockIdx.z = 1 selects the second matrix of a pair (same input, same shape): two GEMVs in one launch
+    if (blockIdx.z == 1) { W = W2; y = y2; }
     using D = Deq<TYPE>;
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
     const int64_t o = static_cast<int64_t>(blockIdx.x) * WARPS + warp;
@@ -244,6 +246,14 @@ cudaError_t launch(const uint8_t * W, int64_t in, int64_t out, const float * x, 
 }  // namespace
 
 bool gemv_fp32_supported(int type) { return gemv_row_bytes(type, 256) != 0; }
+
+cudaError_t gemv_fp32_pair(int type, const uint8_t * W1, const uint8_t * W2, int64_t in, int64_t out, const float * x, int64_t T,
+                           float * y1, float * y2, cudaStream_t s) {
+    if (type != GT_BF16) return cudaErrorInvalidValue;
+    dim3 grid(static_cast<unsigned>((out + WARPS - 1) / WARPS), static_cast<unsigned>((T + TT - 1) / TT), 2);
+    gemv_fp32_kernel<GT_BF16><<<grid, WARPS * 32, 0, s>>>(W1, in, out, x, static_cast<int>(T), y1, W2, y2);
+    return cudaGetLastError();
+}
 
 int64_t gemv_row_bytes(int type, int64_t in) {
     switch (type) {

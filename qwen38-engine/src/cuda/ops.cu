@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <cstdlib>
+
 #include "f16bits.hpp"
 #include "ops.cuh"
 
@@ -104,7 +107,59 @@ __global__ void dn_conv_kernel(const float * qkv, const float * w, float * state
 // Gated delta rule for one value head per block (thread j owns column j of Mt, i.e. value index j).
 //   M *= exp(g);  delta_j = (v_j - sum_i M[j][i] k_i) * beta;  M[j][i] += k_i * delta_j;  o_j = scale * sum_i M[j][i] q_i
 // followed by the gated RMSNorm: o -> o / rms(o) * ssm_norm * silu(z).
-__global__ void dn_rec_kernel(const float * conv_out, const float * gate, const float * beta, const float * z,
+// Same recurrence as dn_rec_kernel_ref below, with the 128-value state column of the thread kept in registers for the whole
+// call: the state is read once and written once (the reference reads and writes it twice per token, 4 x 64 KiB per head).
+// Every multiply and add happens in the same order as in the reference, so the result is bit-identical.
+__global__ void __launch_bounds__(DH) dn_rec_kernel(const float * conv_out, const float * gate, const float * beta, const float * z,
+                                                    const float * ssm_norm, float * state_t, float * attn_o, int T, float eps) {
+    __shared__ float qn[DH], kn[DH], red[8];
+    const int h = blockIdx.x, j = threadIdx.x, hk = h % QKH;
+    float * Mt = state_t + static_cast<int64_t>(h) * DH * DH;
+    const float scale = 1.0f / sqrtf(static_cast<float>(DH));
+    float col[DH];
+#pragma unroll
+    for (int i = 0; i < DH; ++i) col[i] = Mt[i * DH + j];
+    for (int t = 0; t < T; ++t) {
+        const float * row = conv_out + static_cast<int64_t>(t) * CONV_CH;
+        const float qv = row[hk * DH + j], kv = row[QKH * DH + hk * DH + j], vj = row[2 * QKH * DH + h * DH + j];
+        const float sq = block_sum(qv * qv, red);
+        const float sk = block_sum(kv * kv, red);
+        const float iq = 1.0f / fmaxf(sqrtf(sq), eps);
+        const float ik = 1.0f / fmaxf(sqrtf(sk), eps);
+        qn[j] = qv * iq;
+        kn[j] = kv * ik;
+        __syncthreads();
+
+        const float ex = expf(gate[t * VH + h]);
+        const float b = beta[t * VH + h];
+        float dot = 0.0f;
+#pragma unroll
+        for (int i = 0; i < DH; ++i) {
+            const float m = col[i] * ex;
+            col[i] = m;
+            dot += m * kn[i];
+        }
+        const float delta = (vj - dot) * b;
+        float o = 0.0f;
+#pragma unroll
+        for (int i = 0; i < DH; ++i) {
+            const float m = col[i] + kn[i] * delta;
+            col[i] = m;
+            o += m * qn[i];
+        }
+        o *= scale;
+        const float ms = block_sum(o * o, red);
+        const float rs = 1.0f / sqrtf(ms / static_cast<float>(DH) + eps);
+        const float zz = z[static_cast<int64_t>(t) * (VH * DH) + h * DH + j];
+        attn_o[static_cast<int64_t>(t) * (VH * DH) + h * DH + j] = o * rs * ssm_norm[j] * silu_f(zz);
+        __syncthreads();
+    }
+#pragma unroll
+    for (int i = 0; i < DH; ++i) Mt[i * DH + j] = col[i];
+}
+
+// Reference (state read and written in global memory twice per token), kept for tests/cuda/dn_rec_ab_test.cu.
+__global__ void dn_rec_kernel_ref(const float * conv_out, const float * gate, const float * beta, const float * z,
                               const float * ssm_norm, float * state_t, float * attn_o, int T, float eps) {
     __shared__ float qn[DH], kn[DH], red[8];
     const int h = blockIdx.x, j = threadIdx.x, hk = h % QKH;
@@ -494,8 +549,232 @@ __global__ void attention_combine(const float * part, const float * qfull, float
     attn_o[static_cast<int64_t>(t) * (NH * HD) + h * HD + tid] = O * (1.0f / L) * sigm_f(gate);
 }
 
+// ---- Prefill attention with K/V reuse (ctx_max > 8192, T > kSplitTMax).
+// The tiled kernel above runs one block per (token, head) and streams the whole K/V of its group for every one of the
+// 24 heads of every query token. Here one block owns one KV group and kPQ consecutive query tokens: warp w handles token
+// t0 + w and the 6 query heads of the group (48 (token, head) rows per block). Each K/V tile of kPP positions is read
+// from global memory and dequantized (iso3 -> FP32) once into shared memory and then used by all 48 rows, so the K/V
+// traffic and the dequantization work drop by 48x against the tiled kernel (6 heads x 8 tokens).
+// Lane layout: lane L holds dims 8L .. 8L+7 of q and of the output accumulator for each of the 6 rows (96 registers).
+// Scores: per row, 8 positions at a time are reduced with a reduce-scatter over the warp (9 shuffles for 8 dot products
+// instead of 40); lane L then owns the score of position (L >> 2) & 7. Online softmax per row (m, l, o) in FP32.
+// Split over positions (blockIdx.z, ns slices) keeps the GPU busy for short prefill chunks (T = 64 at 128K): every slice
+// writes (m, l, o) partials that attention_combine_n merges. ns == 1 writes the gated output directly.
+constexpr int kPQ = 8;                 // query tokens per block (= warps)
+constexpr int kPP = 16;                // positions per K/V tile
+constexpr int kQG = NH / NKV;          // 6 query heads per KV group
+constexpr int kPrefillPartRows = kSplitTMax * kSplits;   // (token x slice) rows of the shared partial buffer per head
+
+// v[0..7] (one value per position of a group of 8, partial over this lane's dims) -> sum over the 32 lanes of
+// v[(lane >> 2) & 7], returned in every lane.
+__device__ __forceinline__ float reduce_scatter8(float (&v)[8], int lane) {
+    const bool b4 = lane & 16, b3 = lane & 8, b2 = lane & 4;
+    float a[4];
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        const float send = b4 ? v[i] : v[i + 4], keep = b4 ? v[i + 4] : v[i];
+        a[i] = keep + __shfl_xor_sync(0xffffffffu, send, 16);
+    }
+    float c[2];
+#pragma unroll
+    for (int i = 0; i < 2; ++i) {
+        const float send = b3 ? a[i] : a[i + 2], keep = b3 ? a[i + 2] : a[i];
+        c[i] = keep + __shfl_xor_sync(0xffffffffu, send, 8);
+    }
+    float e;
+    {
+        const float send = b2 ? c[0] : c[1], keep = b2 ? c[1] : c[0];
+        e = keep + __shfl_xor_sync(0xffffffffu, send, 4);
+    }
+    e += __shfl_xor_sync(0xffffffffu, e, 1);
+    e += __shfl_xor_sync(0xffffffffu, e, 2);
+    return e;
+}
+
+template <bool ISO3, int HPW>
+__global__ void __launch_bounds__(kPQ * (kQG / HPW) * 32) attention_kernel_prefill(const float * __restrict__ qbuf, const float * __restrict__ qfull,
+                                                                const uint8_t * __restrict__ kc, const uint8_t * __restrict__ vc,
+                                                                float * __restrict__ attn_o, float * __restrict__ part, int T,
+                                                                int pos0, int ns) {
+    __shared__ float4 ks[kPP][HD / 4], vs[kPP][HD / 4];   // 2 x 16 KiB
+    // iso3: the raw bytes of the tile (100 contiguous bytes per position and group, for K and V) are staged with
+    // coalesced 32-bit loads, then dequantized from shared memory; codebook in shared memory, the quaternion of the
+    // thread's group index (always tid & 31) in registers.
+    __shared__ uint32_t raw[ISO3 ? 2 : 1][ISO3 ? kPP : 1][25];
+    __shared__ float s_cb[8];
+    constexpr int WPT = kQG / HPW;               // warps per query token
+    constexpr int NT = kPQ * WPT * 32;           // threads per block
+    const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
+    const int t0 = blockIdx.x * kPQ, g = blockIdx.y, sp = blockIdx.z;
+    const int t = t0 + warp / WPT, hb = (warp % WPT) * HPW;   // token and first head (within the group) of this warp
+    const bool live = t < T;
+    const int qpos = pos0 + (live ? t : T - 1);                  // last position this row may see
+    const int last = pos0 + min(t0 + kPQ, T) - 1;                // last position any row of the block sees
+    const int chunk = ((last + 1 + ns - 1) / ns + kPP - 1) / kPP * kPP;
+    const int js = sp * chunk, je = min(last + 1, js + chunk);
+    const float kq_scale = 1.0f / sqrtf(static_cast<float>(HD));
+    float qw = 0.f, qxq = 0.f, qyq = 0.f, qzq = 0.f;
+    if (ISO3) {
+        if (tid < 8) s_cb[tid] = iso3_codebook[tid];
+        const int gi = tid & 31;
+        qw = iso3_quat_w[gi]; qxq = -iso3_quat_x[gi]; qyq = -iso3_quat_y[gi]; qzq = -iso3_quat_z[gi];
+    }
+
+    float q[HPW][8], o[HPW][8], m[HPW], l[HPW];
+#pragma unroll
+    for (int r = 0; r < HPW; ++r) {
+        const float4 * qp = reinterpret_cast<const float4 *>(qbuf + (static_cast<int64_t>(live ? t : 0) * NH + g * kQG + hb + r) * HD + lane * 8);
+        const float4 a = qp[0], b = qp[1];
+        q[r][0] = a.x * kq_scale; q[r][1] = a.y * kq_scale; q[r][2] = a.z * kq_scale; q[r][3] = a.w * kq_scale;
+        q[r][4] = b.x * kq_scale; q[r][5] = b.y * kq_scale; q[r][6] = b.z * kq_scale; q[r][7] = b.w * kq_scale;
+        m[r] = -INFINITY;
+        l[r] = 0.0f;
+#pragma unroll
+        for (int k = 0; k < 8; ++k) o[r][k] = 0.0f;
+    }
+
+    for (int j0 = js; j0 < je; j0 += kPP) {
+        const int np = min(kPP, je - j0);
+        __syncthreads();   // previous tile fully consumed
+        if (ISO3) {
+            for (int i = tid; i < 2 * kPP * 25; i += NT) {
+                const int kv = i / (kPP * 25), rem = i % (kPP * 25), p = rem / 25, w = rem % 25;
+                raw[kv][p][w] = p < np ? __ldg(reinterpret_cast<const uint32_t *>((kv ? vc : kc) + static_cast<int64_t>(j0 + p) * 400 + g * 100) + w)
+                                       : 0u;
+            }
+            __syncthreads();
+            // 2 tensors x 16 positions x 2 halves x 32 groups of 4 values = 2048 groups; the group index is tid & 31
+#pragma unroll
+            for (int i = 0; i < 2048 / NT; ++i) {
+                const int idx = tid + NT * i;
+                const int kv = idx >> 10, rem = idx & 1023, p = rem >> 6, hf = (rem >> 5) & 1, gi = rem & 31;
+                const uint8_t * blk = reinterpret_cast<const uint8_t *>(raw[kv][p]) + hf * 50;
+                const uint32_t qsb = blk[2 + gi];
+                const uint32_t sg = (blk[34 + (gi >> 1)] >> (4 * (gi & 1))) & 0xF;
+                float qv[4];
+#pragma unroll
+                for (int c = 0; c < 4; ++c) qv[c] = s_cb[((qsb >> (2 * c)) & 3) | (((sg >> c) & 1) << 2)];
+                const float r0 = qw * qv[0] - qxq * qv[1] - qyq * qv[2] - qzq * qv[3];
+                const float r1 = qw * qv[1] + qxq * qv[0] + qyq * qv[3] - qzq * qv[2];
+                const float r2 = qw * qv[2] - qxq * qv[3] + qyq * qv[0] + qzq * qv[1];
+                const float r3 = qw * qv[3] + qxq * qv[2] - qyq * qv[1] + qzq * qv[0];
+                const float nm = f16_to_f32(static_cast<uint32_t>(blk[0]) | (static_cast<uint32_t>(blk[1]) << 8));
+                (kv ? vs : ks)[p][hf * 32 + gi] = p < np ? make_float4(r0 * nm, r1 * nm, r2 * nm, r3 * nm) : make_float4(0.f, 0.f, 0.f, 0.f);
+            }
+        } else {
+#pragma unroll
+            for (int i = 0; i < 2048 / NT; ++i) {
+                const int idx = tid + NT * i;
+                const int kv = idx >> 10, rem = idx & 1023, p = rem >> 6, c = rem & 63;
+                float4 val = make_float4(0.f, 0.f, 0.f, 0.f);
+                if (p < np)
+                    val = reinterpret_cast<const float4 *>(reinterpret_cast<const float *>(kv ? vc : kc) +
+                                                           static_cast<int64_t>(j0 + p) * (NKV * HD) + g * HD)[c];
+                (kv ? vs : ks)[p][c] = val;
+            }
+        }
+        __syncthreads();
+        const int nv = min(np, qpos - j0 + 1);   // causal: positions j0 .. j0 + nv - 1 are visible to this row
+        if (!live || nv <= 0) continue;          // warp-uniform
+
+        // scores: two groups of 8 positions; lane holds the score of position (lane >> 2) & 7 of each group
+        float s[2][HPW];
+#pragma unroll
+        for (int c = 0; c < 2; ++c) {
+            float pv[HPW][8];
+#pragma unroll
+            for (int pp = 0; pp < 8; ++pp) {
+                const float4 a = ks[c * 8 + pp][lane * 2], b = ks[c * 8 + pp][lane * 2 + 1];
+#pragma unroll
+                for (int r = 0; r < HPW; ++r)
+                    pv[r][pp] = q[r][0] * a.x + q[r][1] * a.y + q[r][2] * a.z + q[r][3] * a.w + q[r][4] * b.x + q[r][5] * b.y +
+                                q[r][6] * b.z + q[r][7] * b.w;
+            }
+            const int pos_rel = c * 8 + ((lane >> 2) & 7);
+#pragma unroll
+            for (int r = 0; r < HPW; ++r) {
+                const float v = reduce_scatter8(pv[r], lane);
+                s[c][r] = pos_rel < nv ? v : -INFINITY;
+            }
+        }
+        // online softmax per row; every value appears in 4 lanes (bits 0 and 1 of the lane)
+#pragma unroll
+        for (int r = 0; r < HPW; ++r) {
+            float tm = fmaxf(s[0][r], s[1][r]);
+            tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 4));
+            tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 8));
+            tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 16));
+            const float mn = fmaxf(m[r], tm);   // finite: position j0 is visible (nv >= 1)
+            s[0][r] = expf(s[0][r] - mn);
+            s[1][r] = expf(s[1][r] - mn);
+            float ts = s[0][r] + s[1][r];
+            ts += __shfl_xor_sync(0xffffffffu, ts, 4);
+            ts += __shfl_xor_sync(0xffffffffu, ts, 8);
+            ts += __shfl_xor_sync(0xffffffffu, ts, 16);
+            const float corr = expf(m[r] - mn);   // m = -inf on the first tile: corr = 0, o and l are 0 anyway
+            l[r] = l[r] * corr + ts;
+            m[r] = mn;
+#pragma unroll
+            for (int k = 0; k < 8; ++k) o[r][k] *= corr;
+        }
+        // o += p * V
+        for (int p = 0; p < nv; ++p) {
+            const float4 a = vs[p][lane * 2], b = vs[p][lane * 2 + 1];
+            const int src = (p & 7) * 4;
+#pragma unroll
+            for (int r = 0; r < HPW; ++r) {
+                const float w = __shfl_sync(0xffffffffu, p < 8 ? s[0][r] : s[1][r], src);
+                o[r][0] += w * a.x; o[r][1] += w * a.y; o[r][2] += w * a.z; o[r][3] += w * a.w;
+                o[r][4] += w * b.x; o[r][5] += w * b.y; o[r][6] += w * b.z; o[r][7] += w * b.w;
+            }
+        }
+    }
+    if (!live) return;
+#pragma unroll
+    for (int r = 0; r < HPW; ++r) {
+        const int h = g * kQG + hb + r;
+        if (ns == 1) {
+            const float inv = 1.0f / l[r];
+            const float * gp = qfull + static_cast<int64_t>(t) * (NH * 2 * HD) + h * 2 * HD + HD + lane * 8;
+            float * dst = attn_o + static_cast<int64_t>(t) * (NH * HD) + h * HD + lane * 8;
+            float4 a, b;
+            a.x = o[r][0] * inv * sigm_f(gp[0]); a.y = o[r][1] * inv * sigm_f(gp[1]);
+            a.z = o[r][2] * inv * sigm_f(gp[2]); a.w = o[r][3] * inv * sigm_f(gp[3]);
+            b.x = o[r][4] * inv * sigm_f(gp[4]); b.y = o[r][5] * inv * sigm_f(gp[5]);
+            b.z = o[r][6] * inv * sigm_f(gp[6]); b.w = o[r][7] * inv * sigm_f(gp[7]);
+            reinterpret_cast<float4 *>(dst)[0] = a;
+            reinterpret_cast<float4 *>(dst)[1] = b;
+        } else {
+            float * pr = part + ((static_cast<int64_t>(t) * NH + h) * ns + sp) * (HD + 2);
+#pragma unroll
+            for (int k = 0; k < 8; ++k) pr[2 + lane * 8 + k] = o[r][k];
+            if (lane == 0) { pr[0] = m[r]; pr[1] = l[r]; }
+        }
+    }
+}
+
+// attention_combine for `ns` slices per (token, head).
+__global__ void attention_combine_n(const float * part, const float * qfull, float * attn_o, int ns) {
+    const int t = blockIdx.x / NH, h = blockIdx.x % NH, tid = threadIdx.x;
+    const float * pr = part + static_cast<int64_t>(blockIdx.x) * ns * (HD + 2);
+    float M = -INFINITY;
+    for (int s = 0; s < ns; ++s) M = fmaxf(M, pr[s * (HD + 2)]);
+    float L = 0.0f, O = 0.0f;
+    for (int s = 0; s < ns; ++s) {
+        const float ms = pr[s * (HD + 2)];
+        if (ms == -INFINITY) continue;   // slice with no visible position for this row
+        const float w = expf(ms - M);
+        L += pr[s * (HD + 2) + 1] * w;
+        O += pr[s * (HD + 2) + 2 + tid] * w;
+    }
+    const float gate = qfull[static_cast<int64_t>(t) * (NH * 2 * HD) + h * 2 * HD + HD + tid];
+    attn_o[static_cast<int64_t>(t) * (NH * HD) + h * HD + tid] = O * (1.0f / L) * sigm_f(gate);
+}
+
 }  // namespace
 
+bool g_attn_tiled_ref = false;
+void op_attention_set_tiled_ref(bool on) { g_attn_tiled_ref = on; }
 size_t op_attention_part_floats() { return static_cast<size_t>(kSplitTMax) * NH * kSplits * (HD + 2); }
 
 cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s) {
@@ -542,6 +821,11 @@ cudaError_t op_dn_rec(const float * conv_out, const float * gate, const float * 
     dn_rec_kernel<<<VH, DH, 0, s>>>(conv_out, gate, beta, z, ssm_norm, state_t, attn_o, T, eps);
     return cudaGetLastError();
 }
+cudaError_t op_dn_rec_ref(const float * conv_out, const float * gate, const float * beta, const float * z, const float * ssm_norm,
+                          float * state_t, float * attn_o, int T, float eps, cudaStream_t s) {
+    dn_rec_kernel_ref<<<VH, DH, 0, s>>>(conv_out, gate, beta, z, ssm_norm, state_t, attn_o, T, eps);
+    return cudaGetLastError();
+}
 cudaError_t op_rope_table(float * cos_tab, float * sin_tab, int n_pos, float theta_scale, cudaStream_t s) {
     const int n = n_pos * (ROPE_DIM / 2);
     rope_table_kernel<<<(n + 255) / 256, 256, 0, s>>>(cos_tab, sin_tab, n_pos, theta_scale);
@@ -554,9 +838,13 @@ cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * q
     return cudaGetLastError();
 }
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
-                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev, float * part) {
+                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev, float * part,
+                         bool long_kernels) {
     const dim3 grid(T * NH);
-    if (ctx_max > kFastCtxMax && part && T <= kSplitTMax) {
+    // long_kernels (Ternary Bonsai): the split-K decode and K/V-reuse prefill kernels at every ctx_max. Without it (Qwen) the
+    // shared-memory kernel below runs up to 8192 positions, unchanged and bit-identical to the stage 4/5 results.
+    const bool longk = ctx_max > kFastCtxMax || long_kernels;
+    if (longk && part && T <= kSplitTMax) {
         const dim3 g2(T * NKV, kSplits);
         if (iso3) attention_kernel_split<true><<<g2, 256, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache), part, pos0, pos_dev);
         else attention_kernel_split<false><<<g2, 256, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache), part, pos0, pos_dev);
@@ -566,7 +854,33 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
     // Up to 8192 positions the scores fit in dynamic shared memory (32 KiB of the 48 KiB sm_61 limit) and the original
     // kernel runs unchanged (the Qwen path is bit-identical to before). Above that the tiled online-softmax kernel takes
     // over (ctx_max up to 131072, Bonsai path).
-    if (ctx_max > kFastCtxMax) {
+    if (longk && !g_attn_tiled_ref) {
+        // prefill: query-tiled K/V-reuse kernel; slices over the positions while the grid is small and the partial
+        // buffer (sized for kSplitTMax x kSplits rows per head) has room
+        const int qt = (T + kPQ - 1) / kPQ;
+        int ns = 1;
+        if (part) {
+            const int want = (2 * 19 * 8 + qt * NKV - 1) / (qt * NKV);   // about 2 waves of 8 blocks on the 19 SMs
+            ns = std::max(1, std::min(want, kPrefillPartRows / T));
+        }
+        const dim3 gp(qt, NKV, ns);
+        static int hpw = -1;
+        if (hpw < 0) { const char * e = std::getenv("QWEN_ATTN_HPW"); hpw = e ? std::atoi(e) : 6; }
+        const uint8_t * k8 = static_cast<const uint8_t *>(kcache), * v8 = static_cast<const uint8_t *>(vcache);
+        if (hpw == 6) {   // 8 warps, 6 heads each (178 registers: one block per SM)
+            if (iso3) attention_kernel_prefill<true, 6><<<gp, 256, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+            else attention_kernel_prefill<false, 6><<<gp, 256, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+        } else if (hpw == 2) {   // 24 warps, 2 heads each
+            if (iso3) attention_kernel_prefill<true, 2><<<gp, 768, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+            else attention_kernel_prefill<false, 2><<<gp, 768, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+        } else {   // 16 warps, 3 heads each
+            if (iso3) attention_kernel_prefill<true, 3><<<gp, 512, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+            else attention_kernel_prefill<false, 3><<<gp, 512, 0, s>>>(qbuf, qfull, k8, v8, attn_o, part, T, pos0, ns);
+        }
+        if (ns > 1) attention_combine_n<<<grid, 256, 0, s>>>(part, qfull, attn_o, ns);
+        return cudaGetLastError();
+    }
+    if (ctx_max > kFastCtxMax) {   // reference tiled kernel (op_attention_set_tiled_ref, tests and benchmarks only)
         if (iso3) {
             attention_kernel_tiled<true><<<grid, 256, 0, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
                                                               static_cast<const uint8_t *>(vcache), attn_o, pos0, pos_dev);

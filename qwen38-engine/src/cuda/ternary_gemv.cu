@@ -1,5 +1,7 @@
 #include "ternary_gemv.cuh"
 
+#include <cstdlib>
+
 #include "f16bits.hpp"
 #include "ternary_spec.hpp"
 
@@ -232,6 +234,14 @@ __device__ __forceinline__ float f16_cvt(uint32_t h) {
     return r;
 }
 
+// int -> float for |x| < 2^22 without I2F (a quarter-rate instruction on sm_61): 0x4B400000 is 1.5 * 2^23, so the bit
+// pattern 0x4B400000 + x is exactly the float 12582912 + x, and subtracting 12582912 is exact. Same value as
+// static_cast<float>(x) for every |x| < 2^22 (the dp4a sums here are at most 4064 in magnitude), so results stay bit-identical.
+__device__ __forceinline__ float i2f_small(int x) { return __int_as_float(0x4B400000 + x) - 12582912.0f; }
+// float(dot4(c, a)) with the magic constant as the dp4a accumulator (saves the integer add of i2f_small). Exact for every
+// int8 x {-1, 0, 1} dot of 4 terms.
+__device__ __forceinline__ float dp4a_f(int c, int a) { return __int_as_float(__dp4a(c, a, 0x4B400000)) - 12582912.0f; }
+
 // ---- Q2_0: byte k of a 16-code word holds elements 4k..4k+3 (2 bits each). Spreading it to one int8 per element gives a
 // word that pairs with four consecutive activation bytes, so the activations are loaded as they are (no prmt transpose
 // per token and weight word, which the reference kernel needs because unpack16 interleaves the elements).
@@ -282,7 +292,7 @@ __global__ void gemv_q2_0_kernel_v2(const uint8_t * __restrict__ W, int64_t in, 
                         idot = __dp4a(static_cast<int>(w[4 * g + 3]), x.w, idot);
                     }
                     const int64_t b = tt * nb32 + 2 * u + h;
-                    s += dx[b] * static_cast<float>(idot) - sx[b];
+                    s += dx[b] * i2f_small(idot) - sx[b];
                 }
                 acc[t] += d * s;
             }
@@ -378,7 +388,7 @@ __global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_v2(const uint8_t *
                     const uint32_t c2 = tab[8 * ((wv >> 16) & 0xFFu) + off2], c3 = tab[8 * (wv >> 24) + off2];
                     const int c4 = static_cast<int>(__byte_perm(__byte_perm(c0, c1, 0x0040), __byte_perm(c2, c3, 0x0040), 0x5410));
 #pragma unroll
-                    for (int t = 0; t < TT; ++t) acc[r][t] += d * dxv[t] * static_cast<float>(__dp4a(c4, a4[t], 0));
+                    for (int t = 0; t < TT; ++t) acc[r][t] += d * dxv[t] * dp4a_f(c4, a4[t]);
                 }
             }
         }
@@ -454,7 +464,7 @@ __global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_tile(const uint8_t
                 for (int t = 0; t < TT; ++t) {
                     if (t < nt) {
                         const int a4 = static_cast<int>(s_x[t][k * 32 + lane]);
-                        acc[t] += d * s_dx[t][k * 4 + (lane >> 3)] * static_cast<float>(__dp4a(c4, a4, 0));
+                        acc[t] += d * s_dx[t][k * 4 + (lane >> 3)] * i2f_small(__dp4a(c4, a4, 0));
                     }
                 }
             }
@@ -477,6 +487,136 @@ template <int TT>
 cudaError_t launch_ptq1_tile(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
     const dim3 grid(static_cast<unsigned>((out + PW - 1) / PW), static_cast<unsigned>((T + TT - 1) / TT));
     gemv_ptq1_0_kernel_tile<TT><<<grid, PW * 32, 0, s>>>(W, in, out, a.qx, a.dx, static_cast<int>(T), y);
+    return cudaGetLastError();
+}
+
+
+// ---- PTQ1_0 prefill kernel v3 (T > 5): each warp owns R output rows and TT tokens. Per group the TT activation words
+// and scales are read from shared memory once into registers and reused by the R rows (the v2 tile kernel reads them
+// once per row: two shared loads per dp4a made it shared-memory bound). Shared layout [word][TT + 4]: one lane reads its
+// TT consecutive words as 128-bit loads, and the +4 padding keeps the 8 lanes of a 128-byte phase on distinct banks.
+// Per row and token the accumulation is the reference one (acc += d * dx * dot, groups in order): bit-identical.
+template <int TT, int R>
+__global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_tile2(const uint8_t * __restrict__ W, int64_t in, int64_t out,
+                                                                    const int8_t * __restrict__ qx, const float * __restrict__ dx,
+                                                                    int T, float * __restrict__ y) {
+    constexpr int TS = TT + 4;
+    constexpr int NW = KG * 32;                    // activation words per token and step
+    constexpr int XPT = TT * NW / (PW * 32);       // words staged per thread and step
+    constexpr int DPT = (TT * KG * 4 + PW * 32 - 1) / (PW * 32);
+    static_assert(TT * NW % (PW * 32) == 0, "staging layout");
+    __shared__ uint8_t s_t5[8 * 256], s_t4[8 * 256];
+    __shared__ __align__(16) uint32_t s_x[2][NW][TS];   // double buffer: one barrier per step
+    __shared__ __align__(16) float s_dx[2][KG * 4][TS];
+    for (int i = threadIdx.x; i < 256 * 5; i += blockDim.x) s_t5[(i / 5) * 8 + i % 5] = static_cast<uint8_t>(c_ptq1_digits5[i] - 1);
+    for (int i = threadIdx.x; i < 256 * 4; i += blockDim.x) s_t4[(i / 4) * 8 + i % 4] = static_cast<uint8_t>(c_ptq1_digits4[i] - 1);
+    const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
+    const bool tail = lane >= 30;
+    const int widx = lane < 20 ? (lane & 3) : (!tail ? 4 + ((lane - 20) & 1) : 6);
+    const int dig = lane < 20 ? (lane >> 2) : (!tail ? ((lane - 20) >> 1) : 2 * (lane - 30));
+    const int ld_g = lane / 7, ld_w = lane % 7;
+    const uint8_t * tab = (tail ? s_t4 : s_t5) + dig;
+    const uint32_t bsel = tail ? 0x1010u : 0x3210u;
+    const int off2 = tail ? 1 : 0;
+    const int t0 = blockIdx.y * TT;
+    const int nt = min(TT, T - t0);
+    const int ngroups = static_cast<int>(in / 128), nb32 = static_cast<int>(in / 32);
+    // staging: thread copies word sw of tokens st + j * (PW * 32 / NW); one token row is a contiguous run of NW words
+    constexpr int TSTEP = PW * 32 / NW;
+    const int sw = tid % NW, st = tid / NW;
+    const uint32_t * xsrc[XPT];
+#pragma unroll
+    for (int jx = 0; jx < XPT; ++jx) {
+        const int t = st + jx * TSTEP;
+        xsrc[jx] = t < nt ? reinterpret_cast<const uint32_t *>(qx + static_cast<int64_t>(t0 + t) * in) + sw : nullptr;
+    }
+    const int dt = tid / (KG * 4), db = tid % (KG * 4);
+    const float * dsrc = (DPT == 1 && dt < TT && dt < nt) ? dx + static_cast<int64_t>(t0 + dt) * nb32 + db : nullptr;
+    int64_t o[R];
+    bool live[R];
+    const uint32_t * row[R];
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+        o[r] = (static_cast<int64_t>(blockIdx.x) * R + r) * PW + warp;
+        live[r] = o[r] < out;
+        row[r] = reinterpret_cast<const uint32_t *>(W + (live[r] ? o[r] : 0) * ngroups * ternary::kPtqGroupBytes);
+    }
+    float acc[R][TT];
+    uint32_t nxt[R];
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+#pragma unroll
+        for (int t = 0; t < TT; ++t) acc[r][t] = 0.0f;
+        nxt[r] = lane < 7 * KG ? __ldg(row[r] + ld_g * 7 + ld_w) : 0u;
+    }
+    uint32_t xr[XPT];
+    float dr = 0.0f;
+    auto load_step = [&](int g0) {
+#pragma unroll
+        for (int jx = 0; jx < XPT; ++jx) xr[jx] = xsrc[jx] ? __ldg(xsrc[jx] + g0 * 32) : 0u;
+        if (DPT == 1 && dt < TT) dr = dsrc ? __ldg(dsrc + g0 * 4) : 0.0f;
+    };
+    auto store_step = [&](int b) {
+#pragma unroll
+        for (int jx = 0; jx < XPT; ++jx) s_x[b][sw][st + jx * TSTEP] = xr[jx];
+        if (DPT == 1 && dt < TT) s_dx[b][db][dt] = dr;
+    };
+    load_step(0);
+    store_step(0);
+    __syncthreads();   // tables and the first step are in shared memory
+    int buf = 0;
+    for (int g0 = 0; g0 < ngroups; g0 += KG, buf ^= 1) {
+        const bool more = g0 + KG < ngroups;
+        if (more) load_step(g0 + KG);
+        uint32_t cur[R];
+#pragma unroll
+        for (int r = 0; r < R; ++r) {
+            cur[r] = nxt[r];
+            if (more && lane < 7 * KG) nxt[r] = __ldg(row[r] + (g0 + KG + ld_g) * 7 + ld_w);
+        }
+#pragma unroll
+        for (int k = 0; k < KG; ++k) {
+            int a4[TT];
+            float dxv[TT];
+#pragma unroll
+            for (int t4 = 0; t4 < TT; t4 += 4) {
+                const uint4 xa = *reinterpret_cast<const uint4 *>(&s_x[buf][k * 32 + lane][t4]);
+                const float4 da = *reinterpret_cast<const float4 *>(&s_dx[buf][k * 4 + (lane >> 3)][t4]);
+                a4[t4] = static_cast<int>(xa.x); a4[t4 + 1] = static_cast<int>(xa.y);
+                a4[t4 + 2] = static_cast<int>(xa.z); a4[t4 + 3] = static_cast<int>(xa.w);
+                dxv[t4] = da.x; dxv[t4 + 1] = da.y; dxv[t4 + 2] = da.z; dxv[t4 + 3] = da.w;
+            }
+#pragma unroll
+            for (int r = 0; r < R; ++r) {
+                const uint32_t wv = __byte_perm(__shfl_sync(0xffffffffu, cur[r], k * 7 + widx), 0u, bsel);
+                const uint32_t w6 = __shfl_sync(0xffffffffu, cur[r], k * 7 + 6);
+                const float d = f16_cvt(w6 >> 16);
+                const uint32_t c0 = tab[8 * (wv & 0xFFu)], c1 = tab[8 * ((wv >> 8) & 0xFFu)];
+                const uint32_t c2 = tab[8 * ((wv >> 16) & 0xFFu) + off2], c3 = tab[8 * (wv >> 24) + off2];
+                const int c4 = static_cast<int>(__byte_perm(__byte_perm(c0, c1, 0x0040), __byte_perm(c2, c3, 0x0040), 0x5410));
+#pragma unroll
+                for (int t = 0; t < TT; ++t) acc[r][t] += d * dxv[t] * dp4a_f(c4, a4[t]);
+            }
+        }
+        if (more) store_step(buf ^ 1);
+        __syncthreads();
+    }
+#pragma unroll
+    for (int r = 0; r < R; ++r) {
+#pragma unroll
+        for (int t = 0; t < TT; ++t) {
+            float v = acc[r][t];
+#pragma unroll
+            for (int off = 16; off > 0; off >>= 1) v += __shfl_xor_sync(0xffffffffu, v, off);
+            if (lane == 0 && live[r] && t < nt) y[static_cast<int64_t>(t0 + t) * out + o[r]] = v;
+        }
+    }
+}
+
+template <int TT, int R>
+cudaError_t launch_ptq1_tile2(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+    const dim3 grid(static_cast<unsigned>((out + PW * R - 1) / (PW * R)), static_cast<unsigned>((T + TT - 1) / TT));
+    gemv_ptq1_0_kernel_tile2<TT, R><<<grid, PW * 32, 0, s>>>(W, in, out, a.qx, a.dx, static_cast<int>(T), y);
     return cudaGetLastError();
 }
 
@@ -542,7 +682,11 @@ cudaError_t launch_ptq1_v2(const uint8_t * W, int64_t in, int64_t out, const Act
     static int n_sm = 0;
     if (!n_sm) { cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, 0); if (n_sm < 1) n_sm = 19; }
     // persistent: at most 8 blocks of 256 threads per SM, each block loops over groups of PW * R rows
-    const int64_t rows = (out + PW * R - 1) / (PW * R), cap = static_cast<int64_t>(n_sm) * 8;
+    // persistent blocks per SM (QWEN_PTQ1_BPS, tuning). 48 registers x 256 threads: 5 blocks fit an SM, so 5 is one wave;
+    // 8 left a partial second wave (ffn_up T=1: 229 -> 208 us, LM head 3244 -> 2778 us).
+    static int bps = -1;
+    if (bps < 0) { const char * e = std::getenv("QWEN_PTQ1_BPS"); bps = e ? std::atoi(e) : 5; }
+    const int64_t rows = (out + PW * R - 1) / (PW * R), cap = static_cast<int64_t>(n_sm) * bps;
     gemv_ptq1_0_kernel_v2<TT, R><<<dim3(static_cast<unsigned>(rows < cap ? rows : cap)), PW * 32, 0, s>>>(W, in, out, a.qx, a.dx, static_cast<int>(T), y);
     return cudaGetLastError();
 }
@@ -586,16 +730,42 @@ cudaError_t gemv_q2_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const Act
     return launch_q2_v2<16>(W, in, out, a, T, y, s);
 }
 
+namespace {
+// T > 5. QWEN_PTQ1_TILE (tuning only): 0 = v2 tile kernel, 1..n = tile2 variants below.
+cudaError_t ptq1_prefill_dispatch(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+    static int mode = -1;
+    // Measured (tests/cuda/ternary_bench.cu, ffn_up 5120x17408, T = 16): v2 tile 1741 us, tile2 <16,4> 1158 us,
+    // <16,1> 1275 us, <16,2> 762 us (the default; 123 registers, two blocks per SM).
+    if (mode < 0) { const char * e = std::getenv("QWEN_PTQ1_TILE"); mode = e ? std::atoi(e) : 1; }
+    switch (mode) {
+        case 0: return T <= 8 ? launch_ptq1_tile<8>(W, in, out, a, T, y, s) : launch_ptq1_tile<16>(W, in, out, a, T, y, s);
+        case 2: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 4>(W, in, out, a, T, y, s);
+        case 4: return T <= 8 ? launch_ptq1_tile2<8, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 1>(W, in, out, a, T, y, s);
+        case 5: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s)
+                              : (T <= 16 ? launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<32, 1>(W, in, out, a, T, y, s));
+        case 6: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s)
+                              : (T <= 16 ? launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<32, 2>(W, in, out, a, T, y, s));
+        default: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s);
+    }
+}
+}  // namespace
+
 cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
     if (in % (128 * KG) != 0) return cudaErrorInvalidValue;
     ternary_ptq1_init();
-    if (T <= 1) return launch_ptq1_v2<1, 4>(W, in, out, a, T, y, s);
+    if (T <= 1) {
+        static int r1 = -1;   // rows per warp of the decode kernel (QWEN_PTQ1_R1, tuning)
+        if (r1 < 0) { const char * e = std::getenv("QWEN_PTQ1_R1"); r1 = e ? std::atoi(e) : 4; }
+        if (r1 == 2) return launch_ptq1_v2<1, 2>(W, in, out, a, T, y, s);
+        if (r1 == 3) return launch_ptq1_v2<1, 3>(W, in, out, a, T, y, s);
+        if (r1 == 6) return launch_ptq1_v2<1, 6>(W, in, out, a, T, y, s);
+        return launch_ptq1_v2<1, 4>(W, in, out, a, T, y, s);
+    }
     if (T == 2) return launch_ptq1_v2<2, 2>(W, in, out, a, T, y, s);
     if (T == 3) return launch_ptq1_v2<3, 2>(W, in, out, a, T, y, s);
     if (T == 4) return launch_ptq1_v2<4, 2>(W, in, out, a, T, y, s);
     if (T == 5) return launch_ptq1_v2<5, 2>(W, in, out, a, T, y, s);
-    if (T <= 8) return launch_ptq1_tile<8>(W, in, out, a, T, y, s);
-    return launch_ptq1_tile<16>(W, in, out, a, T, y, s);
+    return ptq1_prefill_dispatch(W, in, out, a, T, y, s);
 }
 
 void ternary_ptq1_init() {
