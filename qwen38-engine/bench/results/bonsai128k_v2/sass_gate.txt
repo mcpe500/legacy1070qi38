@@ -5,7 +5,7 @@
 [PASS] iso3_quant: IDP.4A x0, half arithmetic x0
 [PASS] ops: IDP.4A x0, half arithmetic x0
 [PASS] q8_gemv: IDP.4A x8, half arithmetic x0
-[PASS] ternary_gemv: IDP.4A x1821, half arithmetic x0
-[PASS] build/qwen38-engine (linked): IDP.4A x3453, half arithmetic x0
+[PASS] ternary_gemv: IDP.4A x2249, half arithmetic x0
+[PASS] build/qwen38-engine (linked): IDP.4A x3881, half arithmetic x0
 
 SASS gate: PASS
