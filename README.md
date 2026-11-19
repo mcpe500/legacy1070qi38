@@ -33,10 +33,40 @@ dipakai adalah **7373 MiB VRAM** dan **14,2 GB RAM host** (satuan desimal).
 | `qwen38-engine`, Bonsai `PTQ1_0` / `Q2_0`, prompt 4K tanpa MTP | **8,15 / 8,21 tok/s** | decode nyata pada prompt needle 4K dengan kernel ternary v2; C-85 |
 | `qwen38-engine`, Bonsai `PTQ1_0` + head MTP uji (blk.64 Qwen) | **17,71 tok/s** | prompt 512 + 256 decode, MTP tetap 2; 158/198 draft diterima dan 256 token identik; C-84 |
 
-Kualitas model Bonsai dasar juga telah diukur: PPL WikiText-2 **7,995/8,000** untuk
-`Q2_0`/`PTQ1_0`, versus **5,916** untuk Qwen Q4_K_M; top-1 agreement 76,5% dan HellaSwag 72%
-versus 83% (p=0,001). Perbedaan Winogrande, ARC-Challenge, dan MMLU tidak signifikan pada sampel
-tersebut. Rincian dan batasan: C-78.
+### Kuantisasi dan intelligence terukur
+
+| Kuantisasi / model | Decode tok/s | Konteks uji | Intelligence / catatan |
+|---|---:|---|---|
+| Qwen `Q4_K_M` stock + `-ot` FFN 17..64 | 2,85 | pendek | PPL WikiText-2 5,916 (referensi proyek); C-54/C-78 |
+| Qwen `Q4_K_M` engine, MTP 0 / adaptive | 2,72 / 3,13 | 4K / 512 | run regresi dan ronde adaptive; C-80/C-81 |
+| Qwen `Q4_0` stock | 2,39 | pendek | pembanding Q4; C-54 |
+| Qwen `IQ4_XS` stock / 4K `-ot` | 2,29 / 2,87 | pendek / 4K | lebih baik dari IQ3 pada CPU ini; C-50/C-60 |
+| Qwen `UD-IQ3_S` `-ngl` / `-ot` | 1,67 / 2,40 | 4K | minimum 2 tok/s hanya lewat `-ot`; C-60 |
+| Qwen `UD-Q3_K_XL` `-ngl` / `-ot` | 1,85 / 2,25 | 4K | pengganti IQ3_M; C-60 |
+| Qwen `IQ3_XXS` | 1,15 | pendek | quant lebih kecil tidak otomatis lebih cepat; C-50 |
+| Qwen `Q3-DOWN-XS` CUDA / q4_0 KV / Vulkan | 5,54 / 6,51 / 7,05 | 4K | berkas nyata 7,91 GiB; PPL 8,4615 (+22%), KLD 0,2728; C-65/C-66/C-67/C-68 |
+| Bonsai `PTQ1_0` external (PrismML fork) | 19,64 | 512 | 1,75 bpw, 5,54 GiB; C-79 |
+| Bonsai `Q2_0` external (stock llama.cpp) | 17,13 | 512 | 2,25 bpw, 7,10 GiB; C-79 |
+| Bonsai `PTQ1_0` / `Q2_0` engine tanpa MTP | 8,1536 / 8,2092 | 4K needle | kernel v2; menjawab needle MAGENTA-FALCON-42; C-87 |
+| Bonsai `PTQ1_0` + blk.64 Qwen, MTP 2 | 17,7078 | 512 | plumbing saja, head belum dilatih pada Bonsai; C-84 |
+| Bonsai `PQ2_0` | belum diukur | - | tidak diunduh; GGML type 142 belum didukung engine |
+
+Intelligence Bonsai: PPL WikiText-2 **7,995/8,000** untuk `Q2_0`/`PTQ1_0`, versus **5,916** untuk
+Qwen Q4_K_M; KLD 0,3561 dan same-top-1 76,48/76,45%. HellaSwag 72% versus 83% (p=0,001);
+Winogrande, ARC-Challenge, dan MMLU tidak signifikan pada sampel tersebut. Rincian dan batasan: C-78.
+
+### Matriks konteks terukur
+
+| Model / runtime | 512 | 4K | 16K | 32K | 64K | 128K |
+|---|---:|---:|---:|---:|---:|---:|
+| Bonsai `Q2_0` stock/PrismML | 17,13 | 12,43 | 7,20 | 3,57 | 2,04 | 3,98 short-depth |
+| Bonsai `PTQ1_0` PrismML fork | 19,64 | 15,19 | 11,70 | 7,51 | 3,36 | 2,24 short-depth |
+| Qwen Q4_K_M `qwen38-engine` | 2,947 | 2,245 | limit 4K | - | - | - |
+| Qwen Q4_K_M stock llama.cpp | 2,26 | 2,00 | 1,35 | - | - | - |
+
+Angka 64K memakai prompt penuh; 128K adalah kapasitas dan speed pada kedalaman pendek, bukan prefill
+penuh. Matriks ini berasal dari runtime lain dan `qwen38-engine` versi berbeda, sehingga jangan
+digabung sebagai satu baseline (C-88).
 
 ### Konteks 128K pada engine khusus
 
@@ -62,7 +92,7 @@ tersebut. Rincian dan batasan: C-78.
 | Alat MTP Bonsai | `qwen38-engine/tools/bonsai_mtp_train/`: korpus ChatML, distilasi head, dan penyuntikan `blk.64` ke GGUF |
 | Server | `POST /v1/chat/completions` OpenAI-compatible, SSE, telemetry, cache prefix; WebUI tertanam di `webui/index.html` |
 | CLI proyek | `tools/legacy.py`: budget, hardware, GGUF, llama, benchmark, kualitas, spec; 127 test unit lulus |
-| Spesifikasi dan klaim | SPEC-000..008, RFC-001..004, `spec/research/CLAIMS.md` C-01..C-86; setiap klaim faktual baru harus punya ID |
+| Spesifikasi dan klaim | SPEC-000..008, RFC-001..004, `spec/research/CLAIMS.md` C-01..C-88; setiap klaim faktual baru harus punya ID |
 | CLI untuk executable tunggal | SPEC-008/RFC-004 sudah dispesifikasikan; implementasi embed/mmap **belum** dikerjakan |
 
 ### Yang belum

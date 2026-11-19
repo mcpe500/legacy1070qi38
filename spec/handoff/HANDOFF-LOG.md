@@ -434,3 +434,13 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [UPDATE] CLAIMS diperluas menjadi C-73..C-86; README root/engine/bench/results dan docs/AFK_STATUS.md diselaraskan dengan angka kernel v2, split-K, MTP plumbing, dan fix Pool
   → Lihat qwen38-engine/bench/results/bonsai128k/, spec/research/CLAIMS.md C-73..C-86, qwen38-engine/src/cpu/pool.hpp
 ```
+
+### PR #51 tambahan: matriks kuantisasi/TPS/intelligence/konteks (2026-11-19)
+
+```
+[Post-bootstrap] [UPDATE] SVG PR diperluas menjadi empat panel: semua kuantisasi terukur, TPS per konteks, intelligence Qwen vs Bonsai/Q3-DOWN-XS, dan batas dukungan engine
+[Post-bootstrap] [UPDATE] CLAIMS diperluas C-87..C-88: C-87 needle 4K Bonsai kernel v2; C-88 matriks konteks external Q2_0/PTQ1_0 dan Qwen engine/stock
+[Post-bootstrap] [UPDATE] README/AGENTS/AFK_STATUS diselaraskan ke rentang klaim C-01..C-88; SVG lolos validator tanpa warning layout
+[Post-bootstrap] [UPDATE] PR #51 diperbarui dengan tabel kuantisasi, matriks konteks 512/4K/16K/32K/64K/128K, dan tabel intelligence
+  → Lihat spec/specs/assets/qwen38-engine-128k-context.svg, spec/research/CLAIMS.md C-73..C-88
+```

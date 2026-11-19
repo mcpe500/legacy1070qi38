@@ -598,5 +598,5 @@ Reading rules: depth probes use zeroed KV, one warm-up step at `N-33` and 32 mea
 "what does one decode token cost at depth N?", not "how long is a full 128K prefill?" and not "how good is the model at
 128K?". Engine Bonsai numbers must not be mixed with the 17,13/19,64 tok/s of stock llama.cpp / PrismML above. The
 injected MTP number validates plumbing; a Bonsai-trained head remains future work.
-Raw summaries: `bench/results/bonsai128k/README.md`; claims: `../../spec/research/CLAIMS.md` C-73..C-86.
+Raw summaries: `bench/results/bonsai128k/README.md`; claims: `../../spec/research/CLAIMS.md` C-73..C-88.
 

@@ -106,7 +106,7 @@ Full detail is in `webui-and-parity-bench`.
 - `docs/ref_pr38_summary.md` and `docs/ref_pr38_iso3_mtp.diff`: offline copy of
   mcpe500/legacy1070qi38 PR #38 (merged 2026-11-15). This is the ground truth for iso3 and MTP.
 - Fork with the iso3 code: mcpe500/llama.cpp, branch `feat/iso3-kv`, commit `36dbad3`.
-- Measurements and claims with IDs (C-01..C-86) live in the legacy repo, in
+- Measurements and claims with IDs (C-01..C-88) live in the legacy repo, in
   `spec/research/CLAIMS.md`.
 
 ## Open conflicts (need a user decision)
