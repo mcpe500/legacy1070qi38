@@ -1,0 +1,2 @@
+iso3 GPU store: 888 blocks, 0 differ from the host reference (0 bytes), offset/FP32 failures 0
+result: PASS

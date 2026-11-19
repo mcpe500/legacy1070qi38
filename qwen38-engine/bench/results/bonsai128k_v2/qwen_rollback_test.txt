@@ -1,6 +1,0 @@
-rollback keep=1: batch rows differing from single-step logits: 0 of 5; steps after rollback differing: 0 of 7
-rollback keep=2: batch rows differing from single-step logits: 0 of 5; steps after rollback differing: 0 of 6
-rollback keep=3: batch rows differing from single-step logits: 0 of 5; steps after rollback differing: 0 of 5
-rollback keep=4: batch rows differing from single-step logits: 0 of 5; steps after rollback differing: 0 of 4
-rollback test: PASS (bit-identical)
-{"tag":"qwen_rollback_test","rc":0,"wall_s":138,"peak_vram_mib":7349,"vram_cap_ok":true,"max_rss_kb":9172520}

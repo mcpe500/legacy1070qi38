@@ -37,6 +37,23 @@ for stage in "$@"; do
     qwen)
       run qwen_q4km_p5_mtp0 -m $Q --gpu-layers 32 --ctx 4096 --mtp-steps 0 -n 48
       QWEN_MT_DOT=0 run qwen_rollback_test -m $Q --gpu-layers 32 --ctx 4096 --rollback-test ;;
+    m3)   # decode after the M3 changes: depth probe incl. 512 and 16K, real generation with and without MTP 2 drafts
+      for c in 512 4096 16384 32768 65536 131072; do
+        cx=$(( c < 4096 ? 4096 : c ))
+        run m3_PTQ1_0_d${c}_depth -m $M/Ternary-Bonsai-2-27B-PTQ1_0.gguf --gpu-layers auto --ctx $cx --depth-bench $c -n 33
+      done
+      for c in 4096 32768 65536 131072; do
+        run m3_Q2_0_d${c}_depth -m $M/Ternary-Bonsai-2-27B-Q2_0.gguf --gpu-layers auto --ctx $c --depth-bench $c -n 33
+      done
+      MT=$M/Ternary-Bonsai-2-27B-PTQ1_0-mtpqwen.gguf
+      run m3_mtpqwen_p512_mtp0 -m $MT --gpu-layers auto --ctx 4096 -f bench/prompt512.txt -n 256 --mtp-steps 0
+      run m3_mtpqwen_p512_mtp2 -m $MT --gpu-layers auto --ctx 4096 -f bench/prompt512.txt -n 256 --mtp-adaptive 0 --mtp-steps 2
+      run m3_mtpqwen_p4k_mtp0 -m $MT --gpu-layers auto --ctx 8192 --parse-special -f $P/p4032.txt -n 128 --mtp-steps 0
+      run m3_mtpqwen_p4k_mtp2 -m $MT --gpu-layers auto --ctx 8192 --parse-special -f $P/p4032.txt -n 128 --mtp-adaptive 0 --mtp-steps 2
+      run m3_mtpqwen_rollback -m $MT --gpu-layers auto --ctx 4096 --rollback-test ;;
+    final128)
+      run final_PTQ1_0_ctx131072_statetest -m $M/Ternary-Bonsai-2-27B-PTQ1_0.gguf --gpu-layers auto --ctx 131072 --parse-special \
+          -f $P/pre131008.txt --state-test $P/ptq1_128k_v2.state --cont-file $P/question.txt -n 24 ;;
     *) log "unknown stage $stage" ;;
   esac
 done

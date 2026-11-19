@@ -35,6 +35,8 @@ cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * q
 // Stores T rows of [4][256] values at cache positions pos0.. . iso3: 8 blocks of 50 bytes per position, else FP32.
 // pos_dev (optional): device pointer to the position, read by the kernel instead of pos0 (needed to replay a CUDA graph).
 cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool iso3, cudaStream_t s, const int * pos_dev = nullptr);
+// Reference iso3 store (one thread per 128-value block), for tests/cuda/iso3_gpu_test.cu.
+cudaError_t op_kv_store_ref(const float * src, void * cache, int T, int pos0, cudaStream_t s);
 // Causal GQA attention (24 query heads over 4 kv heads) with FP32 dequantization of the iso3 cache inside the kernel.
 // ctx_max <= 8192: scores in shared memory; above: tiled online softmax (256 positions per tile), up to 131072.
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,

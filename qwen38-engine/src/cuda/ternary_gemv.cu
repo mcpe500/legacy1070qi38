@@ -682,7 +682,11 @@ cudaError_t launch_ptq1_v2(const uint8_t * W, int64_t in, int64_t out, const Act
     static int n_sm = 0;
     if (!n_sm) { cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, 0); if (n_sm < 1) n_sm = 19; }
     // persistent: at most 8 blocks of 256 threads per SM, each block loops over groups of PW * R rows
-    const int64_t rows = (out + PW * R - 1) / (PW * R), cap = static_cast<int64_t>(n_sm) * 8;
+    // persistent blocks per SM (QWEN_PTQ1_BPS, tuning). 48 registers x 256 threads: 5 blocks fit an SM, so 5 is one wave;
+    // 8 left a partial second wave (ffn_up T=1: 229 -> 208 us, LM head 3244 -> 2778 us).
+    static int bps = -1;
+    if (bps < 0) { const char * e = std::getenv("QWEN_PTQ1_BPS"); bps = e ? std::atoi(e) : 5; }
+    const int64_t rows = (out + PW * R - 1) / (PW * R), cap = static_cast<int64_t>(n_sm) * bps;
     gemv_ptq1_0_kernel_v2<TT, R><<<dim3(static_cast<unsigned>(rows < cap ? rows : cap)), PW * 32, 0, s>>>(W, in, out, a.qx, a.dx, static_cast<int>(T), y);
     return cudaGetLastError();
 }
@@ -749,7 +753,14 @@ cudaError_t ptq1_prefill_dispatch(const uint8_t * W, int64_t in, int64_t out, co
 cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
     if (in % (128 * KG) != 0) return cudaErrorInvalidValue;
     ternary_ptq1_init();
-    if (T <= 1) return launch_ptq1_v2<1, 4>(W, in, out, a, T, y, s);
+    if (T <= 1) {
+        static int r1 = -1;   // rows per warp of the decode kernel (QWEN_PTQ1_R1, tuning)
+        if (r1 < 0) { const char * e = std::getenv("QWEN_PTQ1_R1"); r1 = e ? std::atoi(e) : 4; }
+        if (r1 == 2) return launch_ptq1_v2<1, 2>(W, in, out, a, T, y, s);
+        if (r1 == 3) return launch_ptq1_v2<1, 3>(W, in, out, a, T, y, s);
+        if (r1 == 6) return launch_ptq1_v2<1, 6>(W, in, out, a, T, y, s);
+        return launch_ptq1_v2<1, 4>(W, in, out, a, T, y, s);
+    }
     if (T == 2) return launch_ptq1_v2<2, 2>(W, in, out, a, T, y, s);
     if (T == 3) return launch_ptq1_v2<3, 2>(W, in, out, a, T, y, s);
     if (T == 4) return launch_ptq1_v2<4, 2>(W, in, out, a, T, y, s);

@@ -1,0 +1,18 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Name
+86.3,4333784054,25264,171539.9,"void <unnamed>::gemv_ptq1_0_kernel_v2<(int)1
+3.2,160184094,400,400460.2,"void <unnamed>::gemv_ptq1_0_kernel_v2<(int)5
+2.7,136441235,3072,44414.5,"<unnamed>::dn_rec_kernel(const float *
+1.9,96250953,3072,31331.7,"void <unnamed>::gemv_fp32_kernel<(int)30>(const unsigned char *
+1.7,84978267,8256,10292.9,"<unnamed>::rmsnorm_rows_kernel(const float *
+1.5,73943581,16448,4495.6,"<unnamed>::rotate_q8_kernel(const float *
+1.0,52092210,2048,25435.6,"<unnamed>::kv_store_iso3_kernel(const float *
+0.4,21250374,1024,20752.3,"void <unnamed>::attention_kernel_split<(bool)1>(const float *
+0.3,14085323,8192,1719.4,"<unnamed>::add_kernel(float *
+0.3,12756101,3072,4152.4,"<unnamed>::dn_conv_kernel(const float *
+0.2,10866523,4096,2653.0,"<unnamed>::silu_mul_kernel(float *
+0.2,8891523,1024,8683.1,"<unnamed>::attention_combine(const float *
+0.1,7368523,3072,2398.6,"<unnamed>::dn_prep_kernel(const float *
+0.1,6853979,3072,2231.1,"<unnamed>::gdn_v_permute_kernel(const float *
+0.1,3449386,1024,3368.5,"<unnamed>::qk_prep_kernel(const float *
+0.0,7296,1,7296.0,"<unnamed>::rope_table_kernel(float *
+
