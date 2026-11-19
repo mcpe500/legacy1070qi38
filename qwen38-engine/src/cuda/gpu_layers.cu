@@ -19,6 +19,8 @@
 #include "gemv.cuh"
 #include "ops.cuh"
 #include "q8_gemv.cuh"
+#include "ternary_gemv.cuh"
+#include "ternary_spec.hpp"
 
 #define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) \
     throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(e_) + " at " + __FILE__ + ":" + std::to_string(__LINE__)); } while (0)
@@ -75,7 +77,24 @@ struct GpuLayers::Impl {
     size_t arena_bytes = 0, weights = 0, kv = 0;
     Q8Scratch q8;
     ActQ8 act;  // Q8_1 activations of the current GEMV input
+    const float * act_src = nullptr;  // buffer `act` was quantized from (rotated or plain)
+    bool tmode = false;               // any weight of the GPU layers is ternary (PTQ1_0 / Q2_0)
+    const float * sgn[3] = {nullptr, nullptr, nullptr};   // device sign vectors for widths 5120 / 6144 / 17408
+    float * xr5120 = nullptr, *xr6144 = nullptr, *xr17408 = nullptr;  // rotated activations [t_max][width]
+    float * xr_of(int sidx) const { return sidx == 0 ? xr5120 : (sidx == 1 ? xr6144 : xr17408); }
     float * h_stage = nullptr;  // pinned staging buffer
+    // GPU LM head (cfg.head)
+    WMat hd_w;
+    const float * hd_norm = nullptr;
+    float * hd_lg = nullptr;     // device logits [8][V]
+    float * attn_part = nullptr; // split-K attention partials (ctx_max > 8192)
+    // MTP block (cfg.mtp)
+    LayerD mtpL;
+    WMat eh_w;
+    const float * mtp_hn = nullptr;
+    float * h_lg = nullptr;      // pinned host logits [8][V]
+    int64_t hd_v = 0;
+    size_t hd_bytes = 0;
     std::vector<LayerD> L;
     // scratch
     float *x = nullptr, *xn = nullptr, *proj = nullptr, *bufA = nullptr, *bufB = nullptr, *conv = nullptr, *attn_o = nullptr;
@@ -157,6 +176,17 @@ struct GpuLayers::Impl {
         const GgufTensor & t = ix.get(name);
         if (t.ne[2] != 1 || t.ne[3] != 1) throw std::runtime_error("not a matrix: " + name);
         const int type = static_cast<int>(t.type);
+        if (ternary::is_ternary(type)) {  // PTQ1_0 / Q2_0: decoded by the ternary dp4a kernels, no ggml row size
+            const size_t rb = type == ternary::kTypePtq1_0
+                                  ? static_cast<size_t>(t.ne[0] / ternary::kPtqGroup) * ternary::kPtqGroupBytes
+                                  : static_cast<size_t>(t.ne[0] / ternary::kQ2_0Block) * ternary::kQ2_0BlockBytes;
+            if (static_cast<int64_t>(t.nbytes) != static_cast<int64_t>(rb) * t.ne[1]) throw std::runtime_error("byte size mismatch in " + name);
+            if (lazy_plan) { lazy_max = std::max(lazy_max, static_cast<size_t>(t.nbytes)); return WMat{nullptr, type, t.ne[0], t.ne[1], &t}; }
+            uint8_t * d = pl.take<uint8_t>(t.nbytes);
+            if (upload) upload_tensor(d, t);
+            weights += t.nbytes;
+            return WMat{d, type, t.ne[0], t.ne[1], nullptr};
+        }
         if (!gemv_fp32_supported(type)) throw std::runtime_error("unsupported quantization in " + name + ": type " + std::to_string(type));
         if (static_cast<int64_t>(t.nbytes) != gemv_row_bytes(type, t.ne[0]) * t.ne[1]) throw std::runtime_error("byte size mismatch in " + name);
         if (lazy_plan) {
@@ -297,6 +327,54 @@ struct GpuLayers::Impl {
         kproj = pl.take<float>(Tm * kKVW);
         kout = pl.take<float>(Tm * kKVW);
         vproj = pl.take<float>(Tm * kKVW);
+        if (cfg.signs_5120) {  // Ternary Bonsai mode: sign vectors plus one rotated activation buffer per width
+            tmode = true;
+            if (upload) ternary_ptq1_init();  // constant-memory upload, never inside a graph capture
+            const size_t Tm2 = static_cast<size_t>(cfg.t_max);
+            xr5120 = pl.take<float>(Tm2 * kHidden);
+            xr6144 = pl.take<float>(Tm2 * kInner);
+            xr17408 = pl.take<float>(Tm2 * kFFN);
+            sgn[0] = pl.take<float>(kHidden);
+            sgn[1] = pl.take<float>(kInner);
+            sgn[2] = pl.take<float>(kFFN);
+            if (upload) {
+                CK(cudaMemcpy(const_cast<float *>(sgn[0]), cfg.signs_5120, sizeof(float) * kHidden, cudaMemcpyHostToDevice));
+                CK(cudaMemcpy(const_cast<float *>(sgn[1]), cfg.signs_6144, sizeof(float) * kInner, cudaMemcpyHostToDevice));
+                CK(cudaMemcpy(const_cast<float *>(sgn[2]), cfg.signs_17408, sizeof(float) * kFFN, cudaMemcpyHostToDevice));
+                weights += (static_cast<size_t>(kHidden) + kInner + kFFN) * sizeof(float);
+            }
+        }
+        if (cfg.mtp) {
+            const std::string b = "blk.64.";
+            mtpL = LayerD{};
+            mtpL.is_attn = true;
+            mtpL.attn_norm = vec(pl, b + "attn_norm.weight", kHidden, upload);
+            mtpL.post_norm = vec(pl, b + "post_attention_norm.weight", kHidden, upload);
+            mtpL.ffn_gate = mat(pl, b + "ffn_gate.weight", upload);
+            mtpL.ffn_up = mat(pl, b + "ffn_up.weight", upload);
+            mtpL.ffn_down = mat(pl, b + "ffn_down.weight", upload);
+            mtpL.wq = mat(pl, b + "attn_q.weight", upload);
+            mtpL.wk = mat(pl, b + "attn_k.weight", upload);
+            mtpL.wv = mat(pl, b + "attn_v.weight", upload);
+            mtpL.wo = mat(pl, b + "attn_output.weight", upload);
+            mtpL.q_norm = vec(pl, b + "attn_q_norm.weight", kHD, upload);
+            mtpL.k_norm = vec(pl, b + "attn_k_norm.weight", kHD, upload);
+            const size_t unit = cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+            mtpL.kcache = pl.take<uint8_t>(static_cast<size_t>(cfg.ctx_max) * unit);
+            mtpL.vcache = pl.take<uint8_t>(static_cast<size_t>(cfg.ctx_max) * unit);
+            kv += 2 * static_cast<size_t>(cfg.ctx_max) * unit;
+            eh_w = mat(pl, b + "nextn.eh_proj.weight", upload);
+            mtp_hn = vec(pl, b + "nextn.shared_head_norm.weight", kHidden, upload);
+        }
+        if (cfg.head) {
+            const size_t w0 = weights;
+            hd_norm = vec(pl, "output_norm.weight", kHidden, upload);
+            hd_w = mat(pl, "output.weight", upload);
+            hd_v = hd_w.out;
+            hd_lg = pl.take<float>(static_cast<size_t>(8) * static_cast<size_t>(hd_v));
+            hd_bytes = weights - w0;
+        }
+        attn_part = cfg.ctx_max > 8192 ? pl.take<float>(op_attention_part_floats()) : nullptr;   // split-K decode attention
         rope_cos = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         rope_sin = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         pos_dev = pl.take<int>(64);
@@ -307,8 +385,18 @@ struct GpuLayers::Impl {
     // Quantizes `x` once for all the listed matrices that take the dp4a path (nothing happens when none does).
     void quant(const float * x, int64_t in, int T, std::initializer_list<const WMat *> mats) {
         for (const WMat * w : mats) {
-            if (use_dp4a(*w)) { CK(actq8_quantize(x, in, T, act, st)); return; }
+            if (use_dp4a(*w)) { CK(actq8_quantize(x, in, T, act, st)); act_src = x; return; }
         }
+    }
+
+    // Ternary mode: rotate `x` into the Hadamard basis of width slot sidx (0/1/2 for 5120/6144/17408) and
+    // quantize the rotated vector for the listed matrices. Unrotated plain-basis matrices keep using quant().
+    void quant_rot(std::initializer_list<const WMat *> mats, const float * x, int64_t in, int T, int sidx) {
+        bool any = false;
+        for (const WMat * w : mats) if (ternary::is_ternary(w->type)) any = true;
+        if (!any || !sgn[sidx]) { quant(x, in, T, mats); return; }
+        CK(ternary_rotate_q8(x, sgn[sidx], xr_of(sidx), static_cast<int>(in), T, act, st));   // rotate + Q8_1 in one launch
+        act_src = xr_of(sidx);
     }
 
     // The caller must have run quant() for the same `in` buffer when use_dp4a(W) is true.
@@ -324,8 +412,17 @@ struct GpuLayers::Impl {
             upload_tensor(stage, *W.src);
             W.p = stage;
         }
-        if (W.type == GT_Q8_0) CK(q8_0_gemv_dp4a(W.p, W.in, W.out, in, T, out, q8, st));
-        else if (use_dp4a(W)) CK(gemv_dp4a(W.type, W.p, W.in, W.out, act, T, out, st));
+        if (ternary::is_ternary(W.type)) {
+            if (W.type == ternary::kTypePtq1_0) CK(gemv_ptq1_0_dp4a(W.p, W.in, W.out, act, T, out, st));
+            else CK(gemv_q2_0_dp4a(W.p, W.in, W.out, act, T, out, st));
+        } else if (W.type == GT_Q8_0) CK(q8_0_gemv_dp4a(W.p, W.in, W.out, in, T, out, q8, st));
+        else if (use_dp4a(W)) {
+            if (act_src != in) {  // plain-basis matrix after a rotated quant (alpha/beta of a ternary layer)
+                CK(actq8_quantize(in, W.in, T, act, st));
+                act_src = in;
+            }
+            CK(gemv_dp4a(W.type, W.p, W.in, W.out, act, T, out, st));
+        }
         else CK(gemv_fp32(W.type, W.p, W.in, W.out, in, T, out, st));
         if (b >= 0) {
             CK(cudaEventRecord(comp_done[b], st));
@@ -369,11 +466,11 @@ struct GpuLayers::Impl {
 
     void ffn(const LayerD & l, int T) {
         CK(op_rmsnorm_rows(x, l.post_norm, xn, kHidden, T, eps, st));
-        quant(xn, kHidden, T, {&l.ffn_gate, &l.ffn_up});
+        quant_rot({&l.ffn_gate, &l.ffn_up}, xn, kHidden, T, 0);
         gemv(l.ffn_gate, xn, T, fg);
         gemv(l.ffn_up, xn, T, fu);
         CK(op_silu_mul(fg, fu, static_cast<int64_t>(T) * kFFN, st));
-        quant(fg, kFFN, T, {&l.ffn_down});
+        quant_rot({&l.ffn_down}, fg, kFFN, T, 2);
         gemv(l.ffn_down, fg, T, proj);
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
@@ -384,10 +481,10 @@ struct GpuLayers::Impl {
             CK(cudaMemcpyAsync(l.snap_ssm, l.ssm_state, sizeof(float) * kVH * kDH * kDH, cudaMemcpyDeviceToDevice, st));
         }
         CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, st));
-        quant(xn, kHidden, T, {&l.qkv, &l.gate_z});
+        quant_rot({&l.qkv, &l.gate_z}, xn, kHidden, T, 0);
         gemv(l.qkv, xn, T, bufA);
         gemv(l.gate_z, xn, T, bufB);
-        gemv(l.alpha, xn, T, alpha);
+        gemv(l.alpha, xn, T, alpha);  // plain basis: ssm_alpha/ssm_beta are not Hadamard-folded
         gemv(l.beta, xn, T, betar);
         CK(op_dn_prep(alpha, betar, l.ssm_dt, l.ssm_a, gate, beta, T, st));
         if (saving) {
@@ -398,14 +495,20 @@ struct GpuLayers::Impl {
         }
         CK(op_dn_conv(bufA, l.conv_w, l.conv_state, conv, T, st));
         CK(op_dn_rec(conv, gate, beta, bufB, l.ssm_norm, l.ssm_state, attn_o, T, eps, st));
-        quant(attn_o, kInner, T, {&l.ssm_out});
+        if (tmode && cfg.gdn_v_grouped) {  // ssm_out reads its value heads in grouped order (prism metadata)
+            CK(op_gdn_v_permute(attn_o, xr6144, T, st));
+            CK(ternary_rotate_q8(xr6144, sgn[1], xr6144, kInner, T, act, st));
+            act_src = xr6144;
+        } else {
+            quant_rot({&l.ssm_out}, attn_o, kInner, T, 1);
+        }
         gemv(l.ssm_out, attn_o, T, proj);
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
 
     void attention(const LayerD & l, int T, int pos0, bool iso3) {
         CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, st));
-        quant(xn, kHidden, T, {&l.wq, &l.wk, &l.wv});
+        quant_rot({&l.wq, &l.wk, &l.wv}, xn, kHidden, T, 0);
         gemv(l.wq, xn, T, bufA);
         gemv(l.wk, xn, T, kproj);
         gemv(l.wv, xn, T, vproj);
@@ -413,8 +516,8 @@ struct GpuLayers::Impl {
         CK(op_qk_prep(bufA, kproj, l.q_norm, l.k_norm, qbuf, kout, T, pos0, rope_cos, rope_sin, eps, st, pd));
         CK(op_kv_store(kout, l.kcache, T, pos0, iso3, st, pd));
         CK(op_kv_store(vproj, l.vcache, T, pos0, iso3, st, pd));
-        CK(op_attention(qbuf, bufA, l.kcache, l.vcache, attn_o, T, pos0, iso3, cfg.ctx_max, st, pd));
-        quant(attn_o, kInner, T, {&l.wo});
+        CK(op_attention(qbuf, bufA, l.kcache, l.vcache, attn_o, T, pos0, iso3, cfg.ctx_max, st, pd, attn_part));
+        quant_rot({&l.wo}, attn_o, kInner, T, 1);
         gemv(l.wo, attn_o, T, proj);
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
@@ -423,9 +526,9 @@ struct GpuLayers::Impl {
 GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps) : p_(new Impl(ix, cfg, rms_eps)) {
     Impl & m = *p_;
     if (cfg.n_layers < 1 || cfg.n_layers > 64) throw std::runtime_error("n_layers out of range");
-    // The attention kernel keeps its scores in dynamic shared memory (ctx_max * 4 bytes): 8192 positions = 32 KiB,
-    // still under the 48 KiB per-block limit of sm_61.
-    if (cfg.ctx_max > 8192) throw std::runtime_error("ctx_max above 8192 is not supported (attention shared memory)");
+    // Up to 8192 positions the attention kernel keeps its scores in dynamic shared memory (32 KiB, under the 48 KiB
+    // sm_61 limit). Above that the tiled online-softmax kernel runs, so ctx_max can reach 131072 (Bonsai path).
+    if (cfg.ctx_max > 131072) throw std::runtime_error("ctx_max above 131072 is not supported");
     m.theta_scale = std::pow(10000000.0f, -2.0f / static_cast<float>(kRope));
 
     CK(cudaStreamCreate(&m.st));
@@ -433,6 +536,23 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     Planner count;
     m.plan(count, false);
     m.arena_bytes = count.off;
+    {
+        // VRAM budget (process total, CUDA context included): refuse the plan before the big allocation.
+        const double proj = projected_mib(ix, cfg);
+        std::fprintf(stderr, "VRAM plan: arena %.1f MiB, projected process total %.1f MiB (budget %.0f)\n",
+                     static_cast<double>(m.arena_bytes) / 1048576.0, proj, cfg.vram_budget_mib);
+        if (proj > cfg.vram_budget_mib) {
+            char msg[256];
+            std::snprintf(msg, sizeof(msg), "GPU plan needs %.0f MiB of device memory (arena %.0f MiB, %d layers, ctx %d), budget %.0f MiB: "
+                          "use fewer --gpu-layers, a smaller --ctx, or --gpu-layers auto",
+                          proj, static_cast<double>(m.arena_bytes) / 1048576.0, cfg.n_layers, cfg.ctx_max, cfg.vram_budget_mib);
+            cudaFreeHost(m.h_pos);
+            cudaStreamDestroy(m.st);
+            m.h_pos = nullptr;
+            m.st = nullptr;
+            throw std::runtime_error(msg);
+        }
+    }
     CK(cudaMalloc(&m.arena, m.arena_bytes));
     Planner real;
     real.base = m.arena;
@@ -473,6 +593,7 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     CK(q8_scratch_alloc(m.q8, cfg.t_max, kHidden));
     CK(actq8_alloc(m.act, cfg.t_max, kFFN));
     CK(op_rope_table(m.rope_cos, m.rope_sin, cfg.ctx_max, m.theta_scale, m.st));
+    if (cfg.head) CK(cudaHostAlloc(reinterpret_cast<void **>(&m.h_lg), sizeof(float) * 8 * static_cast<size_t>(m.hd_v), cudaHostAllocDefault));
     CK(cudaHostAlloc(reinterpret_cast<void **>(&m.h_stage), std::max(static_cast<size_t>(cfg.t_max) * kHidden, static_cast<size_t>(kVH) * kDH * kDH) * sizeof(float), cudaHostAllocDefault));
     reset();
     CK(cudaDeviceSynchronize());
@@ -493,6 +614,7 @@ GpuLayers::~GpuLayers() {
     q8_scratch_free(p_->q8);
     actq8_free(p_->act);
     if (p_->h_stage) cudaFreeHost(p_->h_stage);
+    if (p_->h_lg) cudaFreeHost(p_->h_lg);
     if (p_->arena) cudaFree(p_->arena);
 }
 
@@ -539,6 +661,47 @@ void GpuLayers::forward(float * x_host, int T, int pos0, const std::function<voi
         }
     }
     CK(cudaMemcpy(x_host, m.x, bytes, cudaMemcpyDeviceToHost));
+}
+
+bool GpuLayers::has_head() const { return p_->cfg.head; }
+bool GpuLayers::has_mtp() const { return p_->cfg.mtp; }
+
+void GpuLayers::mtp_forward(const float * concat_host, int T, int pos0, float * h_out, float * logits) {
+    Impl & m = *p_;
+    if (!m.cfg.mtp) throw std::runtime_error("GpuLayers::mtp_forward: no MTP block on the GPU");
+    if (T < 1 || T > m.cfg.t_max || pos0 < 0 || pos0 + T > m.cfg.ctx_max) throw std::runtime_error("GpuLayers::mtp_forward: T or position out of range");
+    CK(cudaMemcpy(m.conv, concat_host, static_cast<size_t>(T) * 2 * kHidden * sizeof(float), cudaMemcpyHostToDevice));
+    m.quant(m.conv, 2 * kHidden, T, {&m.eh_w});
+    m.gemv(m.eh_w, m.conv, T, m.x);
+    m.attention(m.mtpL, T, pos0, m.cfg.kv_iso3);
+    m.ffn(m.mtpL, T);
+    if (!h_out && !logits) return;
+    CK(op_rmsnorm_rows(m.x + static_cast<size_t>(T - 1) * kHidden, m.mtp_hn, m.xn, kHidden, 1, m.eps, m.st));
+    if (h_out) CK(cudaMemcpy(h_out, m.xn, sizeof(float) * kHidden, cudaMemcpyDeviceToHost));
+    if (logits) {
+        if (!m.cfg.head) throw std::runtime_error("GpuLayers::mtp_forward: logits need the GPU LM head");
+        m.quant_rot({&m.hd_w}, m.xn, kHidden, 1, 0);
+        m.gemv(m.hd_w, m.xn, 1, m.hd_lg);
+        const size_t nb = sizeof(float) * static_cast<size_t>(m.hd_v);
+        CK(cudaMemcpy(m.h_lg, m.hd_lg, nb, cudaMemcpyDeviceToHost));
+        std::memcpy(logits, m.h_lg, nb);
+    }
+}
+size_t GpuLayers::head_bytes() const { return p_->hd_bytes; }
+
+void GpuLayers::head(int T, int n_out, float * logits, float * h_rows) {
+    Impl & m = *p_;
+    if (!m.cfg.head) throw std::runtime_error("GpuLayers::head: no head on the GPU");
+    if (T < 1 || T > m.cfg.t_max || n_out < 0 || n_out > 8 || n_out > T) throw std::runtime_error("GpuLayers::head: bad rows");
+    CK(op_rmsnorm_rows(m.x, m.hd_norm, m.xn, kHidden, T, m.eps, m.st));
+    if (h_rows) CK(cudaMemcpy(h_rows, m.xn, sizeof(float) * kHidden * static_cast<size_t>(T), cudaMemcpyDeviceToHost));
+    if (n_out == 0) return;
+    const float * src = m.xn + static_cast<size_t>(T - n_out) * kHidden;
+    m.quant_rot({&m.hd_w}, src, kHidden, n_out, 0);
+    m.gemv(m.hd_w, src, n_out, m.hd_lg);
+    const size_t nb = sizeof(float) * static_cast<size_t>(n_out) * static_cast<size_t>(m.hd_v);
+    CK(cudaMemcpy(m.h_lg, m.hd_lg, nb, cudaMemcpyDeviceToHost));   // pinned: no driver staging
+    std::memcpy(logits, m.h_lg, nb);
 }
 
 void GpuLayers::set_snapshot(bool on) {
@@ -680,6 +843,119 @@ void GpuLayers::stream_end(float * x_host, int T) {
     }
     if (std::getenv("QWEN_STREAM_DEBUG")) std::fprintf(stderr, "stream: layers %.2f s (pread %.2f, dma wait %.2f)\n", g_comp_s, g_pread_s, g_wait_s);
     g_up_s = g_comp_s = g_fetch_s = g_pread_s = g_wait_s = 0;
+}
+
+namespace {
+// Device bytes allocated after the arena (Q8 scratch, Q8_1 activations) plus what the driver adds lazily (module loads,
+// CUDA graph instantiation), on top of the memory in use when the plan is checked (CUDA context, about 106 MiB).
+// Calibrated on PTQ1_0, 64 layers + GPU head, ctx 131072, t_max 64: arena 7226.8 MiB, projection without margin 7333 MiB,
+// nvidia-smi peak over the whole run 7349 MiB (+16). 32 MiB keeps 16 MiB of headroom over that.
+constexpr double kScratchMarginMib = 32.0;
+}  // namespace
+
+size_t GpuLayers::plan_bytes(const GgufIndex & ix, const GpuConfig & cfg) {
+    Impl m(ix, cfg, 0.0f);
+    Planner count;
+    m.plan(count, false);
+    return count.off;
+}
+
+double GpuLayers::projected_mib(const GgufIndex & ix, const GpuConfig & cfg) {
+    CK(cudaFree(nullptr));   // creates the context, so its memory is part of "in use"
+    size_t free_b = 0, total_b = 0;
+    CK(cudaMemGetInfo(&free_b, &total_b));
+    const double used = static_cast<double>(total_b - free_b) / 1048576.0;
+    return used + static_cast<double>(plan_bytes(ix, cfg)) / 1048576.0 + kScratchMarginMib;
+}
+
+void GpuLayers::clear_kv() {
+    const size_t unit = p_->cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    for (LayerD & l : p_->L) {
+        if (!l.is_attn) continue;
+        CK(cudaMemset(l.kcache, 0, unit * static_cast<size_t>(p_->cfg.ctx_max)));
+        CK(cudaMemset(l.vcache, 0, unit * static_cast<size_t>(p_->cfg.ctx_max)));
+    }
+    if (p_->cfg.mtp) {
+        CK(cudaMemset(p_->mtpL.kcache, 0, unit * static_cast<size_t>(p_->cfg.ctx_max)));
+        CK(cudaMemset(p_->mtpL.vcache, 0, unit * static_cast<size_t>(p_->cfg.ctx_max)));
+    }
+    CK(cudaDeviceSynchronize());
+}
+
+size_t GpuLayers::state_bytes(int n_pos) const {
+    const size_t unit = p_->cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    size_t b = 0;
+    for (const LayerD & l : p_->L) {
+        if (l.is_attn) b += 2 * static_cast<size_t>(n_pos) * unit;
+        else b += sizeof(float) * (static_cast<size_t>(kConvCh) * (kConvK - 1) + static_cast<size_t>(kVH) * kDH * kDH);
+    }
+    if (p_->cfg.mtp) b += 2 * static_cast<size_t>(n_pos) * unit;
+    return b;
+}
+
+namespace {
+// The state file I/O bounces through the pinned h_stage buffer (allocated at load, >= 3 MiB): no pageable cudaMemcpy of
+// large blocks, which made the driver's own staging show up as transient device memory.
+size_t stage_capacity(int t_max) {
+    return std::max(static_cast<size_t>(t_max) * 5120, static_cast<size_t>(48) * 128 * 128) * sizeof(float);
+}
+}  // namespace
+
+void GpuLayers::save_state(int n_pos, const std::function<void(const void *, size_t)> & io) const {
+    if (n_pos < 0 || n_pos > p_->cfg.ctx_max) throw std::runtime_error("save_state: n_pos out of range");
+    CK(cudaDeviceSynchronize());
+    const size_t chunk = stage_capacity(p_->cfg.t_max);
+    uint8_t * buf = reinterpret_cast<uint8_t *>(p_->h_stage);
+    auto put = [&](const void * dev, size_t bytes) {
+        for (size_t o = 0; o < bytes; o += chunk) {
+            const size_t n = std::min(chunk, bytes - o);
+            CK(cudaMemcpy(buf, static_cast<const uint8_t *>(dev) + o, n, cudaMemcpyDeviceToHost));
+            io(buf, n);
+        }
+    };
+    const size_t unit = p_->cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    for (const LayerD & l : p_->L) {
+        if (l.is_attn) {
+            put(l.kcache, static_cast<size_t>(n_pos) * unit);
+            put(l.vcache, static_cast<size_t>(n_pos) * unit);
+        } else {
+            put(l.conv_state, sizeof(float) * kConvCh * (kConvK - 1));
+            put(l.ssm_state, sizeof(float) * kVH * kDH * kDH);
+        }
+    }
+    if (p_->cfg.mtp) {
+        put(p_->mtpL.kcache, static_cast<size_t>(n_pos) * unit);
+        put(p_->mtpL.vcache, static_cast<size_t>(n_pos) * unit);
+    }
+}
+
+void GpuLayers::load_state(int n_pos, const std::function<void(void *, size_t)> & io) {
+    if (n_pos < 0 || n_pos > p_->cfg.ctx_max) throw std::runtime_error("load_state: n_pos out of range");
+    CK(cudaDeviceSynchronize());
+    const size_t chunk = stage_capacity(p_->cfg.t_max);
+    uint8_t * buf = reinterpret_cast<uint8_t *>(p_->h_stage);
+    auto get = [&](void * dev, size_t bytes) {
+        for (size_t o = 0; o < bytes; o += chunk) {
+            const size_t n = std::min(chunk, bytes - o);
+            io(buf, n);
+            CK(cudaMemcpy(static_cast<uint8_t *>(dev) + o, buf, n, cudaMemcpyHostToDevice));
+        }
+    };
+    const size_t unit = p_->cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    for (LayerD & l : p_->L) {
+        if (l.is_attn) {
+            get(l.kcache, static_cast<size_t>(n_pos) * unit);
+            get(l.vcache, static_cast<size_t>(n_pos) * unit);
+        } else {
+            get(l.conv_state, sizeof(float) * kConvCh * (kConvK - 1));
+            get(l.ssm_state, sizeof(float) * kVH * kDH * kDH);
+        }
+    }
+    if (p_->cfg.mtp) {
+        get(p_->mtpL.kcache, static_cast<size_t>(n_pos) * unit);
+        get(p_->mtpL.vcache, static_cast<size_t>(n_pos) * unit);
+    }
+    CK(cudaDeviceSynchronize());
 }
 
 size_t GpuLayers::vram_bytes() const {

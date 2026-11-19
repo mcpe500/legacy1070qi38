@@ -1,0 +1,201 @@
+
+prompt: <|im_start|>user
+Remember this fact for later: the secret passphrase of the vault is MAGENTA-FALCON-42.
+
+Below is a source listing.
+
+===== FILE bench/README.md =====
+# bench
+
+Sequential benchmark against llama.cpp: `bench/compare_llamacpp.sh` (stage 5). The two engines never run at the same time.
+
+Status: empty (stage 0). Read first: `.agents/skills/webui-and-parity-bench/SKILL.md`, `memory-budget-24gb`.
+
+===== FILE bench/ab_main_vs_exp.sh =====
+#!/usr/bin/env bash
+# A/B run of two engine binaries on the benchmark prompt (509 tokens + 256 decode, temp 0, seed 42), alternating A, B, A, B so that
+# both see the same page cache state. Each run is a full process (load, prefill, decode). Writes OUTDIR/ab_<label>_<i>.{txt,err,vram.csv}
+# and prints one summary line per run plus a token-identity check of every run against the first A run.
+#   bench/ab_main_vs_exp.sh MAIN_BIN EXP_BIN [ROUNDS=2] [extra engine args...]
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
+cd "$ROOT" || exit 2
+A="$1"; B="$2"; R="${3:-2}"; shift 3 2>/dev/null || shift $#
+OUT="${OUTDIR:-$ROOT/bench/results/experiments}"
+mkdir -p "$OUT"
+M="$HOME/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf"
+pkill -x llama-server 2>/dev/null
+for i in $(seq 1 "$R"); do
+  for lab in main exp; do
+    bin="$A"; [ "$lab" = exp ] && bin="$B"
+    while [ -n "$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)" ]; do sleep 3; done
+    tag="ab_${lab}_$i"
+    nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 200 > "$OUT/$tag.vram.csv" 2>/dev/null &
+    SMI=$!
+    taskset -c 0-3 "$bin" -m "$M" -p "$(cat bench/prompt512.txt)" -n 256 --temp 0 --seed 42 --gpu-layers 32 --kv iso3 --dp4a all "$@" \
+      > "$OUT/$tag.txt" 2> "$OUT/$tag.err"
+    kill "$SMI" 2>/dev/null; wait "$SMI" 2>/dev/null
+    python3 - "$OUT" "$tag" <<'PY'
+import json, sys, os
+out, tag = sys.argv[1], sys.argv[2]
+def load(t):
+    l = [x for x in open(os.path.join(out, t + ".txt"), encoding="utf-8").read().splitlines() if x.startswith('{"prompt_tokens"')]
+    return json.loads(l[-1]) if l else None
+d = load(tag)
+if not d:
+    print(tag, "no result"); sys.exit(0)
+v = [int(x) for x in open(os.path.join(out, tag + ".vram.csv")).read().split() if x.strip().isdigit()]
+ref = load("ab_main_1")
+same = "n/a" if not ref else ("IDENTICAL" if ref["ids"] == d["ids"] else "DIFFER")
+acc = 100.0 * d["draft_n_accepted"] / d["draft_n"] if d["draft_n"] else 0
+print(f"{tag}: pp {d['prompt_tokens']/d['prefill_s']:.2f} tok/s (prefill {d['prefill_s']:.1f} s) tg {d['decode_tok_s']:.3f} tok/s "
+      f"MTP {d['draft_n_accepted']}/{d['draft_n']} ({acc:.0f}%) peak VRAM {max(v) if v else 'n/a'} MiB peak RSS {d['peak_rss_kb']/1024:.0f} MiB "
+      f"load {d['load_s']:.1f} s ids vs ab_main_1: {same}")
+PY
+  done
+done
+
+===== FILE bench/bench_summary.py =====
+#!/usr/bin/env python3
+"""Helpers of bench/compare_llamacpp.sh.
+  bench_summary.py llama  TAG OUTDIR NGL SPEC RSS_KB     -> OUTDIR/TAG.summary.json  (from TAG.response.json and TAG.vram.csv)
+  bench_summary.py engine TAG OUTDIR MTP                 -> OUTDIR/TAG.summary.json  (from TAG.txt, the engine's JSON line, and TAG.vram.csv)
+  bench_summary.py table  OUTDIR OUTFILE                 -> the Markdown comparison"""
+import json
+import os
+import sys
+
+
+def vram_peak(path):
+    try:
+        v = [int(x) for x in open(path).read().split() if x.strip().isdigit()]
+        return max(v) if v else None
+    except Exception:
+        return None
+
+
+def first_diff(a, b):
+    n = min(len(a), len(b))
+    for i in range(n):
+        if a[i] != b[i]:
+            return i
+    return None if len(a) == len(b) else n
+
+
+def llama(tag, out, ngl, spec, rss_kb):
+    p = os.path.join(out, tag)
+    s = {"tag": tag, "engine": "llama-server", "ngl": int(ngl), "spec": spec, "ok": False}
+    try:
+        d = json.load(open(p + ".response.json"))
+        t = d["timings"]
+        s.update(ok=True, pp_tok_s=t["prompt_per_second"], tg_tok_s=t["predicted_per_second"], prompt_n=t["prompt_n"], predicted_n=t["predicted_n"],
+                 prompt_ms=t["prompt_ms"], draft_n=t.get("draft_n", 0) or 0, draft_acc=t.get("draft_n_accepted", 0) or 0, tokens=d.get("tokens", []),
+                 text=d.get("content", ""))
+    except Exception as e:
+        s["error"] = str(e)
+    s["peak_vram_mib"] = vram_peak(p + ".vram.csv")
+    s["peak_rss_mib"] = int(rss_kb) / 1024.0 if str(rss_kb).isdigit() else None
+    json.dump(s, open(p + ".summary.json", "w"))
+    print(tag, {k: v for k, v in s.items() if k not in ("tokens", "text")})
+
+
+def engine(tag, out, mtp):
+    p = os.path.join(out, tag)
+    s = {"tag": tag, "engine": "qwen38-engine", "mtp": int(mtp), "ok": False}
+    try:
+        lines = [l for l in open(p + ".txt", encoding="utf-8").read().splitlines() if l.startswith('{"prompt_tokens"')]
+        d = json.loads(lines[-1])
+        s.update(ok=True, pp_tok_s=d["prompt_tokens"] / d["prefill_s"], tg_tok_s=d["decode_tok_s"], prompt_n=d["prompt_tokens"], predicted_n=d["generated_tokens"],
+                 prompt_ms=d["prefill_s"] * 1000.0, ttft_ms=d.get("ttft_s", 0) * 1000.0, draft_n=d["draft_n"], draft_acc=d["draft_n_accepted"], tokens=d["ids"],
+                 text=d["text"], peak_rss_mib=d["peak_rss_kb"] / 1024.0, rss_anon_mib=d["rss_anon_kb"] / 1024.0, heap_allocs=d["heap_allocs_in_decode_forward"],
+                 gpu_layers=d["gpu_layers"], kv=d["kv"], load_s=d["load_s"])
+    except Exception as e:
+        s["error"] = str(e)
+    s["peak_vram_mib"] = vram_peak(p + ".vram.csv")
+    json.dump(s, open(p + ".summary.json", "w"))
+    print(tag, {k: v for k, v in s.items() if k not in ("tokens", "text")})
+
+
+def table(out, outfile):
+    S = {}
+    for f in sorted(os.listdir(out)):
+        if f.endswith(".summary.json"):
+            j = json.load(open(os.path.join(out, f)))
+            S[j["tag"]] = j
+    cap = 7373
+
+    def row(s, label):
+        if not s.get("ok"):
+            return "| %s | failed: %s | | | | | | |" % (label, s.get("error", "no result"))
+        acc = ("%.0f %% (%d / %d)" % (100.0 * s["draft_acc"] / s["draft_n"], s["draft_acc"], s["draft_n"])) if s.get("draft_n") else "no MTP"
+        vram = s.get("peak_vram_mib")
+        return "| %s | %.2f | %.2f | %s | %s | %s | %s | %s |" % (
+            label, s["pp_tok_s"], s["tg_tok_s"], acc, "%d%s" % (vram, "" if vram <= cap else " (over cap)") if vram else "n/a",
+            "%.0f" % s["peak_rss_mib"] if s.get("peak_rss_mib") else "n/a", s["prompt_n"], s["predicted_n"])
+
+    main_l = S.get("llama_selected")
+    main_e = S.get("engine_mtp2")
+    L = []
+    L.append("# Head-to-head: llama.cpp (iso3 KV + draft-mtp 2) vs qwen38-engine\n")
+    L.append("Prompt: `bench/prompt512.txt` (509 tokens), 256 generated tokens, temperature 0, seed 42 (top_k 1 for llama-server). "
+             "GTX 1070 Ti (8192 MiB, VRAM cap 7373 MiB), Ryzen 5 2400G pinned to cores 0-3, 16 GB DDR4, same GGUF (Qwen3.8-27B-UD-Q4_K_M). "
+             "The two programs ran one after the other, never together. Peak VRAM = highest `nvidia-smi` memory.used sample (200 ms) over the whole run, "
+             "Peak RSS = VmHWM of the process (includes the file pages of the mapped model).\n")
+    L.append("## Headline\n")
+    L.append("| Program (configuration) | pp tok/s | tg tok/s | MTP accept | Peak VRAM MiB | Peak DDR4 RSS MiB | prompt tokens | generated |")
+    L.append("|---|---:|---:|---|---:|---:|---:|---:|")
+    if main_l:
+        L.append(row(main_l, "llama-server `-ngl %d` iso3 KV + draft-mtp 2" % main_l["ngl"]))
+    if main_e:
+        L.append(row(main_e, "qwen38-engine `--gpu-layers 32 --kv iso3 --dp4a all --mtp-steps 2`"))
+    L.append("")
+    if main_l and main_e and main_l.get("ok") and main_e.get("ok"):
+        L.append("Ratios (engine / llama-server): pp %.2fx, tg %.2fx.\n" % (main_e["pp_tok_s"] / main_l["pp_tok_s"], main_e["tg_tok_s"] / main_l["tg_tok_s"]))
+        d = first_diff(main_e["tokens"], main_l["tokens"])
+        L.append("Generated tokens, engine vs llama-server: %s.\n" % ("identical (%d tokens)" % len(main_e["tokens"]) if d is None else
+                 "first difference at token %d of %d / %d (both use an iso3 KV cache but with different attention numerics: llama.cpp quantizes the KV of all 16 attention layers and converts it to f16 for flash attention, the engine quantizes the 8 GPU layers and keeps FP32 on the CPU layers; greedy outputs of a 3-bit KV cache are not expected to match for 256 tokens)" % (d, len(main_e["tokens"]), len(main_l["tokens"]))))
+    r2l, r2e = S.get("llama_selected_r2"), S.get("engine_mtp2_r2")
+    if r2l and r2e:
+        L.append("## Repeat round (same commands again; the page cache is in a different state, which moves the prompt-processing numbers)\n")
+        L.append("| Program (configuration) | pp tok/s | tg tok/s | MTP accept | Peak VRAM MiB | Peak DDR4 RSS MiB | prompt tokens | generated |")
+        L.append("|---|---:|---:|---|---:|---:|---:|---:|")
+        L.append(row(r2l, "llama-server `-ngl %d` iso3 KV + draft-mtp 2" % r2l["ngl"]))
+        L.append(row(r2e, "qwen38-engine `--gpu-layers 32 --kv iso3 --dp4a all --mtp-steps 2`"))
+        L.append("")
+    L.append("## All runs\n")
+    L.append("| Run | pp tok/s | tg tok/s | MTP accept | Peak VRAM MiB | Peak DDR4 RSS MiB | prompt tokens | generated |")
+    L.append("|---|---:|---:|---|---:|---:|---:|---:|")
+    for tag in sorted(S):
+        s = S[tag]
+        if tag.startswith("llama_selected"):
+            continue
+        label = ("llama-server -ngl %d, %s" % (s["ngl"], "draft-mtp 2" if s["spec"] != "none" else "no MTP")) if s["engine"] == "llama-server" else \
+                ("qwen38-engine, %s" % ("adaptive MTP" if "adaptive" in tag else "--mtp-steps %d" % s["mtp"]))
+        L.append(row(s, "`%s`: %s" % (tag, label)))
+    L.append("")
+    probes = [s for t, s in S.items() if t.startswith("llama_ngl") and not t.endswith("_r2")]
+    if probes:
+        L.append("## llama-server layer count (largest -ngl whose peak VRAM stays at or under %d MiB)\n" % cap)
+        L.append("| -ngl | peak VRAM MiB | under cap | pp tok/s | tg tok/s |")
+        L.append("|---:|---:|---|---:|---:|")
+        for s in sorted(probes, key=lambda x: x["ngl"]):
+            v = s.get("peak_vram_mib")
+            L.append("| %d | %s | %s | %s | %s |" % (s["ngl"], v if v else "n/a", "yes" if v and v <= cap and s.get("ok") else "no", "%.2f" % s["pp_tok_s"] if s.get("ok") else "failed", "%.2f" % s["tg_tok_s"] if s.get("ok") else "failed"))
+        L.append("")
+    L.append("## Notes\n")
+    L.append("- **Decode (tg):** the engine is about 3 % faster in both rounds (2.58 / 2.59 against 2.50 / 2.51 tok/s). Both programs are bound by reading the CPU-resident weights from DDR4 each step; the engine keeps 32 layers on the GPU, llama.cpp 25, and the engine's MTP accepted 96 % of its drafts against 91 %. The engine without MTP decodes at 2.44, llama-server without MTP at 2.25 tok/s.")
+    L.append("- **Prompt processing (pp):** the engine is slower, 0.47x. The GPU sits on a PCIe Gen3 x1 link (0.84 GB/s measured), and the engine streams the 32 CPU-resident layers (7 GiB) through VRAM for every prefill, which costs about 9 s whatever the prompt length; the engine's pp also includes the MTP prefill (about 5 s for 509 tokens: 16.97 tok/s with `--mtp-steps 0`, 13.4 with 2). llama.cpp's own pp moves with the layer count and the page cache (28.7 tok/s at -ngl 25, 17.0 to 17.4 at -ngl 24 and 26 in the same conditions).")
+    L.append("- **Memory:** the engine's peak RSS is 9.2 GiB against 14.6 GiB for llama-server. llama-server's figure includes the whole mapped 16 GB GGUF; the engine drops the file pages of the layers it keeps in VRAM and streams the rest.")
+    L.append("- **VRAM:** both stay under the 7373 MiB cap (723
+
+End of the source listing.
+Question: what is the secret passphrase of the vault, stated at the very beginning of this message? Reply with the passphrase only.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+
+generated: MAGENTA-FALCON-42
+{"prompt_tokens":4032,"generated_tokens":9,"ids":[44,1825,69865,7049,939,5609,12,19,17],"text":"MAGENTA-FALCON-42","load_s":55.46,"prefill_s":160.37,"prefill_tok_s":25.142,"decode_s":1.10,"decode_tok_s":8.1536,"heap_allocs_in_decode_forward":0,"peak_rss_kb":579544,"rss_anon_kb":137264,"rss_file_kb":414040,"swap_used_kb_before":591628,"swap_used_kb_after":390668,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":5857.5,"gpu_weights_mib":5395.4,"gpu_kv_mib":50.0,"vram_used_mib":5982.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":1.060,"decode_cpu_layers_s":0.000,"decode_head_s":0.042,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.000,"prefill_main_s":160.366,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"ttft_s":160.366,"finish":"stop","temperature":0.000,"ctx":4096,"reused_tokens":0,"state_load_s":0.000}
+{"tag":"PTQ1_0_ctx4k_needle_chat","rc":0,"peak_vram_mib":5983,"max_rss_kb":579544}

@@ -10,6 +10,9 @@
 cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s);
 cudaError_t op_add_inplace(float * x, const float * y, int64_t n, cudaStream_t s);          // x += y
 cudaError_t op_silu_mul(float * g, const float * u, int64_t n, cudaStream_t s);              // g = silu(g) * u
+// ssm_out of a Gated DeltaNet layer (gdn_v_grouped=1): permute the value heads of attn_o [T][6144] from tiled
+// order v into grouped order v' = 3 * (v % 16) + v / 16, in place into dst (src may not alias dst).
+cudaError_t op_gdn_v_permute(const float * src, float * dst, int T, cudaStream_t s);
 
 // Gated DeltaNet. T tokens, 48 value heads, 16 key heads, head size 128, conv kernel 4.
 cudaError_t op_dn_prep(const float * alpha, const float * beta_raw, const float * dt_bias, const float * ssm_a,
@@ -30,5 +33,9 @@ cudaError_t op_qk_prep(const float * qfull, const float * kproj, const float * q
 // pos_dev (optional): device pointer to the position, read by the kernel instead of pos0 (needed to replay a CUDA graph).
 cudaError_t op_kv_store(const float * src, void * cache, int T, int pos0, bool iso3, cudaStream_t s, const int * pos_dev = nullptr);
 // Causal GQA attention (24 query heads over 4 kv heads) with FP32 dequantization of the iso3 cache inside the kernel.
+// ctx_max <= 8192: scores in shared memory; above: tiled online softmax (256 positions per tile), up to 131072.
 cudaError_t op_attention(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
-                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev = nullptr);
+                         int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev = nullptr,
+                         float * part = nullptr);
+// Scratch for the split-K decode attention (ctx_max > 8192, T <= 8): floats `part` must hold. Without it the tiled kernel runs.
+size_t op_attention_part_floats();

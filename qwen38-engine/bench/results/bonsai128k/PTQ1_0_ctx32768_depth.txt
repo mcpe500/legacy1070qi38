@@ -1,0 +1,2 @@
+{"depth_bench":32768,"steps":32,"decode_tok_s":8.7895,"ctx":32768,"gpu_layers":64,"load_s":39.69,"cpu_arena_mib":259.2,"gpu_arena_mib":6226.6,"gpu_kv_mib":400.0,"vram_used_mib":6350.2,"peak_rss_kb":561624}
+{"tag":"PTQ1_0_ctx32768_depth","rc":0,"peak_vram_mib":6351,"max_rss_kb":561624}

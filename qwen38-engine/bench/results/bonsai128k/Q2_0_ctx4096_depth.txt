@@ -1,0 +1,2 @@
+{"depth_bench":4096,"steps":32,"decode_tok_s":8.3228,"ctx":4096,"gpu_layers":64,"load_s":48.98,"cpu_arena_mib":63.6,"gpu_arena_mib":7192.9,"gpu_kv_mib":50.0,"vram_used_mib":7314.2,"peak_rss_kb":632104}
+{"tag":"Q2_0_ctx4096_depth","rc":0,"peak_vram_mib":7315,"max_rss_kb":632104}

@@ -7,6 +7,18 @@
 
 #include "gguf_index.hpp"
 #include "pool.hpp"
+#include "ternary_spec.hpp"
+
+// True for the Ternary Bonsai packings (Q2_0 type 42, PTQ1_0 type 143): these have no ggml-cpu vec_dot, the
+// engine decodes them itself (src/cpu/ternary_cpu.cpp) and their activations are Hadamard-rotated first.
+inline bool qmat_is_ternary(int type) { return ternary::is_ternary(type); }
+
+// Row bytes of a ggml type without calling ggml_row_size (type 143 is unknown to stock ggml).
+inline size_t qmat_row_bytes(int type, int64_t in) {
+    if (type == ternary::kTypeQ2_0) return static_cast<size_t>(in / 64) * ternary::kQ2_0BlockBytes;
+    if (type == ternary::kTypePtq1_0) return static_cast<size_t>(in / 128) * ternary::kPtqGroupBytes;
+    return 0;  // caller falls back to ggml_row_size
+}
 
 struct QMat {
     const uint8_t * p = nullptr;  // out rows of row_bytes each

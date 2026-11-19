@@ -1,0 +1,186 @@
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <memory>
+
+class FibonacciGenerator {
+public:
+    FibonacciGenerator() : cache_{0, 1} {}
+
+    int64_t get(int n) {
+        if (n < 0) throw std::invalid_argument("n must be non-negative");
+        if (n < static_cast<int>(cache_.size())) return cache_[n];
+
+        for (size_t i = cache_.size(); i <= static_cast<size_t>(n); ++i) {
+            cache_.push_back(cache_[i-1] + cache_[i-2]);
+        }
+        return cache_[n];
+    }
+
+    std::vector<int64_t> sequence(int n) {
+        std::vector<int64_t> result;
+        result.reserve(n);
+        for (int i = 0; i < n; ++i) {
+            result.push_back(get(i));
+        }
+        return result;
+    }
+
+private:
+    std::vector<int64_t> cache_;
+};
+
+template<typename T>
+class Matrix {
+public:
+    Matrix(size_t rows, size_t cols) : rows_(rows), cols_(cols), data_(rows * cols) {}
+
+    T& operator()(size_t r, size_t c) { return data_[r * cols_ + c]; }
+    const T& operator()(size_t r, size_t c) const { return data_[r * cols_ + c]; }
+
+    Matrix<T> multiply(const Matrix<T>& other) const {
+        if (cols_ != other.rows_) throw std::invalid_argument("Dimension mismatch");
+        Matrix<T> result(rows_, other.cols_);
+        for (size_t i = 0; i < rows_; ++i) {
+            for (size_t j = 0; j < other.cols_; ++j) {
+                T sum = 0;
+                for (size_t k = 0; k < cols_; ++k) {
+                    sum += (*this)(i, k) * other(k, j);
+                }
+                result(i, j) = sum;
+            }
+        }
+        return result;
+    }
+
+    void print() const {
+        for (size_t i = 0; i < rows_; ++i) {
+            for (size_t j = 0; j < cols_; ++j) {
+                std::cout << (*this)(i, j) << " ";
+            }
+            std::cout << "\n";
+        }
+    }
+
+    size_t rows() const { return rows_; }
+    size_t cols() const { return cols_; }
+
+private:
+    size_t rows_, cols_;
+    std::vector<T> data_;
+};
+
+void quicksort(std::vector<int>& arr, int low, int high) {
+    if (low < high) {
+        int pivot = arr[high];
+        int i = low - 1;
+        for (int j = low; j < high; ++j) {
+            if (arr[j] <= pivot) {
+                ++i;
+                std::swap(arr[i], arr[j]);
+            }
+        }
+        std::swap(arr[i + 1], arr[high]);
+        int pi = i + 1;
+        quicksort(arr, low, pi - 1);
+        quicksort(arr, pi + 1, high);
+    }
+}
+
+int binary_search(const std::vector<int>& arr, int target) {
+    int left = 0, right = arr.size() - 1;
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+        if (arr[mid] == target) return mid;
+        if (arr[mid] < target) left = mid + 1;
+        else right = mid - 1;
+    }
+    return -1;
+}
+
+struct Node {
+    int value;
+    std::unique_ptr<Node> left;
+    std::unique_ptr<Node> right;
+
+    Node(int v) : value(v), left(nullptr), right(nullptr) {}
+};
+
+class BinarySearchTree {
+public:
+    BinarySearchTree() : root_(nullptr) {}
+
+    void insert(int value) {
+        root_ = insert_recursive(std::move(root_), value);
+    }
+
+    bool search(int value) const {
+        return search_recursive(root_.get(), value);
+    }
+
+    void inorder() const {
+        inorder_recursive(root_.get());
+        std::cout << "\n";
+    }
+
+private:
+    std::unique_ptr<Node> root_;
+
+    std::unique_ptr<Node> insert_recursive(std::unique_ptr<Node> node, int value) {
+        if (!node) return std::make_unique<Node>(value);
+        if (value < node->value) {
+            node->left = insert_recursive(std::move(node->left), value);
+        } else if (value > node->value) {
+            node->right = insert_recursive(std::move(node->right), value);
+        }
+        return node;
+    }
+
+    bool search_recursive(const Node* node, int value) const {
+        if (!node) return false;
+        if (value == node->value) return true;
+        if (value < node->value) return search_recursive(node->left.get(), value);
+        return search_recursive(node->right.get(), value);
+    }
+
+    void inorder_recursive(const Node* node) const {
+        if (!node) return;
+        inorder_recursive(node->left.get());
+        std::cout << node->value << " ";
+        inorder_recursive(node->right.get());
+    }
+};
+
+int main() {
+    FibonacciGenerator fib;
+    auto fib_seq = fib.sequence(20);
+    std::cout << "Fibonacci: ";
+    for (auto v : fib_seq) std::cout << v << " ";
+    std::cout << "\n";
+
+    Matrix<int> a(3, 3), b(3, 3);
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) {
+        a(i, j) = i * 3 + j + 1;
+        b(i, j) = (i + 1) * (j + 1);
+    }
+    auto c = a.multiply(b);
+    std::cout << "Matrix multiply:\n";
+    c.print();
+
+    std::vector<int> vec = {64, 34, 25, 12, 22, 11, 90};
+    quicksort(vec, 0, vec.size() - 1);
+    std::cout << "Sorted: ";
+    for (int v : vec) std::cout << v << " ";
+    std::cout << "\n";
+
+    std::cout << "Binary search 25: " << binary_search(vec, 25) << "\n";
+
+    BinarySearchTree bst;
+    for (int v : {50, 30, 70, 20, 40, 60, 80}) bst.insert(v);
+    std::cout << "BST inorder: "; bst.inorder();
+    std::cout << "Search 40: " << bst.search(40) << "\n";
+    std::cout << "Search 25: " << bst.search(25) << "\n";
+
+    return 0;
+}

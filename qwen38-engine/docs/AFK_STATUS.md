@@ -1,9 +1,10 @@
 # AFK status: qwen38-engine (Stages 2-5)
 
-Updated: 2026-11-16 (Stages 3 to 5 done: hybrid defaults, MTP + rollback, sampler, chunked prefill, HTTP/SSE server, WebUI, head-to-head benchmark). Optimization round Poin A+B+C landed the same day (multi-token W4A8 CPU kernel, GQA invert, RoPE table; D measured-skipped — see the round section). Single session, no subagents, no `/goal`. Canonical tree locked to this session.
+Updated: 2026-11-19. Stages 3-5 are done (hybrid defaults, MTP + rollback, sampler, chunked prefill, HTTP/SSE server, WebUI, head-to-head benchmark). The 2026-11-16 optimization round A+B+C landed the same day (multi-token W4A8 CPU kernel, GQA invert, RoPE table; D measured-skipped — see the round section). A later section records `exp/bonsai-128k-context`: Ternary Bonsai in the engine, 131072-position attention, kernel v2, MTP tools, the VRAM/RAM budget, and state files. Single session, no subagents, no `/goal`. Canonical tree locked to this session.
 Guardrails followed: `ninja -j4`; `taskset -c 0-3` on every run; one engine at a time (llama-server only between
 engine runs, never together); no full 64-layer FP32 load (weights stay quantized in the mmap, layers beyond a byte
-budget are streamed); SKILL.md and AGENTS.md stay local, nothing pushed or committed.
+budget are streamed); SKILL.md and AGENTS.md stay local; nothing is pushed or committed except as an explicitly
+authorized pull request.
 
 ## Stage status
 | Stage | Status | Evidence |
@@ -526,7 +527,7 @@ Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/re
   `PQ2_0` 7.21 GB (2.125 bpw), `Q2_0` 7.63 GB (2.25 bpw, stock llama.cpp). The headers were read remotely first (`tests/tools/gguf_remote_header.py`, HTTP range requests);
   `Q2_0` and `PTQ1_0` were then downloaded (13.6 GB, sha256 verified against the Hugging Face LFS ids), `PQ2_0` and the 53.8 GB F16 file were not.
 - **Runtimes.** `Q2_0` on our stock llama.cpp build (`fc9437a`, has the Hadamard runtime and our iso3 KV); `PTQ1_0` on the PrismML fork release `prism-b12128` (sha256 verified),
-  which runs on sm_61 through PTX JIT. The engine itself does not load Bonsai yet.
+  which runs on sm_61 through PTX JIT. At the time of this 2026-11-17 entry the engine itself did not load Bonsai yet; the branch update below records that it now does.
 - **Speed.** Short context: Bonsai decodes 17.1 (`Q2_0`, every layer on the GPU at `-ub 128`) to 19.6 tok/s (`PTQ1_0`) against 2.95 tok/s for Qwen Q4_K_M on qwen38-engine (MTP 2) and
   2.26 on llama.cpp: about **6x**. 4K: 15.2 (`PTQ1_0`) vs 2.25. 16K: 11.7 vs 1.35 (llama.cpp Qwen). 32K: 7.5 (`PTQ1_0`, every layer on the GPU).
 - **Capacity under 7373 MiB (measured).** `PTQ1_0` holds every layer on the GPU up to 32K (q4_0 KV, 7165 MiB). 64K needs 6-8 CPU layers (`Q2_0` + iso3 `-ngl 56`, `PTQ1_0` + q4_0 `-ngl 62`),
@@ -534,7 +535,8 @@ Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/re
   Model prediction: `PTQ1_0` with iso3 KV would keep every layer on the GPU up to about 84K tokens (needs our iso3 patch in the fork).
 - **Ternary kernel path (prepared).** `src/cuda/ternary_gemv.cu`: Q2_0 GEMV with `lop3.b32` unpack + `prmt.b32` lane gather + `__dp4a`, and the FP32 Hadamard rotation.
   Synthetic test PASS (decode = libggml, rotation 8.6e-8, GEMV 8-10e-8 vs same-activation reference, batch-size independent); real-weight test: cosine **1.000000** against llama.cpp on
-  layer-0 `ffn_up`, `ffn_gate`, `ffn_down`; SASS gate PASS (IDP.4A x464, 0 half arithmetic). Not wired into the forward pass (list of missing pieces in the comparison file).
+  layer-0 `ffn_up`, `ffn_gate`, `ffn_down`; SASS gate PASS (IDP.4A x464, 0 half arithmetic). At the time of this entry it was not wired into the forward pass; the 2026-11-18 branch
+  update below records the integration.
 - **Quality sanity.** 6/6 checks for both models (including a reasoning question with thinking on).
 - **Intelligence (measured, `bench/results/bonsai/intel/INTEL.md`).** WikiText-2 PPL: Qwen Q4_K_M 5.916, Bonsai 7.995 (`Q2_0`) / 8.000 (`PTQ1_0`); KL divergence vs Qwen 0.356,
   same top-1 token 76.5 %. Matched subsets (same items): HellaSwag 83.0 vs 72.0 (paired McNemar p = 0.001), Winogrande 77.5 vs 73.5 (p 0.27), ARC-Challenge 52 vs 48 (p 0.48),
@@ -547,4 +549,54 @@ Full tables: `bench/results/ternary_bonsai_comparison.md`; raw runs in `bench/re
   (overhead grows 6.1 KiB per token). F6 `PTQ1_0` 64K all-GPU at 7471 / 7595 MiB (fork allocates about 350 MiB at the first request; `-ngl 62` 7361 MiB). No kernel test failed.
 - **Decision for the engine.** On this card the bottleneck of Qwen Q4_K_M is the 7 GiB of CPU-layer weights read from DDR4 per token; Bonsai removes it. The next engineering step with the
   largest payoff is to wire the ternary path into the engine with every layer on the GPU (PTQ1_0 or PQ2_0 needs its own unpack kernel; Q2_0 leaves almost no VRAM for the engine's buffers).
+
+## Branch `exp/bonsai-128k-context` update (2026-11-18/19)
+
+This section is an update, not a rewrite of the 2026-11-17 experiment log above. Branch commits include SPEC-008/RFC-004,
+the first Ternary Bonsai integration (`a89f467`), the 128K context work, and the partial bench matrix; later commits add
+kernel v2, split-K attention, GPU head/MTP plumbing, the MTP training tools, and the `Pool` slot fix.
+
+### What changed
+
+- **Ternary Bonsai in the engine.** `PTQ1_0` (type 143) and `Q2_0` (type 42) decode on the CPU and GPU with the Hadamard
+  basis, `prism.hadamard.gdn_v_grouped` support, automatic mode detection, and MTP auto-off because the release GGUF has no
+  MTP block. `PQ2_0` (type 142) is still not supported.
+- **Ternary kernel v2.** Fused rotation + Q8_1 quantization, better PTQ1_0 table/payload access, multi-row decode tiles,
+  and GPU LM-head support. `ternary_ab_test` proves byte-identical outputs against the `a89f467` kernels.
+- **Attention.** Above 8192 positions prefill uses `attention_kernel_tiled` (256-position tiles, online softmax). Decode and
+  small verification batches use split-K over 64 position slices; a combine kernel merges `(m, l, o)` partials. Up to 8192 the
+  original kernel is used unchanged.
+- **Context caps.** Qwen K-quant keeps `ctx_max <= 8192`; the Ternary path goes to `131072` positions.
+- **Memory/placement.** The host arena is sized by a measuring pass, projected device memory is checked before allocation,
+  a host RAM guard (14.2 GB decimal) covers arena + mlocked LM head/MTP + margin + resident layers, `--gpu-layers auto`
+  picks the largest GPU prefix that fits, and `--gpu-head` / `--gpu-mtp` control automatic GPU placement of the LM head and
+  an injected `blk.64`.
+- **MTP tools.** `tools/bonsai_mtp_train/` can build a ChatML corpus, distill a Qwen-style MTP head, and inject `blk.64`
+  into a Bonsai GGUF. The measured plumbing run below injects Qwen's own head only to validate the engine path.
+- **State files.** `--state-save` / `--state-load` / `--state-test` write the cached tokens, MTP row, every KV cache and
+  every DeltaNet conv/SSM state. Files are bound to a model and layout fingerprint; there is no migration version yet.
+- **Pool slot fix.** HTTP callers change from request to request, so TLS-based pool slots eventually collided on the
+  defensive fallback slot. `Pool::slot()` now gives the current caller slot 0 and persistent workers slots 1..n-1.
+
+### Measured on this branch
+
+| Check | Result |
+|---|---|
+| `attn_long_test 131072` | 28/28 PASS; highest relative error 2,581e-05 |
+| `ternary_test` | PASS (rotation/GEMV vs double and libggml references) |
+| `ternary_ab_test` | 135/135 outputs byte-identical to the `a89f467` kernels |
+| PTQ1_0 microbench, T=1 | ffn_up 15,6→77,6 GB/s; ffn_down 18,5→85,5 GB/s; LM head 18,7→91,1 GB/s |
+| SASS gate | PASS; linked engine `IDP.4A x2813`, half arithmetic x0 |
+| Bonsai needle 4K, no MTP | `PTQ1_0` 8,1536 tok/s; `Q2_0` 8,2092 tok/s; both retrieve `MAGENTA-FALCON-42` |
+| Bonsai + injected Qwen `blk.64`, prompt 512 | MTP 0 11,4932 tok/s; MTP 2 17,7078 tok/s; 158/198 accepted; 256 tokens identical |
+| Depth probe, `PTQ1_0` at 131072 | 4,5906 tok/s, 64 GPU layers, peak 7349 MiB |
+| Depth probe, `Q2_0` at 131072 | 0,4655 tok/s, 53 GPU layers, peak 7295 MiB |
+| State round-trip 4K | Qwen Q4_K_M, `PTQ1_0`, `Q2_0`: tokens/logits identical |
+| Server after `Pool` fix | `server_test.py` with `QWEN_MT_DOT=0`: 69/69 PASS |
+
+Reading rules: depth probes use zeroed KV, one warm-up step at `N-33` and 32 measured steps at `N-32..N-1`. They answer
+"what does one decode token cost at depth N?", not "how long is a full 128K prefill?" and not "how good is the model at
+128K?". Engine Bonsai numbers must not be mixed with the 17,13/19,64 tok/s of stock llama.cpp / PrismML above. The
+injected MTP number validates plumbing; a Bonsai-trained head remains future work.
+Raw summaries: `bench/results/bonsai128k/README.md`; claims: `../../spec/research/CLAIMS.md` C-73..C-88.
 

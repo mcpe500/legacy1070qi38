@@ -1,0 +1,5 @@
+OUTPUT (last 5 lines):
+  [PASS] q8_gemv: IDP.4A x8, half arithmetic x0
+  [PASS] ternary_gemv: IDP.4A x1181, half arithmetic x0
+  [PASS] build/qwen38-engine (linked): IDP.4A x2813, half arithmetic x0
+  SASS gate: PASS

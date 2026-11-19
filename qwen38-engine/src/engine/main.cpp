@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -104,7 +105,8 @@ int main(int argc, char ** argv) {
     GenParams gp;
     gp.sp.temperature = 0.0f;
     gp.sp.seed = 42;
-    std::string prompt = "The capital of France is", parity_dir, tok_file;
+    std::string prompt = "The capital of France is", parity_dir, tok_file, state_save, state_load, state_test, cont_file;
+    int depth_bench = 0;
     int n_predict = 16;
     bool parse_special = false, rollback_test = false, serve = false;
     ServerOptions sopt;
@@ -116,6 +118,20 @@ int main(int argc, char ** argv) {
         };
         if (a == "-m") cfg.gguf = next();
         else if (a == "-p") prompt = next();
+        else if (a == "-f" || a == "--prompt-file") {
+            const std::string pf = next();
+            std::ifstream in(pf, std::ios::binary);
+            if (!in) { std::fprintf(stderr, "cannot read prompt file %s\n", pf.c_str()); return 2; }
+            prompt.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        }
+        else if (a == "--state-save") state_save = next();
+        else if (a == "--state-load") state_load = next();
+        else if (a == "--state-test") state_test = next();     // round-trip test file (with --cont-file)
+        else if (a == "--cont-file") cont_file = next();       // continuation text of --state-test
+        else if (a == "--depth-bench") depth_bench = std::atoi(next().c_str());
+        else if (a == "--gpu-head") cfg.gpu_head = std::atoi(next().c_str());
+        else if (a == "--gpu-mtp") cfg.gpu_mtp = std::atoi(next().c_str());
+        else if (a == "--vram-budget-mib") cfg.vram_budget_mib = std::atof(next().c_str());
         else if (a == "-n") n_predict = std::atoi(next().c_str());
         else if (a == "--temp") gp.sp.temperature = static_cast<float>(std::atof(next().c_str()));
         else if (a == "--top-k") gp.sp.top_k = std::atoi(next().c_str());
@@ -129,7 +145,7 @@ int main(int argc, char ** argv) {
         else if (a == "--tmax") cfg.t_max = std::atoi(next().c_str());
         else if (a == "--threads") cfg.threads = std::atoi(next().c_str());
         else if (a == "--resident-gib") cfg.resident_gib = std::atof(next().c_str());
-        else if (a == "--gpu-layers") cfg.gpu_layers = std::atoi(next().c_str());
+        else if (a == "--gpu-layers") { const std::string v = next(); cfg.gpu_layers = v == "auto" ? -1 : std::atoi(v.c_str()); }
         else if (a == "--dp4a") cfg.dp4a_mask = parse_dp4a_mask(next().c_str());
         else if (a == "--rollback-test") rollback_test = true;
         else if (a == "--server") serve = true;
@@ -183,6 +199,7 @@ int main(int argc, char ** argv) {
         const auto t_load0 = Clock::now();
         Engine eng(cfg);
         const double load_s = secs(t_load0, Clock::now());
+        cfg.gpu_layers = eng.config().gpu_layers;   // resolved count (--gpu-layers auto)
         std::fprintf(stderr, "loaded in %.2f s; CPU arena %.1f MiB; CPU resident layers %d (%.2f GiB), streamed %.2f GiB\n", load_s,
                      static_cast<double>(eng.arena_used()) / (1024.0 * 1024.0), eng.n_resident_layers,
                      eng.resident_gib_actual, eng.streamed_gib);
@@ -194,10 +211,30 @@ int main(int argc, char ** argv) {
 
         if (serve) {
             Generator gen(eng);
+            if (!state_load.empty()) {   // requests whose prompt extends the saved tokens skip their prefill
+                const auto t0 = Clock::now();
+                const size_t b = gen.load_state(state_load);
+                std::fprintf(stderr, "state-load: %zu tokens, %.1f MiB in %.2f s from %s\n", gen.cached_tokens(),
+                             static_cast<double>(b) / 1048576.0, secs(t0, Clock::now()), state_load.c_str());
+            }
             return run_server(eng, gen, cfg, sopt);
         }
 
         std::vector<int32_t> ids = eng.tok.encode(prompt, parse_special);
+        // --state-load: the saved tokens come first and -p / -f is the continuation (its tokens are appended).
+        std::unique_ptr<Generator> gen_ptr = std::make_unique<Generator>(eng);
+        double state_load_s = 0;
+        size_t state_load_bytes = 0;
+        if (!state_load.empty()) {
+            const auto t0 = Clock::now();
+            state_load_bytes = gen_ptr->load_state(state_load);
+            state_load_s = secs(t0, Clock::now());
+            std::vector<int32_t> all = gen_ptr->cached();
+            all.insert(all.end(), ids.begin(), ids.end());
+            ids.swap(all);
+            std::fprintf(stderr, "state-load: %zu tokens, %.1f MiB in %.2f s from %s\n", gen_ptr->cached_tokens(),
+                         static_cast<double>(state_load_bytes) / 1048576.0, state_load_s, state_load.c_str());
+        }
         const int n_prompt = static_cast<int>(ids.size());
         std::vector<float> logits(static_cast<size_t>(eng.n_vocab));
         std::fprintf(stderr, "prompt tokens: %d\n", n_prompt);
@@ -246,6 +283,14 @@ int main(int argc, char ** argv) {
         // Optional per-layer parity against the reference dump (prefill pass only).
         struct LayerCmp { int il; double cos, mx; bool ok; };
         std::vector<LayerCmp> cmps;
+        const char * tap_dump = std::getenv("QWEN_TAP_DUMP");
+        if (tap_dump) {
+            eng.tap = [tap_dump](int il, const float * x, int T) {
+                std::string path = std::string(tap_dump) + "/l_out-" + std::to_string(il) + ".bin";
+                FILE * f = std::fopen(path.c_str(), "wb");
+                if (f) { std::fwrite(x, sizeof(float), static_cast<size_t>(T) * 5120, f); std::fclose(f); }
+            };
+        }
         if (!parity_dir.empty()) {
             eng.tap = [&](int il, const float * x, int T) {
                 std::vector<float> ref;
@@ -260,11 +305,90 @@ int main(int argc, char ** argv) {
             };
         }
 
-        Generator gen(eng);
+        Generator & gen = *gen_ptr;
+
+        if (depth_bench > 0) {
+            // Decode cost at a deep position without a long prefill: KV zeroed (an empty but full-length attention span),
+            // DeltaNet state zero, then -n single-token steps at positions depth-n .. depth-1. Speed and memory only.
+            if (depth_bench < n_predict + 1 || depth_bench > cfg.ctx_max) { std::fprintf(stderr, "--depth-bench out of range\n"); return 2; }
+            eng.reset();
+            eng.clear_kv();
+            std::vector<float> lg(static_cast<size_t>(eng.n_vocab));
+            int32_t tok = ids.empty() ? 0 : ids.back();
+            const int p0 = depth_bench - n_predict;
+            eng.forward(&tok, 1, p0, lg.data());   // warm-up (CUDA graph capture)
+            const auto t0 = Clock::now();
+            for (int i = 1; i < n_predict; ++i) {
+                tok = argmax(lg.data(), eng.n_vocab);
+                eng.forward(&tok, 1, p0 + i, lg.data());
+            }
+            const double dt = secs(t0, Clock::now());
+            std::printf("{\"depth_bench\":%d,\"steps\":%d,\"decode_tok_s\":%.4f,\"ctx\":%d,\"gpu_layers\":%d,\"load_s\":%.2f,"
+                        "\"cpu_arena_mib\":%.1f,\"gpu_arena_mib\":%.1f,\"gpu_kv_mib\":%.1f,\"vram_used_mib\":%.1f,\"peak_rss_kb\":%lld}\n",
+                        depth_bench, n_predict - 1, (n_predict - 1) / std::max(dt, 1e-9), cfg.ctx_max, cfg.gpu_layers, load_s,
+                        static_cast<double>(eng.arena_used()) / 1048576.0, static_cast<double>(eng.gpu_arena_bytes()) / 1048576.0,
+                        static_cast<double>(eng.gpu_kv_bytes()) / 1048576.0, cfg.gpu_layers > 0 ? eng.vram_used_mib() : 0.0, peak_rss_kb());
+            return 0;
+        }
+
+        if (!state_test.empty()) {
+            // Round trip in one process: prefill -p/-f, save, generate the continuation (reference: in-memory state), then reset,
+            // load the file, generate the same continuation again. Tokens and the first logits row must be bit-identical.
+            std::ifstream cf(cont_file, std::ios::binary);
+            if (!cf) { std::fprintf(stderr, "--state-test needs --cont-file\n"); return 2; }
+            const std::string cont((std::istreambuf_iterator<char>(cf)), std::istreambuf_iterator<char>());
+            std::vector<int32_t> full = ids;
+            const std::vector<int32_t> c_ids = eng.tok.encode(cont, parse_special);
+            full.insert(full.end(), c_ids.begin(), c_ids.end());
+            GenParams pp = gp;
+            pp.prefill_only = true;
+            GenStats s0, s1, s2;
+            gen.run(ids, pp, [&](int32_t) { return true; }, s0);
+            auto t0 = Clock::now();
+            const size_t bytes = gen.save_state(state_test);
+            const double save_s = secs(t0, Clock::now());
+            std::vector<float> lg1, lg2;
+            std::vector<int32_t> o1, o2;
+            GenParams g1 = gp;
+            g1.capture_logits = &lg1;
+            gen.run(full, g1, [&](int32_t t) { o1.push_back(t); return true; }, s1);
+            gen.reset_cache();
+            eng.reset();
+            eng.clear_kv();   // the loaded file alone must rebuild the state
+            t0 = Clock::now();
+            gen.load_state(state_test);
+            const double load2_s = secs(t0, Clock::now());
+            GenParams g2 = gp;
+            g2.capture_logits = &lg2;
+            gen.run(full, g2, [&](int32_t t) { o2.push_back(t); return true; }, s2);
+            const bool same_tok = o1 == o2, same_lg = lg1 == lg2;
+            std::printf("state round trip: prefix %zu tokens, continuation %zu tokens, state %.1f MiB, save %.2f s, load %.2f s\n",
+                        ids.size(), c_ids.size(), static_cast<double>(bytes) / 1048576.0, save_s, load2_s);
+            std::printf("in-memory: reused %d, %zu tokens: %s\n", s1.reused_tokens, o1.size(), json_escape(eng.tok.decode(o1, false)).c_str());
+            std::printf("from file: reused %d, %zu tokens: %s\n", s2.reused_tokens, o2.size(), json_escape(eng.tok.decode(o2, false)).c_str());
+            std::printf("state round trip: tokens %s, first logits row %s -> %s\n", same_tok ? "identical" : "DIFFER",
+                        same_lg ? "bit-identical" : "DIFFER", same_tok && same_lg && s2.reused_tokens == static_cast<int>(ids.size()) ? "PASS" : "FAIL");
+            return same_tok && same_lg && s2.reused_tokens == static_cast<int>(ids.size()) ? 0 : 1;
+        }
+
         std::vector<float> pf_logits;
         if (!parity_dir.empty()) gp.capture_logits = &pf_logits;
         GenStats st;
         std::vector<int32_t> out_ids;
+        if (!state_save.empty()) {   // prefill only, then write the state file
+            gp.prefill_only = true;
+            gen.run(ids, gp, [&](int32_t) { return true; }, st);
+            const auto t0 = Clock::now();
+            const size_t b = gen.save_state(state_save);
+            const double save_s = secs(t0, Clock::now());
+            std::printf("{\"state_save\":\"%s\",\"tokens\":%zu,\"reused_tokens\":%d,\"state_mib\":%.1f,\"prefill_s\":%.2f,"
+                        "\"prefill_tok_s\":%.3f,\"save_s\":%.2f,\"load_s\":%.2f,\"state_load_s\":%.2f,\"ctx\":%d,\"gpu_layers\":%d,"
+                        "\"vram_used_mib\":%.1f,\"peak_rss_kb\":%lld}\n",
+                        state_save.c_str(), gen.cached_tokens(), st.reused_tokens, static_cast<double>(b) / 1048576.0, st.prefill_s,
+                        st.prefill_s > 0 ? (n_prompt - st.reused_tokens) / st.prefill_s : 0.0, save_s, load_s, state_load_s,
+                        cfg.ctx_max, cfg.gpu_layers, cfg.gpu_layers > 0 ? eng.vram_used_mib() : 0.0, peak_rss_kb());
+            return 0;
+        }
         gen.run(ids, gp, [&](int32_t t) { out_ids.push_back(t); return true; }, st);
         eng.tap = nullptr;
 
@@ -338,8 +462,8 @@ int main(int argc, char ** argv) {
                     "\"mtp_steps\":%d,\"cycles\":%lld,\"draft_n\":%lld,\"draft_n_accepted\":%lld,\"accept_hist\":[%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld],\"mtp_adaptive\":%d,"
                     "\"mtp_prefill_s\":%.3f,\"prefill_main_s\":%.3f,\"mtp_draft_s\":%.3f,\"mtp_verify_s\":%.3f,\"mtp_rollback_s\":%.3f,\"stream_min_t\":%d,"
                     "\"pld_enabled\":%d,\"pld_hits\":%lld,\"pld_candidates\":%lld,\"mtp_fills\":%lld,"
-                    "\"ttft_s\":%.3f,\"finish\":\"%s\",\"temperature\":%.3f}\n",
-                    json_escape(text).c_str(), load_s, st.prefill_s, n_prompt / std::max(st.prefill_s, 1e-9), st.decode_s,
+                    "\"ttft_s\":%.3f,\"finish\":\"%s\",\"temperature\":%.3f,\"ctx\":%d,\"reused_tokens\":%d,\"state_load_s\":%.3f}\n",
+                    json_escape(text).c_str(), load_s, st.prefill_s, (n_prompt - st.reused_tokens) / std::max(st.prefill_s, 1e-9), st.decode_s,
                     decode_tok_s,
                     static_cast<unsigned long long>(st.heap_allocs), peak_rss_kb(), status_kb("RssAnon:"), status_kb("RssFile:"), swap0, swap_used_kb(), parity_fail,
                     logits_cos, top1_match ? "true" : "false", cfg.gpu_layers,
@@ -352,7 +476,7 @@ int main(int argc, char ** argv) {
                     gp.mtp_adaptive ? 1 : 0,
                     st.mtp_prefill_s, st.prefill_main_s, st.t_draft, st.t_verify, st.t_roll, cfg.stream_min_t,
                     gp.pld_enabled ? 1 : 0, st.pld_hits, st.pld_candidates, st.mtp_fills,
-                    st.ttft_s, st.finish.c_str(), static_cast<double>(gp.sp.temperature));
+                    st.ttft_s, st.finish.c_str(), static_cast<double>(gp.sp.temperature), cfg.ctx_max, st.reused_tokens, state_load_s);
         return parity_fail ? 1 : 0;
     } catch (const std::exception & e) {
         std::fprintf(stderr, "error: %s\n", e.what());

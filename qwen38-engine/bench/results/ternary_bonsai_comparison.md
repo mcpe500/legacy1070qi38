@@ -1,5 +1,11 @@
 # Ternary Bonsai 2 27B vs Qwen3.8-27B-UD-Q4_K_M on the GTX 1070 Ti (2026-11-17)
 
+> **Update 2026-11-18 (branch `exp/bonsai-128k-context`).** The tables below are the 2026-11-17 experiment record. Since then
+> `qwen38-engine` loads and runs Bonsai itself: `PTQ1_0`/`Q2_0` are integrated on CPU and GPU, MTP is auto-disabled for Bonsai,
+> the engine context goes to `131072` on the Ternary path (Qwen K-quant stays at 8192), and `--depth-bench` / `--state-save` /
+> `--state-load` exist. Sentences below such as “prepared but not wired”, “engine does not load Bonsai yet”, or “engine limit 4096”
+> describe the state at the time of that experiment, not this branch. See `bench/results/bonsai128k/README.md`.
+
 Hardware: GTX 1070 Ti (sm_61, 8 GB, **VRAM cap 7373 MiB**), Ryzen 5 2400G on cores 0-3, 16 GB DDR4 (**RAM cap 14.2 GB**), PCIe Gen3 x1.
 Every run was alone on the GPU (checked with `nvidia-smi` before each run), temperature 0, seed 42. Raw files: `bench/results/bonsai/`.
 Peak VRAM = highest `nvidia-smi` sample (100 ms) during the run. "OK" = peak at or under 7373 MiB.
@@ -23,7 +29,8 @@ Every step in order (27 steps, reason / command / output / decision): `bench/res
 - Generation sanity: 6/6 checks passed for both models (arithmetic, facts, word problem, translation into Indonesian, code, one reasoning question).
 - Architecture is the Qwen3.8-27B hybrid (48 Gated DeltaNet + 16 GQA attention layers) with ternary weights and a Hadamard-rotated basis; **no MTP head**.
 - In qwen38-engine a ternary GEMV path (Q2_0 unpack with `lop3.b32`, activation lanes gathered with `prmt.b32`, `__dp4a`, FP32 Hadamard rotation) was built and
-  verified: cosine 1.000000 against llama.cpp on real Bonsai weights, SASS gate PASS. It is **not yet wired into the engine forward pass** (see "Not done").
+  verified: cosine 1.000000 against llama.cpp on real Bonsai weights, SASS gate PASS. At the time of this experiment it was **not yet wired into the engine forward pass**;
+  the 2026-11-18 branch integrates it (see the note at the top).
 
 ## 1. Model and architecture (from the GGUF headers, read with HTTP range requests before downloading)
 
@@ -101,9 +108,10 @@ Nothing spills to DDR4 silently: llama.cpp allocates the whole KV cache at load 
 
 ### 3.4 Shared memory (48 KiB per block on sm_61)
 qwen38-engine keeps the attention scores of one query row in dynamic shared memory (4 bytes per position + about 1.1 KiB), so its kernel can address at most
-about 12,000 positions; the engine stays at 4096 on purpose. llama.cpp's flash-attention kernels tile the KV sequence, so shared memory does not limit their context.
+about 12,000 positions; the engine stayed at 4096 on purpose in this 2026-11-17 run. Since 2026-11-18 the branch adds a tiled online-softmax kernel above 8192
+positions, so the Ternary Bonsai path can reach 131072. llama.cpp's flash-attention kernels tile the KV sequence, so shared memory does not limit their context.
 
-## 4. Ternary path in qwen38-engine (prepared, verified, not yet wired in)
+## 4. Ternary path in qwen38-engine (prepared and verified in the 2026-11-17 run; integrated on `exp/bonsai-128k-context`)
 
 `src/cuda/ternary_gemv.cu`:
 - `ternary_rotate`: x' = H_1024 (s * x) / 32, FP32 butterflies in shared memory (one 1024-block per thread block).

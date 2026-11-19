@@ -10,6 +10,8 @@
 
 #include "ggml.h"
 
+#include "ternary_spec.hpp"
+
 namespace {
 
 struct Cursor {
@@ -38,6 +40,20 @@ struct Cursor {
         p += n;
     }
 };
+
+// Row bytes of a tensor without ggml for the ternary packings of Ternary Bonsai (type 42 / 143 are unknown to
+// stock ggml, and ggml_row_size would abort on them). Everything else goes through ggml_row_size.
+uint64_t row_bytes_of(uint32_t type, int64_t ne0) {
+    if (type == ternary::kTypePtq1_0) {
+        if (ne0 % ternary::kPtqGroup != 0) throw std::runtime_error("ternary PTQ1_0: row not a multiple of 128");
+        return static_cast<uint64_t>(ne0 / ternary::kPtqGroup) * ternary::kPtqGroupBytes;
+    }
+    if (type == ternary::kTypeQ2_0) {
+        if (ne0 % ternary::kQ2_0Block != 0) throw std::runtime_error("ternary Q2_0: row not a multiple of 64");
+        return static_cast<uint64_t>(ne0 / ternary::kQ2_0Block) * ternary::kQ2_0BlockBytes;
+    }
+    return static_cast<uint64_t>(ggml_row_size(static_cast<enum ggml_type>(type), ne0));
+}
 
 size_t scalar_size(uint32_t t) {
     switch (t) {
@@ -78,6 +94,14 @@ void read_value(Cursor & c, uint32_t type, const std::string & key, GgufIndex & 
                 else v.push_back(c.rd<int64_t>());
             }
             ix.arr_kv[key] = std::move(v);
+        } else if (et == 6) {  // float array of any length (prism.hadamard.sign_values on some files)
+            std::vector<float> v(static_cast<size_t>(n));
+            for (uint64_t i = 0; i < n; ++i) v[static_cast<size_t>(i)] = c.rd<float>();
+            ix.f32_arr_kv[key] = std::move(v);
+        } else if (et == 5 && n <= (1u << 20)) {  // int32 array (sign values of the prism metadata, stored as i32)
+            std::vector<int32_t> v(static_cast<size_t>(n));
+            for (uint64_t i = 0; i < n; ++i) v[static_cast<size_t>(i)] = c.rd<int32_t>();
+            ix.i32_arr_kv[key] = std::move(v);
         } else {
             c.skip(scalar_size(et) * n);
         }
@@ -135,10 +159,9 @@ void GgufIndex::open(const std::string & p) {
         for (uint32_t d = n_dims; d < 4; ++d) t.ne.push_back(1);
         t.type = c.rd<uint32_t>();
         t.offset = c.rd<uint64_t>();
-        const auto gt = static_cast<enum ggml_type>(t.type);
         int64_t rows = 1;
         for (int d = 1; d < 4; ++d) rows *= t.ne[d];
-        t.nbytes = static_cast<uint64_t>(ggml_row_size(gt, t.ne[0])) * static_cast<uint64_t>(rows);
+        t.nbytes = row_bytes_of(t.type, t.ne[0]) * static_cast<uint64_t>(rows);
         tensors[t.name] = t;
     }
 

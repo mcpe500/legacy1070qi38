@@ -24,6 +24,8 @@ struct GgufIndex {
     std::map<std::string, uint64_t> u_kv;                 // all integer and bool scalars (signed values are cast)
     std::map<std::string, std::string> str_kv;            // string scalars (includes tokenizer.ggml.model/pre)
     std::map<std::string, std::vector<int64_t>> arr_kv;   // numeric arrays of at most 64 entries
+    std::map<std::string, std::vector<float>> f32_arr_kv; // float arrays of any length (prism.hadamard.sign_values on some files)
+    std::map<std::string, std::vector<int32_t>> i32_arr_kv; // int32 arrays of any length (prism.hadamard.sign_values)
     std::vector<std::string> tokens, merges;              // tokenizer.ggml.tokens / merges
     std::vector<int32_t> token_types;                     // tokenizer.ggml.token_type
 

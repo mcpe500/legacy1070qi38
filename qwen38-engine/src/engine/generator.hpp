@@ -27,6 +27,7 @@ struct GenParams {
     int pld_max = 6;       // max PLD candidates per cycle (3-gram + 4-gram combined)
     int pld_min_len = 3;   // minimum suffix length to consider (3 or 4)
     bool reuse = true;     // continue from the cached state when it is a prefix of the new prompt
+    bool prefill_only = false;   // stop after the prefill (no sampling): the state then holds exactly the prompt (--state-save)
     std::vector<float> * capture_logits = nullptr;   // receives the logits after the prefill (parity tests)
 };
 
@@ -50,6 +51,12 @@ public:
              const std::function<void(int, int)> & on_prefill = nullptr);
     void reset_cache() { cached_.clear(); have_h_ = false; }
     size_t cached_tokens() const { return cached_.size(); }
+    const std::vector<int32_t> & cached() const { return cached_; }
+    // Model state file (--state-save / --state-load): header (magic, version, engine fingerprint, n_pos), the cached tokens,
+    // the MTP pairing row, then Engine::save_state(n_pos). After load_state the next run() whose prompt extends the saved
+    // tokens continues from them without prefilling them again. Both return the number of state bytes moved.
+    size_t save_state(const std::string & path) const;
+    size_t load_state(const std::string & path);
     bool is_stop(int32_t t) const;
 
 private:

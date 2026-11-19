@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="430" viewBox="0 0 760 430" font-family="monospace">
+  <title>Layout executable fat legacy1070qi38: ELF + payload bobot + trailer</title>
+  <desc>Satu berkas executable dengan tiga bagian: kode ELF, payload bobot yang dipetakan zero-copy, dan trailer 128 B berisi digest.</desc>
+  <defs>
+    <marker id="s008arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="760" height="430" fill="#ffffff"/>
+  <text x="40" y="28" font-size="14" font-weight="bold" fill="#111">Executable fat legacy1070qi38 — satu berkas, tiga bagian</text>
+  <text x="40" y="48" font-size="12" fill="#333">bobot disambung (append), bukan dikompilasi — payload = GGUF yang sama seperti -m</text>
+
+  <rect x="40" y="70" width="330" height="56" fill="#eef2ff" stroke="#333" stroke-width="1"/>
+  <text x="54" y="92" font-size="13" font-weight="bold" fill="#111">ELF .text/.rodata</text>
+  <text x="54" y="112" font-size="12" fill="#333">engine C++/CUDA + WebUI ±10 MB</text>
+
+  <line x1="205" y1="126" x2="205" y2="146" stroke="#333" stroke-width="1.5" marker-end="url(#s008arrow)"/>
+
+  <rect x="40" y="150" width="330" height="84" fill="#eaffea" stroke="#333" stroke-width="1"/>
+  <text x="54" y="174" font-size="13" font-weight="bold" fill="#111">PAYLOAD bobot (GGUF/Bonsai)</text>
+  <text x="54" y="194" font-size="12" fill="#333">±5.5 GiB, mulai kelipatan 4096 B</text>
+  <text x="54" y="214" font-size="12" fill="#333">PTQ1_0 5,946,648,928 B (C-69)</text>
+
+  <line x1="205" y1="234" x2="205" y2="254" stroke="#333" stroke-width="1.5" marker-end="url(#s008arrow)"/>
+
+  <rect x="40" y="258" width="330" height="70" fill="#fffbe6" stroke="#333" stroke-width="1"/>
+  <text x="54" y="280" font-size="13" font-weight="bold" fill="#111">TRAILER 128 B (paling akhir)</text>
+  <text x="54" y="300" font-size="12" fill="#333">magic LWGT · versi · offset · len</text>
+  <text x="54" y="318" font-size="12" fill="#333">SHA-256 payload + nama model</text>
+
+  <line x1="392" y1="70" x2="392" y2="328" stroke="#999" stroke-width="1" stroke-dasharray="4 4"/>
+  <line x1="370" y1="192" x2="415" y2="190" stroke="#333" stroke-width="1.5" marker-end="url(#s008arrow)"/>
+  <text x="420" y="180" font-size="12" fill="#111">mmap(self_exe, payload, PROT_READ)</text>
+  <text x="420" y="210" font-size="12" fill="#333">→ arena engine: zero-copy, page cache</text>
+  <text x="420" y="230" font-size="12" fill="#333">payload TIDAK PERNAH PROT_EXEC</text>
+  <text x="420" y="258" font-size="12" fill="#333">offset page-aligned = syarat mmap</text>
+  <text x="420" y="278" font-size="12" fill="#333">SHA-256 atas payload, bukan kode</text>
+
+  <text x="40" y="356" font-size="12" font-weight="bold" fill="#111">Legenda</text>
+  <text x="40" y="376" font-size="12" fill="#333">Alur start: readlink /proc/self/exe → pread 128 B terakhir → verifikasi SHA-256 → mmap payload</text>
+  <text x="40" y="396" font-size="12" fill="#333">Gagal verifikasi / trailer asing → exit 2, server tidak dijalankan</text>
+  <text x="40" y="416" font-size="12" fill="#333">Ganti model = jalankan ulang embed_payload.py; engine tidak dikompilasi ulang</text>
+</svg>

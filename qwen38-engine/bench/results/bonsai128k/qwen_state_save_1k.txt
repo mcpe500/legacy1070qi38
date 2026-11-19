@@ -1,0 +1,2 @@
+{"state_save":"/tmp/b128/q1k.state","tokens":957,"reused_tokens":0,"state_mib":222.8,"prefill_s":37.28,"prefill_tok_s":25.670,"save_s":0.42,"load_s":81.78,"state_load_s":0.00,"ctx":4096,"gpu_layers":32,"vram_used_mib":7330.2,"peak_rss_kb":9253544}
+{"tag":"qwen_state_save_1k","rc":0,"peak_vram_mib":7331,"max_rss_kb":9253544}

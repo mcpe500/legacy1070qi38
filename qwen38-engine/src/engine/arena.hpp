@@ -10,6 +10,10 @@
 
 class Arena {
 public:
+    // Sizing pass: no mapping, alloc() only advances the offset and returns null. used() then gives the exact size the
+    // same sequence of alloc() calls needs, so the real arena is sized from the configuration instead of a fixed cap.
+    struct Measure {};
+    explicit Arena(Measure) : cap_(SIZE_MAX), measuring_(true) {}
     explicit Arena(size_t bytes) : cap_(bytes) {
         void * p = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
         if (p == MAP_FAILED) { std::fprintf(stderr, "arena: mmap of %zu bytes failed\n", bytes); std::abort(); }
@@ -24,7 +28,7 @@ public:
         size_t off = (used_ + align - 1) / align * align;
         if (off + bytes > cap_) { std::fprintf(stderr, "arena: out of space (%zu + %zu > %zu)\n", off, bytes, cap_); std::abort(); }
         used_ = off + bytes;
-        return base_ + off;
+        return measuring_ ? nullptr : base_ + off;
     }
     template <class T> T * alloc_n(size_t n) { return static_cast<T *>(alloc(n * sizeof(T))); }
 
@@ -36,6 +40,7 @@ private:
     uint8_t * base_ = nullptr;
     size_t cap_ = 0, used_ = 0;
     bool frozen_ = false;
+    bool measuring_ = false;
 };
 
 // Counts global operator new calls made while enabled. Used by the engine to prove that the token loop

@@ -7,9 +7,11 @@
 
 #include <cstdint>
 
-// ggml type ids of the quantizations found in layers 0-23 of Qwen3.8-27B-UD-Q4_K_M.
+// ggml type ids of the quantizations found in layers 0-23 of Qwen3.8-27B-UD-Q4_K_M, plus BF16 (the
+// ssm_alpha/ssm_beta packing of Ternary Bonsai).
 enum GemvType : int {
     GT_Q8_0 = 8,
+    GT_BF16 = 30,
     GT_Q3_K = 11,
     GT_Q4_K = 12,
     GT_Q5_K = 13,

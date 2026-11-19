@@ -1,5 +1,9 @@
 # src/packer
 
-Offline GGUF or Safetensors stripper and dual-layout CUDA/AVX2 repacker.
+Pembaca GGUF read-only: tensor table, metadata, mmap, ukuran baris K-quant, serta ukuran baris
+packing ternary `Q2_0` / `PTQ1_0`.
 
-Status: empty (stage 0). Read first: `.agents/skills/qwen38-hybrid-arch/SKILL.md`, `pascal-sm61-cuda`, `memory-budget-24gb`.
+Status: **implementasi lengkap dan aktif**; dipakai loader CPU maupun CUDA.
+
+Baca dulu `.agents/skills/qwen38-hybrid-arch/SKILL.md`, `pascal-sm61-cuda`, dan
+`memory-budget-24gb`.

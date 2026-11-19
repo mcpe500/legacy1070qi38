@@ -17,4 +17,5 @@ tests/ref_full/
 bench/results/**/*.vram.csv
 bench/results/**/*.vmstat
 bench/results/**/*.server.log
+bench/results/**/*.err
 tests/ref_full.std*

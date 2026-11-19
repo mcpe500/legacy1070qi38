@@ -1,5 +1,9 @@
 # src/cpu
 
-AVX2 znver1 GEMV, DeltaNet, LM head, MTP head, BPE tokenizer. Reference path for CUDA parity.
+GEMV AVX2, Gated DeltaNet, LM head, tokenizer BPE, sampler CPU, dequantisasi ternary Bonsai, dan
+rotasi Hadamard.
 
-Status: empty (stage 0). Read first: `.agents/skills/qwen38-hybrid-arch/SKILL.md`, `memory-budget-24gb`.
+Status: **implementasi lengkap dan aktif**; menjadi jalur CPU untuk layer yang tidak di-offload dan
+jalur referensi parity.
+
+Baca dulu `.agents/skills/qwen38-hybrid-arch/SKILL.md` dan `memory-budget-24gb`.
