@@ -47,3 +47,5 @@ size_t op_attention_part_floats();
 // Prefill (ctx_max > 8192, T > 8) uses the query-tiled K/V-reuse kernel (one block per KV group and 8 query tokens).
 // Tests and benchmarks can switch back to the per-(token, head) tiled reference kernel with this flag.
 void op_attention_set_tiled_ref(bool on);
+// Decode attention (T <= 8, long-context path, iso3): true = the v2 slice kernel (default), false = the split-K kernel.
+void op_attention_set_dec2(bool on);

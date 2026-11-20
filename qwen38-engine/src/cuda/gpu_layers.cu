@@ -150,6 +150,7 @@ struct GpuLayers::Impl {
     // Source index of mat()/vec()/upload_tensor(): the main GGUF, or the MTP sidecar while the blk.64 block is planned.
     const GgufIndex * cur_ix = nullptr;
     const GgufIndex & src() const { return cur_ix ? *cur_ix : ix; }
+    unsigned long long * canon_cnt = nullptr;   // PTQ1_0 bytes rewritten by ternary_ptq1_canonicalize during the upload
     const GgufIndex & mtp_src() const { return cfg.mtp_ix ? *cfg.mtp_ix : ix; }
     void upload_tensor(void * dst, const GgufTensor & t) {
         const GgufIndex & ix = src();
@@ -189,6 +190,9 @@ struct GpuLayers::Impl {
             if (lazy_plan) { lazy_max = std::max(lazy_max, static_cast<size_t>(t.nbytes)); return WMat{nullptr, type, t.ne[0], t.ne[1], &t}; }
             uint8_t * d = pl.take<uint8_t>(t.nbytes);
             if (upload) upload_tensor(d, t);
+            // The v3 decode kernel reads the canonical form (no-op on released files: the count is reported after the load)
+            if (upload && type == ternary::kTypePtq1_0 && canon_cnt)
+                CK(ternary_ptq1_canonicalize(d, (t.ne[0] / ternary::kPtqGroup) * t.ne[1], canon_cnt, st));
             weights += t.nbytes;
             return WMat{d, type, t.ne[0], t.ne[1], nullptr};
         }
@@ -572,8 +576,17 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     Planner real;
     real.base = m.arena;
     m.pin_alloc();
+    CK(cudaMalloc(&m.canon_cnt, sizeof(unsigned long long)));
+    CK(cudaMemset(m.canon_cnt, 0, sizeof(unsigned long long)));
     m.plan(real, true);
     CK(cudaDeviceSynchronize());
+    {
+        unsigned long long n = 0;
+        CK(cudaMemcpy(&n, m.canon_cnt, sizeof(n), cudaMemcpyDeviceToHost));
+        CK(cudaFree(m.canon_cnt));
+        m.canon_cnt = nullptr;
+        if (n) std::fprintf(stderr, "ternary: %llu invalid PTQ1_0 payload bytes rewritten to their table value (byte 0)\n", n);
+    }
     if (!m.stage) m.pin_free();   // kept for the streamed prefill uploads otherwise
     if (m.stage) {
         CK(cudaStreamCreateWithFlags(&m.cp, cudaStreamNonBlocking));

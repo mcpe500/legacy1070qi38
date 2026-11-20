@@ -32,6 +32,10 @@ cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const A
 // Uploads the byte -> digit tables the kernel reads through constant memory. Idempotent, thread-unsafe by design
 // (call it once before the first GEMV, like qmat_init on the CPU side).
 void ternary_ptq1_init();
+// Rewrites the payload bytes of n_groups PTQ1_0 groups (28 bytes each, contiguous) that the digit tables decode as zero
+// digits but the arithmetic decode of the v3 kernel would not (invalid codes; none in released files) to byte 0, which
+// every decoder reads as zero digits. Adds the number of rewritten bytes to *d_changed (device memory).
+cudaError_t ternary_ptq1_canonicalize(uint8_t * W, int64_t n_groups, unsigned long long * d_changed, cudaStream_t s);
 
 // Fused: y = ternary_rotate(x) and `a` = actq8_quantize(y), in one launch. Bit-identical to the two separate calls.
 cudaError_t ternary_rotate_q8(const float * x, const float * signs, float * y, int width, int T, const ActQ8 & a, cudaStream_t s);

@@ -138,6 +138,7 @@ __global__ void rotate_kernel(const float * __restrict__ x, const float * __rest
 // Constant-memory digit tables, uploaded once by ternary_ptq1_init() from the empirical kPtq1Code table.
 __constant__ int8_t c_ptq1_digits5[256 * 5];
 __constant__ int8_t c_ptq1_digits4[256 * 4];
+__constant__ uint8_t c_ptq1_bad[256];   // bit 0: invalid 5-digit byte, bit 1: invalid 4-digit tail byte (canonicalization)
 template <int TT>
 __global__ void gemv_ptq1_0_kernel(const uint8_t * __restrict__ W, int64_t in, int64_t out, const int8_t * __restrict__ qx,
                                    const float * __restrict__ dx, const float * __restrict__ sx, int T, float * __restrict__ y) {
@@ -402,6 +403,132 @@ __global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_v2(const uint8_t *
                 if (lane == 0 && live[r] && t < T) y[static_cast<int64_t>(t) * out + o[r]] = v;
             }
         }
+    }
+}
+
+// 3 * x with one ISCADD (ptxas turns `x * 3` and `x + (x << 1)` into two XMADs).
+__device__ __forceinline__ uint32_t times3(uint32_t x) {
+    uint32_t r;
+    asm("{.reg .u32 t; shl.b32 t, %1, 1; add.u32 %0, t, %1;}" : "=r"(r) : "r"(x));
+    return r;
+}
+
+// Digits 0..2 of the lane's four positions from the payload word `raw` (see the v3 kernel): positions (0, 1) go to the
+// 16-bit halves of lo, positions (2, 3) to those of hi; one multiplier per word (plo, phi = 3^digit), so a plain 32-bit
+// product decodes both halves. 3 * (byte * p mod 256) < 768, so the digit is bit 8..9 of each half and byte 1 / byte 3
+// of x hold exactly the digits: one prmt packs the four of them, no mask.
+__device__ __forceinline__ uint32_t ptq1_digits(uint32_t raw, uint32_t sel_hi, uint32_t plo, uint32_t phi) {
+    const uint32_t lo = __byte_perm(raw, 0u, 0x4140u), hi = __byte_perm(raw, 0u, sel_hi);
+    const uint32_t xl = times3((lo * plo) & 0x00FF00FFu), xh = times3((hi * phi) & 0x00FF00FFu);
+    return __byte_perm(xl, xh, 0x7531u);
+}
+
+// ---- PTQ1_0 v3 decode kernel (T = 1..5, issue #55 M2): v2 with the digit tables replaced by integer arithmetic.
+// v2 spends 4 shared-memory table loads per lane, row and group; with 2 shuffles that is 6 MIO-pipe instructions per
+// 28 weight bytes, which caps it near 100 GB/s on sm_61. The PTQ1_0 bytes are the TQ1_0 base-3 packing
+// b = ceil(c * 256 / 243), so digit i (most significant first) of every valid byte is ((b * 3^i) mod 256) * 3 >> 8
+// (checked for all 256 bytes against kPtq1Code). Two bytes are decoded per 16-bit half of a word with one XMAD pair.
+// The dot product uses the digits 0..2 directly: sum((digit - 1) * a) = dp4a(digits, a) - dp4a(0x01010101, a), and the
+// activation sum is computed once per token and group and shared by the R rows. The integer dot is the same as v2's,
+// and the FP32 operations and their order are unchanged, so the output is bit-identical to the reference kernel on every
+// canonical weight buffer (ternary_ptq1_canonicalize: invalid bytes, which no released file contains, are rewritten to
+// the byte the tables decode them as).
+template <int TT, int R>
+__global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_v3(const uint8_t * __restrict__ W, int64_t in, int64_t out,
+                                                                 const int8_t * __restrict__ qx, const float * __restrict__ dx,
+                                                                 int T, float * __restrict__ y) {
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    const bool tail = lane >= 30;
+    const int widx = lane < 20 ? (lane & 3) : (!tail ? 4 + ((lane - 20) & 1) : 6);
+    const int dig = lane < 20 ? (lane >> 2) : (!tail ? ((lane - 20) >> 1) : 2 * (lane - 30));
+    const int ld_g = lane / 7, ld_w = lane % 7;
+    // Positions (0, 1) and (2, 3) of the lane: normal lanes read payload bytes (0, 1) and (2, 3) of their word, all at
+    // digit `dig`; tail lanes read (b24, b25) of word 6 twice, at digit dig for positions 0, 1 and dig + 1 for 2, 3.
+    const uint32_t sel_hi = tail ? 0x4140u : 0x4342u;
+    const uint32_t p3[5] = {1u, 3u, 9u, 27u, 81u};
+    const uint32_t plo = p3[dig], phi = tail ? p3[dig + 1] : plo;
+    const int ngroups = static_cast<int>(in / 128), nb32 = static_cast<int>(in / 32), in32 = static_cast<int>(in);
+    const int8_t * qx0 = qx + lane * 4;
+    const float * dx0 = dx + (lane >> 3);
+    const int64_t step = static_cast<int64_t>(gridDim.x) * PW * R;
+    for (int64_t ob = static_cast<int64_t>(blockIdx.x) * PW * R + warp; ob < out; ob += step) {
+        int64_t o[R];
+        bool live[R];
+        const uint32_t * row[R];
+#pragma unroll
+        for (int r = 0; r < R; ++r) {
+            o[r] = ob + r * PW;
+            live[r] = o[r] < out;
+            row[r] = reinterpret_cast<const uint32_t *>(W + (live[r] ? o[r] : ob) * ngroups * ternary::kPtqGroupBytes);
+        }
+        float acc[R][TT];
+        uint32_t nxt[R];
+#pragma unroll
+        for (int r = 0; r < R; ++r) {
+#pragma unroll
+            for (int t = 0; t < TT; ++t) acc[r][t] = 0.0f;
+            nxt[r] = lane < 7 * KG ? __ldg(row[r] + ld_g * 7 + ld_w) : 0u;
+        }
+        for (int g0 = 0; g0 < ngroups; g0 += KG) {
+            uint32_t cur[R];
+            float dsc[R];   // the fp16 group scale of word 6, converted once per load step by the lane that holds it
+#pragma unroll
+            for (int r = 0; r < R; ++r) {
+                cur[r] = nxt[r];
+                dsc[r] = f16_cvt(cur[r] >> 16);
+                if (g0 + KG < ngroups && lane < 7 * KG) nxt[r] = __ldg(row[r] + (g0 + KG + ld_g) * 7 + ld_w);
+            }
+#pragma unroll
+            for (int k = 0; k < KG; ++k) {
+                const int g = g0 + k;
+                int a4[TT], mz[TT];
+                float dxv[TT];
+#pragma unroll
+                for (int t = 0; t < TT; ++t) {
+                    const int tt = t < T ? t : 0;   // T == TT at dispatch; guard anyway
+                    a4[t] = static_cast<int>(__ldg(reinterpret_cast<const uint32_t *>(qx0 + tt * in32 + g * 128)));
+                    dxv[t] = __ldg(dx0 + tt * nb32 + g * 4);
+                    mz[t] = 0x4B400000 - __dp4a(0x01010101, a4[t], 0);   // magic float base minus the activation sum
+                }
+#pragma unroll
+                for (int r = 0; r < R; ++r) {
+                    const uint32_t raw = __shfl_sync(0xffffffffu, cur[r], k * 7 + widx);
+                    const float d = __shfl_sync(0xffffffffu, dsc[r], k * 7 + 6);
+                    const int dg = static_cast<int>(ptq1_digits(raw, sel_hi, plo, phi));
+#pragma unroll
+                    for (int t = 0; t < TT; ++t)
+                        acc[r][t] += d * dxv[t] * (__int_as_float(__dp4a(dg, a4[t], mz[t])) - 12582912.0f);
+                }
+            }
+        }
+#pragma unroll
+        for (int r = 0; r < R; ++r) {
+#pragma unroll
+            for (int t = 0; t < TT; ++t) {
+                float v = acc[r][t];
+#pragma unroll
+                for (int off = 16; off > 0; off >>= 1) v += __shfl_xor_sync(0xffffffffu, v, off);
+                if (lane == 0 && live[r] && t < T) y[static_cast<int64_t>(t) * out + o[r]] = v;
+            }
+        }
+    }
+}
+
+// Rewrites the bytes that the digit tables decode as all zeros but the arithmetic decode would not: invalid 5-digit
+// bytes (kPtq1Code 255) at payload positions 0..23, and at positions 24/25 every byte whose code is invalid or not a
+// multiple of 3 (the 4-digit tail table). Byte 0 decodes to all-zero digits in every kernel, so all decoders agree on
+// the result. Counts the rewritten bytes (0 on every released file).
+__global__ void ptq1_canonicalize_kernel(uint8_t * __restrict__ W, int64_t n_groups, unsigned long long * __restrict__ changed) {
+    const int64_t i = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= n_groups * 26) return;
+    const int64_t g = i / 26;
+    const int j = static_cast<int>(i % 26);
+    uint8_t * p = W + g * ternary::kPtqGroupBytes + j;
+    const int b = *p;
+    const bool bad = (c_ptq1_bad[b] >> (j < 24 ? 0 : 1)) & 1;
+    if (bad && b != 0) {
+        *p = 0;
+        atomicAdd(changed, 1ull);
     }
 }
 
@@ -691,7 +818,30 @@ cudaError_t launch_ptq1_v2(const uint8_t * W, int64_t in, int64_t out, const Act
     return cudaGetLastError();
 }
 
+template <int TT, int R>
+cudaError_t launch_ptq1_v3(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+    static int n_sm = 0;
+    if (!n_sm) { cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, 0); if (n_sm < 1) n_sm = 19; }
+    static int bps = -1;   // persistent blocks per SM: one full wave at the occupancy of this instance (QWEN_PTQ1_BPS3 overrides)
+    if (bps < 0) {
+        const char * e = std::getenv("QWEN_PTQ1_BPS3");
+        if (e) bps = std::atoi(e);
+        else if (cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, gemv_ptq1_0_kernel_v3<TT, R>, PW * 32, 0) != cudaSuccess || bps < 1) bps = 4;
+    }
+    const int64_t rows = (out + PW * R - 1) / (PW * R), cap = static_cast<int64_t>(n_sm) * bps;
+    gemv_ptq1_0_kernel_v3<TT, R><<<dim3(static_cast<unsigned>(rows < cap ? rows : cap)), PW * 32, 0, s>>>(W, in, out, a.qx, a.dx, static_cast<int>(T), y);
+    return cudaGetLastError();
+}
+
 }  // namespace
+
+cudaError_t ternary_ptq1_canonicalize(uint8_t * W, int64_t n_groups, unsigned long long * d_changed, cudaStream_t s) {
+    ternary_ptq1_init();
+    const int64_t n = n_groups * 26;
+    if (n <= 0) return cudaSuccess;
+    ptq1_canonicalize_kernel<<<static_cast<unsigned>((n + 255) / 256), 256, 0, s>>>(W, n_groups, d_changed);
+    return cudaGetLastError();
+}
 
 cudaError_t ternary_rotate(const float * x, const float * signs, float * y, int width, int T, cudaStream_t s) {
     if (width % 1024 != 0 || T < 1) return cudaErrorInvalidValue;
@@ -753,6 +903,45 @@ cudaError_t ptq1_prefill_dispatch(const uint8_t * W, int64_t in, int64_t out, co
 cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
     if (in % (128 * KG) != 0) return cudaErrorInvalidValue;
     ternary_ptq1_init();
+    static int dec = -1;   // decode kernel for T <= 5 (QWEN_PTQ1_DEC): 2 = v2 (digit tables), 3 = v3 (arithmetic decode)
+    if (dec < 0) { const char * e = std::getenv("QWEN_PTQ1_DEC"); dec = e ? std::atoi(e) : 3; }
+    if (dec == 3 && T <= 5) {
+        static int r3 = -1;   // rows per warp of the v3 decode kernel at T = 1 (QWEN_PTQ1_R3, tuning)
+        if (r3 < 0) { const char * e = std::getenv("QWEN_PTQ1_R3"); r3 = e ? std::atoi(e) : 4; }
+        if (T <= 1) {
+            if (r3 == 2) return launch_ptq1_v3<1, 2>(W, in, out, a, T, y, s);
+            if (r3 == 3) return launch_ptq1_v3<1, 3>(W, in, out, a, T, y, s);
+            if (r3 == 6) return launch_ptq1_v3<1, 6>(W, in, out, a, T, y, s);
+            return launch_ptq1_v3<1, 4>(W, in, out, a, T, y, s);
+        }
+        // rows per warp of the v3 kernel at T = 2..5. Default (0): the fastest per T in tests/cuda/ternary_bench.cu
+        // (ffn_up / ffn_down / lm_head): R = 3 at T = 2 and 5, R = 4 at T = 3 and 4. QWEN_PTQ1_RV = 1..4 forces one R.
+        static int rv_env = -1;
+        if (rv_env < 0) { const char * e = std::getenv("QWEN_PTQ1_RV"); rv_env = e ? std::atoi(e) : 0; }
+        const int rv = rv_env ? rv_env : (T == 3 || T == 4 ? 4 : 3);
+        if (rv == 1) {
+            if (T == 2) return launch_ptq1_v3<2, 1>(W, in, out, a, T, y, s);
+            if (T == 3) return launch_ptq1_v3<3, 1>(W, in, out, a, T, y, s);
+            if (T == 4) return launch_ptq1_v3<4, 1>(W, in, out, a, T, y, s);
+            return launch_ptq1_v3<5, 1>(W, in, out, a, T, y, s);
+        }
+        if (rv == 4) {
+            if (T == 2) return launch_ptq1_v3<2, 4>(W, in, out, a, T, y, s);
+            if (T == 3) return launch_ptq1_v3<3, 4>(W, in, out, a, T, y, s);
+            if (T == 4) return launch_ptq1_v3<4, 4>(W, in, out, a, T, y, s);
+            return launch_ptq1_v3<5, 4>(W, in, out, a, T, y, s);
+        }
+        if (rv == 3) {
+            if (T == 2) return launch_ptq1_v3<2, 3>(W, in, out, a, T, y, s);
+            if (T == 3) return launch_ptq1_v3<3, 3>(W, in, out, a, T, y, s);
+            if (T == 4) return launch_ptq1_v3<4, 3>(W, in, out, a, T, y, s);
+            return launch_ptq1_v3<5, 3>(W, in, out, a, T, y, s);
+        }
+        if (T == 2) return launch_ptq1_v3<2, 2>(W, in, out, a, T, y, s);
+        if (T == 3) return launch_ptq1_v3<3, 2>(W, in, out, a, T, y, s);
+        if (T == 4) return launch_ptq1_v3<4, 2>(W, in, out, a, T, y, s);
+        return launch_ptq1_v3<5, 2>(W, in, out, a, T, y, s);
+    }
     if (T <= 1) {
         static int r1 = -1;   // rows per warp of the decode kernel (QWEN_PTQ1_R1, tuning)
         if (r1 < 0) { const char * e = std::getenv("QWEN_PTQ1_R1"); r1 = e ? std::atoi(e) : 4; }
@@ -783,6 +972,12 @@ void ternary_ptq1_init() {
     }
     cudaMemcpyToSymbol(c_ptq1_digits5, d5, sizeof(d5));
     cudaMemcpyToSymbol(c_ptq1_digits4, d4, sizeof(d4));
+    uint8_t bad[256];
+    for (int b = 0; b < 256; ++b) {
+        const int c = ternary::kPtq1Code[b];
+        bad[b] = static_cast<uint8_t>((c == 255 ? 1 : 0) | ((c == 255 || c % 3 != 0) ? 2 : 0));
+    }
+    cudaMemcpyToSymbol(c_ptq1_bad, bad, sizeof(bad));
     done = true;
 }
 
