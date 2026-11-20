@@ -1,0 +1,2 @@
+{"state_save":"/tmp/b10h_states/coding_32768_none.state","tokens":32759,"reused_tokens":0,"state_mib":549.5,"prefill_s":599.22,"prefill_tok_s":54.669,"save_s":1.39,"load_s":38.16,"state_load_s":0.00,"ctx":33280,"gpu_layers":64,"vram_used_mib":6346.2,"peak_rss_kb":613796}
+{"tag":"st_32768_coding_none_prefill","rc":0,"wall_s":639,"peak_vram_mib":6347,"vram_cap_ok":true,"max_rss_kb":613796}

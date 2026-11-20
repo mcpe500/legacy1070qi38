@@ -1,0 +1,133 @@
+[suite_512_none] ready in 39.1 s
+[suite_512_none] coding     m0     tg  13.26 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_none] chat_en    m0     tg  13.13 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_none] chat_id    m0     tg  12.50 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_none] repetitive m0     tg  12.26 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_none] peak VRAM 6045 MiB (cap 7373): OK
+[suite_512_donor] ready in 39.1 s
+[suite_512_donor] coding     m0     tg  13.16 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_donor] coding     m1     tg  16.41 tok/s  accept  84.8%  n 256  pld_hits 0
+[suite_512_donor] coding     m2     tg  15.73 tok/s  accept  75.5%  n 256  pld_hits 0
+[suite_512_donor] coding     m3     tg  14.08 tok/s  accept  65.9%  n 256  pld_hits 0
+[suite_512_donor] coding     ad     tg  15.51 tok/s  accept  85.1%  n 256  pld_hits 0
+[suite_512_donor] coding     pld2   tg  13.75 tok/s  accept  59.4%  n 256  pld_hits 11
+[suite_512_donor] coding     pldad  tg  13.72 tok/s  accept  64.8%  n 256  pld_hits 13
+[suite_512_donor] chat_en    m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_donor] chat_en    m1     tg  13.46 tok/s  accept  56.1%  n 256  pld_hits 0
+[suite_512_donor] chat_en    m2     tg  11.16 tok/s  accept  40.4%  n 256  pld_hits 0
+[suite_512_donor] chat_en    m3     tg   9.06 tok/s  accept  31.3%  n 256  pld_hits 0
+[suite_512_donor] chat_en    ad     tg  12.96 tok/s  accept  67.7%  n 256  pld_hits 0
+[suite_512_donor] chat_en    pld2   tg  10.66 tok/s  accept  36.2%  n 256  pld_hits 7
+[suite_512_donor] chat_en    pldad  tg  11.48 tok/s  accept  44.3%  n 256  pld_hits 16
+[suite_512_donor] chat_id    m0     tg   8.57 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_donor] chat_id    m1     tg   7.40 tok/s  accept  68.9%  n 256  pld_hits 0
+[suite_512_donor] chat_id    m2     tg   7.15 tok/s  accept  50.4%  n 256  pld_hits 0
+[suite_512_donor] chat_id    m3     tg  10.97 tok/s  accept  43.9%  n 256  pld_hits 0
+[suite_512_donor] chat_id    ad     tg  14.14 tok/s  accept  91.4%  n 256  pld_hits 0
+[suite_512_donor] chat_id    pld2   tg  11.63 tok/s  accept  43.7%  n 256  pld_hits 13
+[suite_512_donor] chat_id    pldad  tg  13.09 tok/s  accept  66.9%  n 256  pld_hits 14
+[suite_512_donor] repetitive m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_donor] repetitive m1     tg  17.09 tok/s  accept  96.2%  n 256  pld_hits 0
+[suite_512_donor] repetitive m2     tg  17.98 tok/s  accept  94.9%  n 256  pld_hits 0
+[suite_512_donor] repetitive m3     tg  17.38 tok/s  accept  91.7%  n 256  pld_hits 0
+[suite_512_donor] repetitive ad     tg  17.54 tok/s  accept  97.0%  n 256  pld_hits 0
+[suite_512_donor] repetitive pld2   tg  16.85 tok/s  accept  83.3%  n 256  pld_hits 9
+[suite_512_donor] repetitive pldad  tg  16.30 tok/s  accept  85.1%  n 256  pld_hits 7
+[suite_512_donor] peak VRAM 7115 MiB (cap 7373): OK
+[suite_512_q4km] ready in 39.1 s
+[suite_512_q4km] coding     m0     tg  13.07 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_q4km] coding     m1     tg  16.46 tok/s  accept  87.5%  n 256  pld_hits 0
+[suite_512_q4km] coding     m2     tg  16.40 tok/s  accept  82.5%  n 256  pld_hits 0
+[suite_512_q4km] coding     m3     tg  15.03 tok/s  accept  72.9%  n 256  pld_hits 0
+[suite_512_q4km] coding     ad     tg  16.22 tok/s  accept  90.1%  n 256  pld_hits 0
+[suite_512_q4km] coding     pld2   tg  15.30 tok/s  accept  72.0%  n 256  pld_hits 9
+[suite_512_q4km] coding     pldad  tg  15.09 tok/s  accept  77.1%  n 256  pld_hits 8
+[suite_512_q4km] chat_en    m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_q4km] chat_en    m1     tg  14.42 tok/s  accept  66.2%  n 256  pld_hits 0
+[suite_512_q4km] chat_en    m2     tg  12.84 tok/s  accept  53.6%  n 256  pld_hits 0
+[suite_512_q4km] chat_en    m3     tg  10.18 tok/s  accept  39.5%  n 256  pld_hits 0
+[suite_512_q4km] chat_en    ad     tg  13.82 tok/s  accept  76.7%  n 256  pld_hits 0
+[suite_512_q4km] chat_en    pld2   tg  12.51 tok/s  accept  50.8%  n 256  pld_hits 3
+[suite_512_q4km] chat_en    pldad  tg  12.46 tok/s  accept  54.0%  n 256  pld_hits 13
+[suite_512_q4km] chat_id    m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_q4km] chat_id    m1     tg  15.00 tok/s  accept  72.3%  n 256  pld_hits 0
+[suite_512_q4km] chat_id    m2     tg  13.04 tok/s  accept  54.5%  n 256  pld_hits 0
+[suite_512_q4km] chat_id    m3     tg  11.50 tok/s  accept  48.4%  n 256  pld_hits 0
+[suite_512_q4km] chat_id    ad     tg  14.53 tok/s  accept  89.6%  n 256  pld_hits 0
+[suite_512_q4km] chat_id    pld2   tg  11.99 tok/s  accept  45.7%  n 256  pld_hits 15
+[suite_512_q4km] chat_id    pldad  tg  13.32 tok/s  accept  66.3%  n 256  pld_hits 13
+[suite_512_q4km] repetitive m0     tg  12.18 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_q4km] repetitive m1     tg  17.25 tok/s  accept  98.4%  n 256  pld_hits 0
+[suite_512_q4km] repetitive m2     tg  18.26 tok/s  accept  97.7%  n 256  pld_hits 0
+[suite_512_q4km] repetitive m3     tg  17.77 tok/s  accept  94.0%  n 256  pld_hits 0
+[suite_512_q4km] repetitive ad     tg  17.69 tok/s  accept  97.5%  n 256  pld_hits 0
+[suite_512_q4km] repetitive pld2   tg  17.16 tok/s  accept  85.2%  n 256  pld_hits 10
+[suite_512_q4km] repetitive pldad  tg  17.41 tok/s  accept  92.3%  n 256  pld_hits 7
+[suite_512_q4km] peak VRAM 6545 MiB (cap 7373): OK
+[suite_512_q8] ready in 40.1 s
+[suite_512_q8] coding     m0     tg  12.89 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_q8] coding     m1     tg  15.12 tok/s  accept  87.5%  n 256  pld_hits 0
+[suite_512_q8] coding     m2     tg  15.37 tok/s  accept  81.1%  n 256  pld_hits 0
+[suite_512_q8] coding     m3     tg  14.33 tok/s  accept  74.3%  n 256  pld_hits 0
+[suite_512_q8] coding     ad     tg  15.18 tok/s  accept  90.8%  n 256  pld_hits 0
+[suite_512_q8] coding     pld2   tg  14.05 tok/s  accept  70.5%  n 256  pld_hits 8
+[suite_512_q8] coding     pldad  tg  13.83 tok/s  accept  74.1%  n 256  pld_hits 10
+[suite_512_q8] chat_en    m0     tg  12.09 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_q8] chat_en    m1     tg  13.04 tok/s  accept  60.0%  n 256  pld_hits 0
+[suite_512_q8] chat_en    m2     tg  11.47 tok/s  accept  46.6%  n 256  pld_hits 0
+[suite_512_q8] chat_en    m3     tg   9.25 tok/s  accept  35.5%  n 256  pld_hits 0
+[suite_512_q8] chat_en    ad     tg  12.84 tok/s  accept  77.6%  n 256  pld_hits 0
+[suite_512_q8] chat_en    pld2   tg  10.92 tok/s  accept  43.2%  n 256  pld_hits 4
+[suite_512_q8] chat_en    pldad  tg  11.64 tok/s  accept  53.8%  n 256  pld_hits 13
+[suite_512_q8] chat_id    m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_q8] chat_id    m1     tg  14.02 tok/s  accept  72.3%  n 256  pld_hits 0
+[suite_512_q8] chat_id    m2     tg  11.93 tok/s  accept  52.0%  n 256  pld_hits 0
+[suite_512_q8] chat_id    m3     tg  10.53 tok/s  accept  46.1%  n 256  pld_hits 0
+[suite_512_q8] chat_id    ad     tg  13.36 tok/s  accept  87.9%  n 256  pld_hits 0
+[suite_512_q8] chat_id    pld2   tg  11.01 tok/s  accept  43.1%  n 256  pld_hits 15
+[suite_512_q8] chat_id    pldad  tg  12.23 tok/s  accept  61.6%  n 256  pld_hits 17
+[suite_512_q8] repetitive m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_q8] repetitive m1     tg  15.96 tok/s  accept  98.4%  n 256  pld_hits 0
+[suite_512_q8] repetitive m2     tg  16.68 tok/s  accept  97.7%  n 256  pld_hits 0
+[suite_512_q8] repetitive m3     tg  16.19 tok/s  accept  93.5%  n 256  pld_hits 0
+[suite_512_q8] repetitive ad     tg  17.61 tok/s  accept  97.5%  n 256  pld_hits 0
+[suite_512_q8] repetitive pld2   tg  17.16 tok/s  accept  87.0%  n 256  pld_hits 8
+[suite_512_q8] repetitive pldad  tg  17.51 tok/s  accept  95.6%  n 256  pld_hits 4
+[suite_512_q8] peak VRAM 7855 MiB (cap 7373): OVER
+[suite_4096_none] ready in 39.1 s
+[suite_4096_none] coding     m0     tg  11.77 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_4096_none] chat_en    m0     tg  11.51 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_4096_none] chat_id    m0     tg  11.45 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_4096_none] repetitive m0     tg  11.49 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_4096_none] peak VRAM 7187 MiB (cap 7373): OK
+[suite_4096_q4km] ready in 39.1 s
+[suite_4096_q4km] coding     m2     tg  15.29 tok/s  accept  82.5%  n 256  pld_hits 0
+[suite_4096_q4km] coding     ad     tg  15.76 tok/s  accept  93.8%  n 256  pld_hits 0
+[suite_4096_q4km] coding     pldad  tg  15.17 tok/s  accept  85.9%  n 256  pld_hits 6
+[suite_4096_q4km] chat_en    m2     tg  13.00 tok/s  accept  61.8%  n 256  pld_hits 0
+[suite_4096_q4km] chat_en    ad     tg  13.37 tok/s  accept  80.3%  n 256  pld_hits 0
+[suite_4096_q4km] chat_en    pldad  tg  12.69 tok/s  accept  68.5%  n 256  pld_hits 6
+[suite_4096_q4km] chat_id    m2     tg  12.52 tok/s  accept  58.9%  n 256  pld_hits 0
+[suite_4096_q4km] chat_id    ad     tg  13.78 tok/s  accept  88.5%  n 256  pld_hits 0
+[suite_4096_q4km] chat_id    pldad  tg  13.48 tok/s  accept  82.8%  n 256  pld_hits 3
+[suite_4096_q4km] repetitive m2     tg  16.71 tok/s  accept  94.9%  n 256  pld_hits 0
+[suite_4096_q4km] repetitive ad     tg  16.20 tok/s  accept  96.0%  n 256  pld_hits 0
+[suite_4096_q4km] repetitive pldad  tg  15.42 tok/s  accept  88.8%  n 256  pld_hits 4
+[suite_4096_q4km] peak VRAM 6545 MiB (cap 7373): OK
+[suite_4096_donor] ready in 39.1 s
+[suite_4096_donor] coding     m2     tg  14.05 tok/s  accept  73.1%  n 256  pld_hits 0
+[suite_4096_donor] coding     ad     tg  14.58 tok/s  accept  86.5%  n 256  pld_hits 0
+[suite_4096_donor] chat_en    m2     tg  11.82 tok/s  accept  52.8%  n 256  pld_hits 0
+[suite_4096_donor] chat_en    ad     tg  12.92 tok/s  accept  76.5%  n 256  pld_hits 0
+[suite_4096_donor] chat_id    m2     tg  11.95 tok/s  accept  54.9%  n 256  pld_hits 0
+[suite_4096_donor] chat_id    ad     tg  13.50 tok/s  accept  89.4%  n 256  pld_hits 0
+[suite_4096_donor] repetitive m2     tg  16.43 tok/s  accept  93.3%  n 256  pld_hits 0
+[suite_4096_donor] repetitive ad     tg  15.54 tok/s  accept  92.1%  n 256  pld_hits 0
+[suite_4096_donor] peak VRAM 6599 MiB (cap 7373): OK
+[suite_4096_q8] ready in 39.1 s
+[suite_4096_q8] coding     m2     tg  13.96 tok/s  accept  81.1%  n 256  pld_hits 0
+[suite_4096_q8] chat_en    m2     tg  12.36 tok/s  accept  63.8%  n 256  pld_hits 0
+[suite_4096_q8] chat_id    m2     tg  11.77 tok/s  accept  58.9%  n 256  pld_hits 0
+[suite_4096_q8] repetitive m2     tg  15.57 tok/s  accept  96.6%  n 256  pld_hits 0
+[suite_4096_q8] peak VRAM 6657 MiB (cap 7373): OK
+QUEUE_DONE

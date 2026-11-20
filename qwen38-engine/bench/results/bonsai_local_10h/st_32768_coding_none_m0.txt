@@ -1,0 +1,40 @@
+
+prompt: <|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+
+generated: ```cpp
+// (1) C++17 RingBuffer<T> with a tiny test in main
+#include <cstddef>
+#include <iostream>
+#include <vector>
+#include <stdexcept>
+
+template <typename T>
+class RingBuffer {
+public:
+    explicit RingBuffer(std::size_t capacity)
+        : capacity_(capacity), data_(capacity), head_(0), tail_(0), size_(0) {
+        if (capacity == 0) throw std::invalid_argument("RingBuffer capacity must be > 0");
+    }
+
+    void push(const T& value) {
+        if (size_ == capacity_) {
+            // Full: overwrite the oldest element (tail advances)
+            data_[tail_] = value;
+            tail_ = (tail_ + 1) % capacity_;
+        } else {
+            data_[(tail_ + size_) % capacity_] = value;
+            ++size_;
+        }
+    }
+
+    T pop() {
+        if (size_ == 0) throw std::runtime_error("RingBuffer pop from empty buffer");
+        T val = data_[head_];
+        head_ = (head_ + 
+{"prompt_tokens":32768,"generated_tokens":256,"ids":[71093,10504,198,320,318,16,8,351,992,16,22,20865,3959,3025,29,440,264,13280,1228,303,1822,198,1032,361,66,64157,29,198,1032,361,9377,29,198,1032,361,3112,29,198,1032,361,91247,29,271,4075,361,8759,345,29,198,1005,20865,3959,313,198,860,25,198,262,11135,20865,3959,5029,476,2073,516,8390,8,198,285,535,8390,8102,36151,681,795,8102,36151,681,1901,8102,15,681,9495,8102,15,681,1331,8102,15,8,313,198,285,413,318,36151,606,220,15,8,2430,1407,476,11469,8753,437,42029,3959,8390,1902,381,835,220,15,4876,198,262,333,271,262,715,4336,2654,345,5,869,8,313,198,285,413,318,2073,62,606,8390,15845,313,198,309,434,8363,25,31153,279,22778,2315,318,14166,28926,8,198,309,795,11544,14166,72280,283,869,26,198,309,9495,62,283,318,14166,62,478,220,16,8,984,8390,22458,198,285,333,745,313,198,309,795,62,9409,14166,62,478,1331,15845,984,8390,72280,283,869,26,198,309,3333,2073,22458,198,285,333,198,262,333,271,262,345,2341,363,313,198,285,413,318,2073,62,606,220,15,8,2430,1407,476,21564,3960,437,42029,3959,2341,494,4147,4011,4876,198,285,345,1009,283,795,11544,1916,62,5098,198,285,1901,62,283,318,1916,62,478,220],"text":"```cpp\n// (1) C++17 RingBuffer<T> with a tiny test in main\n#include <cstddef>\n#include <iostream>\n#include <vector>\n#include <stdexcept>\n\ntemplate <typename T>\nclass RingBuffer {\npublic:\n    explicit RingBuffer(std::size_t capacity)\n        : capacity_(capacity), data_(capacity), head_(0), tail_(0), size_(0) {\n        if (capacity == 0) throw std::invalid_argument(\"RingBuffer capacity must be > 0\");\n    }\n\n    void push(const T& value) {\n        if (size_ == capacity_) {\n            // Full: overwrite the oldest element (tail advances)\n            data_[tail_] = value;\n            tail_ = (tail_ + 1) % capacity_;\n        } else {\n            data_[(tail_ + size_) % capacity_] = value;\n            ++size_;\n        }\n    }\n\n    T pop() {\n        if (size_ == 0) throw std::runtime_error(\"RingBuffer pop from empty buffer\");\n        T val = data_[head_];\n        head_ = (head_ + ","load_s":42.46,"prefill_s":0.32,"prefill_tok_s":27.901,"decode_s":23.74,"decode_tok_s":10.7832,"heap_allocs_in_decode_forward":0,"peak_rss_kb":563524,"rss_anon_kb":136140,"rss_file_kb":395388,"swap_used_kb_before":362400,"swap_used_kb_after":362400,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":6232.9,"gpu_weights_mib":5395.4,"gpu_kv_mib":406.2,"vram_used_mib":6356.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":22.837,"decode_cpu_layers_s":0.000,"decode_head_s":0.858,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0],"mtp_adaptive":0,"mtp_prefill_s":0.000,"prefill_main_s":0.323,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"ttft_s":0.323,"finish":"length","temperature":0.000,"ctx":33280,"reused_tokens":32759,"state_load_s":0.859}
+{"tag":"st_32768_coding_none_m0","rc":0,"wall_s":68,"peak_vram_mib":6357,"vram_cap_ok":true,"max_rss_kb":563524}

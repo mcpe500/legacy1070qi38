@@ -1,0 +1,2 @@
+{"state_save":"/tmp/b10h_states/repetitive_32768_none.state","tokens":32759,"reused_tokens":0,"state_mib":549.5,"prefill_s":605.06,"prefill_tok_s":54.142,"save_s":1.39,"load_s":38.44,"state_load_s":0.00,"ctx":33280,"gpu_layers":64,"vram_used_mib":6346.2,"peak_rss_kb":610808}
+{"tag":"st_32768_repetitive_none_prefill","rc":0,"wall_s":646,"peak_vram_mib":6347,"vram_cap_ok":true,"max_rss_kb":610808}

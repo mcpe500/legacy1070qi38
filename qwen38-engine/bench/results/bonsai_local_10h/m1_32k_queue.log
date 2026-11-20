@@ -1,0 +1,15 @@
+[st_32768_coding_none_prefill] rc 0 tokens 32759 prefill 599.22 s (54.669 tok/s) state 549.5 MiB, peak VRAM 6347
+[st_32768_coding_none_m0] rc 0 decode 10.7832 tok/s accept 0/0 pld_hits 0 state_load 0.859 s, peak VRAM 6357
+[st_32768_repetitive_none_prefill] rc 0 tokens 32759 prefill 605.06 s (54.142 tok/s) state 549.5 MiB, peak VRAM 6347
+[st_32768_repetitive_none_m0] rc 0 decode 10.7446 tok/s accept 0/0 pld_hits 0 state_load 0.856 s, peak VRAM 6357
+[st_32768_coding_q4km_prefill] rc 0 tokens 32759 prefill 646.87 s (50.643 tok/s) state 574.5 MiB, peak VRAM 6819
+[st_32768_coding_q4km_m0] rc 0 decode 10.7646 tok/s accept 0/0 pld_hits 0 state_load 0.897 s, peak VRAM 6829
+[st_32768_coding_q4km_m2] rc 0 decode 12.2431 tok/s accept 154/204 pld_hits 0 state_load 0.928 s, peak VRAM 6831
+[st_32768_coding_q4km_ad] rc 0 decode 13.1258 tok/s accept 162/186 pld_hits 0 state_load 0.894 s, peak VRAM 6877
+[st_32768_coding_q4km_pldad] rc 0 decode 12.3329 tok/s accept 156/210 pld_hits 10 state_load 0.893 s, peak VRAM 6877
+[st_32768_repetitive_q4km_prefill] rc 0 tokens 32759 prefill 646.3 s (50.687 tok/s) state 574.5 MiB, peak VRAM 6819
+[st_32768_repetitive_q4km_m0] rc 0 decode 10.7629 tok/s accept 0/0 pld_hits 0 state_load 0.894 s, peak VRAM 6829
+[st_32768_repetitive_q4km_m2] rc 0 decode 14.3603 tok/s accept 170/174 pld_hits 0 state_load 0.929 s, peak VRAM 6831
+[st_32768_repetitive_q4km_ad] rc 0 decode 15.4181 tok/s accept 197/200 pld_hits 0 state_load 0.894 s, peak VRAM 6877
+[st_32768_repetitive_q4km_pldad] rc 0 decode 14.1328 tok/s accept 192/225 pld_hits 6 state_load 0.893 s, peak VRAM 6877
+QUEUE_DONE
