@@ -427,7 +427,34 @@ def build_tokenizer(conv, out, source):
     return f"built from the GGUF vocabulary ({len(tokens)} tokens, {len(merges)} merges, {len(special)} special)"
 
 
+def complete_output(a):
+    """True when OUT already holds a finished conversion of the same GGUF with the same options (conversion.json is
+    written last, and every shard of the index must exist with the recorded total size)."""
+    cj, ij = os.path.join(a.out, "conversion.json"), os.path.join(a.out, "model.safetensors.index.json")
+    if not (os.path.exists(cj) and os.path.exists(ij)):
+        return False
+    try:
+        c, idx = json.load(open(cj)), json.load(open(ij))
+    except (OSError, json.JSONDecodeError):
+        return False
+    want = {"source": os.path.basename(a.gguf), "dtype": "bfloat16" if a.dtype == "bf16" else "float32"}
+    if any(c.get(k) != v for k, v in want.items()) or (a.layers and c.get("layers") != a.layers):
+        return False
+    if a.vocab_limit and c.get("vocab") != a.vocab_limit:
+        return False
+    files = set(idx["weight_map"].values())
+    if not all(os.path.exists(os.path.join(a.out, f)) for f in files):
+        return False
+    return sum(os.path.getsize(os.path.join(a.out, f)) for f in files) == idx["metadata"]["total_size"]
+
+
 def convert(a):
+    if not a.force and complete_output(a):
+        print(f"{a.out}: complete conversion of {os.path.basename(a.gguf)} already present, skipping (--force to redo)")
+        return
+    for f in os.listdir(a.out) if os.path.isdir(a.out) else []:   # leftovers of an interrupted run
+        if f.endswith((".part", ".tmp")) or f.startswith("model-"):
+            os.remove(os.path.join(a.out, f))
     conv = Converter(a.gguf)
     n_layers = min(a.layers or conv.n_layer, conv.n_layer)
     if conv.n_layer == 65 and not a.layers:
@@ -576,6 +603,7 @@ def main():
     ap.add_argument("--shard-gib", type=float, default=2.0, help="shard size; also the RAM held before a shard is written")
     ap.add_argument("--tokenizer-from", help="HF repo or directory to copy the tokenizer from (default: build from the GGUF)")
     ap.add_argument("--no-tokenizer", action="store_true")
+    ap.add_argument("--force", action="store_true", help="convert again even when OUT holds a complete conversion")
     ap.add_argument("--check", action="store_true", help="numeric checks of the inverse transform on real tensors")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()

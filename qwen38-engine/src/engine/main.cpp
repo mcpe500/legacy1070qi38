@@ -107,6 +107,7 @@ int main(int argc, char ** argv) {
     gp.sp.seed = 42;
     std::string prompt = "The capital of France is", parity_dir, tok_file, state_save, state_load, state_test, cont_file;
     int depth_bench = 0;
+    int gen_mtp_steps = -1;
     int n_predict = 16;
     bool parse_special = false, rollback_test = false, serve = false;
     ServerOptions sopt;
@@ -117,6 +118,7 @@ int main(int argc, char ** argv) {
             return argv[++i];
         };
         if (a == "-m") cfg.gguf = next();
+        else if (a == "--mtp-gguf") cfg.mtp_gguf = next();   // blk.64-only sidecar (inject_mtp_gguf.py --mtp-only-out)
         else if (a == "-p") prompt = next();
         else if (a == "-f" || a == "--prompt-file") {
             const std::string pf = next();
@@ -152,6 +154,9 @@ int main(int argc, char ** argv) {
         else if (a == "--port") sopt.port = std::atoi(next().c_str());
         else if (a == "--host") sopt.host = next();
         else if (a == "--mtp-steps") cfg.mtp_steps = std::atoi(next().c_str());
+        else if (a == "--gen-mtp-steps") gen_mtp_steps = std::atoi(next().c_str());   // drafts of this run (default --mtp-steps);
+                                                                                   // the engine keeps the MTP block, so a --state-load
+                                                                                   // file of an MTP engine can be decoded with 0
         else if (a == "--mtp-adaptive") gp.mtp_adaptive = std::atoi(next().c_str()) != 0;
         else if (a == "--mtp-p-keep") gp.mtp_p_keep = static_cast<float>(std::atof(next().c_str()));
         else if (a == "--mtp-p-cont") gp.mtp_p_cont = static_cast<float>(std::atof(next().c_str()));
@@ -171,7 +176,8 @@ int main(int argc, char ** argv) {
     }
     if (cfg.gguf.empty()) { std::fprintf(stderr, "usage: %s -m MODEL.gguf [-p prompt] [-n N] [--server --port 8080]\n", argv[0]); return 2; }
     if (cfg.mtp_steps < 0 || cfg.mtp_steps > 3) { std::fprintf(stderr, "--mtp-steps must be 0..3\n"); return 2; }
-    gp.mtp_steps = cfg.mtp_steps;
+    gp.mtp_steps = gen_mtp_steps >= 0 ? gen_mtp_steps : cfg.mtp_steps;
+    if (gp.mtp_steps > 3) { std::fprintf(stderr, "--gen-mtp-steps must be 0..3\n"); return 2; }
     gp.max_tokens = n_predict;
 
     try {
@@ -211,6 +217,11 @@ int main(int argc, char ** argv) {
 
         if (serve) {
             Generator gen(eng);
+            gen.set_pin_loaded(true);   // a --state-load document stays reusable for every request that extends it
+            sopt.state_save = state_save;
+            if (eng.ix.str_kv.count("general.name")) sopt.model_name = eng.ix.str_kv.at("general.name");
+            auto base = [](const std::string & p) { const size_t k = p.find_last_of('/'); return k == std::string::npos ? p : p.substr(k + 1); };
+            sopt.model_file = base(cfg.gguf) + (cfg.mtp_gguf.empty() ? "" : " + " + base(cfg.mtp_gguf));
             if (!state_load.empty()) {   // requests whose prompt extends the saved tokens skip their prefill
                 const auto t0 = Clock::now();
                 const size_t b = gen.load_state(state_load);

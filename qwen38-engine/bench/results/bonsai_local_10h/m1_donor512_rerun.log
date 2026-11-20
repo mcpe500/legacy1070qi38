@@ -1,0 +1,30 @@
+[suite_512_donor] ready in 39.1 s
+[suite_512_donor] coding     m0     tg  13.22 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_donor] coding     m1     tg  16.87 tok/s  accept  84.8%  n 256  pld_hits 0
+[suite_512_donor] coding     m2     tg  15.78 tok/s  accept  75.5%  n 256  pld_hits 0
+[suite_512_donor] coding     m3     tg  13.88 tok/s  accept  65.9%  n 256  pld_hits 0
+[suite_512_donor] coding     ad     tg  15.52 tok/s  accept  85.1%  n 256  pld_hits 0
+[suite_512_donor] coding     pld2   tg  13.67 tok/s  accept  59.4%  n 256  pld_hits 11
+[suite_512_donor] coding     pldad  tg  13.62 tok/s  accept  64.8%  n 256  pld_hits 13
+[suite_512_donor] chat_en    m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_donor] chat_en    m1     tg  13.47 tok/s  accept  56.1%  n 256  pld_hits 0
+[suite_512_donor] chat_en    m2     tg  11.18 tok/s  accept  40.4%  n 256  pld_hits 0
+[suite_512_donor] chat_en    m3     tg   8.98 tok/s  accept  31.3%  n 256  pld_hits 0
+[suite_512_donor] chat_en    ad     tg  12.95 tok/s  accept  67.7%  n 256  pld_hits 0
+[suite_512_donor] chat_en    pld2   tg  10.65 tok/s  accept  36.2%  n 256  pld_hits 7
+[suite_512_donor] chat_en    pldad  tg  11.47 tok/s  accept  44.3%  n 256  pld_hits 16
+[suite_512_donor] chat_id    m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_donor] chat_id    m1     tg  14.65 tok/s  accept  68.9%  n 256  pld_hits 0
+[suite_512_donor] chat_id    m2     tg  12.42 tok/s  accept  50.4%  n 256  pld_hits 0
+[suite_512_donor] chat_id    m3     tg  10.78 tok/s  accept  43.9%  n 256  pld_hits 0
+[suite_512_donor] chat_id    ad     tg  14.11 tok/s  accept  91.4%  n 256  pld_hits 0
+[suite_512_donor] chat_id    pld2   tg  11.63 tok/s  accept  43.7%  n 256  pld_hits 13
+[suite_512_donor] chat_id    pldad  tg  13.07 tok/s  accept  66.9%  n 256  pld_hits 14
+[suite_512_donor] repetitive m0     tg  12.19 tok/s  accept   0.0%  n 256  pld_hits 0
+[suite_512_donor] repetitive m1     tg  17.08 tok/s  accept  96.2%  n 256  pld_hits 0
+[suite_512_donor] repetitive m2     tg  17.97 tok/s  accept  94.9%  n 256  pld_hits 0
+[suite_512_donor] repetitive m3     tg  17.38 tok/s  accept  91.7%  n 256  pld_hits 0
+[suite_512_donor] repetitive ad     tg  17.42 tok/s  accept  97.0%  n 256  pld_hits 0
+[suite_512_donor] repetitive pld2   tg  16.83 tok/s  accept  83.3%  n 256  pld_hits 9
+[suite_512_donor] repetitive pldad  tg  16.20 tok/s  accept  85.1%  n 256  pld_hits 7
+[suite_512_donor] peak VRAM 6599 MiB (cap 7373): OK

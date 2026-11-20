@@ -93,7 +93,8 @@ int main() {
                     const uint16_t h = f16_bits(sc(rng));
                     blk[26] = h & 0xFF; blk[27] = h >> 8;
                 }
-            uint8_t *dq2, *dp1;
+            uint8_t *dq2, *dp1, *dp1c;
+            unsigned long long * dchg;
             float *o1, *o2;
             CK(cudaMalloc(&dq2, wq2.size()));
             CK(cudaMalloc(&dp1, wp1.size()));
@@ -101,6 +102,16 @@ int main() {
             CK(cudaMalloc(&o2, sizeof(float) * Tmax * out));
             CK(cudaMemcpy(dq2, wq2.data(), wq2.size(), cudaMemcpyHostToDevice));
             CK(cudaMemcpy(dp1, wp1.data(), wp1.size(), cudaMemcpyHostToDevice));
+            // The optimized kernels read the canonical copy (invalid codes rewritten to byte 0, the bytes the reference tables
+            // decode them as); the reference reads the raw random bytes, invalid codes included.
+            CK(cudaMalloc(&dp1c, wp1.size()));
+            CK(cudaMalloc(&dchg, sizeof(unsigned long long)));
+            CK(cudaMemset(dchg, 0, sizeof(unsigned long long)));
+            CK(cudaMemcpy(dp1c, dp1, wp1.size(), cudaMemcpyDeviceToDevice));
+            CK(ternary_ptq1_canonicalize(dp1c, static_cast<int64_t>(out) * (in / 128), dchg, 0));
+            unsigned long long nchg = 0;
+            CK(cudaMemcpy(&nchg, dchg, sizeof(nchg), cudaMemcpyDeviceToHost));
+            if (out == outs[0]) std::printf("canonicalize in=%d out=%d: %llu of %zu payload bytes rewritten\n", in, out, nchg, static_cast<size_t>(out) * (in / 128) * 26);
             for (int T : Ts) {
                 for (int kind = 0; kind < 2; ++kind) {
                     CK(cudaMemset(o1, 0xCD, sizeof(float) * Tmax * out));
@@ -110,7 +121,7 @@ int main() {
                         CK(gemv_q2_0_dp4a(dq2, in, out, a2, T, o2, 0));
                     } else {
                         CK(gemv_ptq1_0_dp4a_ref(dp1, in, out, a2, T, o1, 0));
-                        CK(gemv_ptq1_0_dp4a(dp1, in, out, a2, T, o2, 0));
+                        CK(gemv_ptq1_0_dp4a(dp1c, in, out, a2, T, o2, 0));
                     }
                     CK(cudaDeviceSynchronize());
                     const bool ok = same(o1, o2, static_cast<size_t>(T) * out);
@@ -118,7 +129,7 @@ int main() {
                     if (!ok) { ++fails; std::printf("[FAIL] %s in=%d out=%d T=%d\n", kind ? "PTQ1_0" : "Q2_0", in, out, T); }
                 }
             }
-            CK(cudaFree(dq2)); CK(cudaFree(dp1)); CK(cudaFree(o1)); CK(cudaFree(o2));
+            CK(cudaFree(dq2)); CK(cudaFree(dp1)); CK(cudaFree(dp1c)); CK(cudaFree(dchg)); CK(cudaFree(o1)); CK(cudaFree(o2));
         }
         CK(cudaFree(dx_in)); CK(cudaFree(dsg)); CK(cudaFree(y1)); CK(cudaFree(y2));
     }

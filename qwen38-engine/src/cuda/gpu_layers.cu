@@ -147,7 +147,13 @@ struct GpuLayers::Impl {
             pin_done[i] = nullptr;
         }
     }
+    // Source index of mat()/vec()/upload_tensor(): the main GGUF, or the MTP sidecar while the blk.64 block is planned.
+    const GgufIndex * cur_ix = nullptr;
+    const GgufIndex & src() const { return cur_ix ? *cur_ix : ix; }
+    unsigned long long * canon_cnt = nullptr;   // PTQ1_0 bytes rewritten by ternary_ptq1_canonicalize during the upload
+    const GgufIndex & mtp_src() const { return cfg.mtp_ix ? *cfg.mtp_ix : ix; }
     void upload_tensor(void * dst, const GgufTensor & t) {
+        const GgufIndex & ix = src();
         if (!pin[0]) { CK(cudaMemcpy(dst, ix.data(t), t.nbytes, cudaMemcpyHostToDevice)); return; }
         const off_t base = static_cast<off_t>(ix.data_start + t.offset);
         size_t done = 0;
@@ -173,7 +179,7 @@ struct GpuLayers::Impl {
     }
 
     WMat mat(Planner & pl, const std::string & name, bool upload) {
-        const GgufTensor & t = ix.get(name);
+        const GgufTensor & t = src().get(name);
         if (t.ne[2] != 1 || t.ne[3] != 1) throw std::runtime_error("not a matrix: " + name);
         const int type = static_cast<int>(t.type);
         if (ternary::is_ternary(type)) {  // PTQ1_0 / Q2_0: decoded by the ternary dp4a kernels, no ggml row size
@@ -184,6 +190,9 @@ struct GpuLayers::Impl {
             if (lazy_plan) { lazy_max = std::max(lazy_max, static_cast<size_t>(t.nbytes)); return WMat{nullptr, type, t.ne[0], t.ne[1], &t}; }
             uint8_t * d = pl.take<uint8_t>(t.nbytes);
             if (upload) upload_tensor(d, t);
+            // The v3 decode kernel reads the canonical form (no-op on released files: the count is reported after the load)
+            if (upload && type == ternary::kTypePtq1_0 && canon_cnt)
+                CK(ternary_ptq1_canonicalize(d, (t.ne[0] / ternary::kPtqGroup) * t.ne[1], canon_cnt, st));
             weights += t.nbytes;
             return WMat{d, type, t.ne[0], t.ne[1], nullptr};
         }
@@ -200,7 +209,7 @@ struct GpuLayers::Impl {
     }
 
     const float * vec(Planner & pl, const std::string & name, int64_t n, bool upload) {
-        const GgufTensor & t = ix.get(name);
+        const GgufTensor & t = src().get(name);
         if (t.type != 0 || t.ne[0] * t.ne[1] * t.ne[2] * t.ne[3] != n) throw std::runtime_error("expected F32 vector of " + std::to_string(n) + ": " + name);
         float * d = pl.take<float>(static_cast<size_t>(n));
         if (upload) upload_tensor(d, t);
@@ -346,6 +355,7 @@ struct GpuLayers::Impl {
         }
         if (cfg.mtp) {
             const std::string b = "blk.64.";
+            cur_ix = &mtp_src();
             mtpL = LayerD{};
             mtpL.is_attn = true;
             mtpL.attn_norm = vec(pl, b + "attn_norm.weight", kHidden, upload);
@@ -365,6 +375,7 @@ struct GpuLayers::Impl {
             kv += 2 * static_cast<size_t>(cfg.ctx_max) * unit;
             eh_w = mat(pl, b + "nextn.eh_proj.weight", upload);
             mtp_hn = vec(pl, b + "nextn.shared_head_norm.weight", kHidden, upload);
+            cur_ix = nullptr;
         }
         if (cfg.head) {
             const size_t w0 = weights;
@@ -565,8 +576,17 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     Planner real;
     real.base = m.arena;
     m.pin_alloc();
+    CK(cudaMalloc(&m.canon_cnt, sizeof(unsigned long long)));
+    CK(cudaMemset(m.canon_cnt, 0, sizeof(unsigned long long)));
     m.plan(real, true);
     CK(cudaDeviceSynchronize());
+    {
+        unsigned long long n = 0;
+        CK(cudaMemcpy(&n, m.canon_cnt, sizeof(n), cudaMemcpyDeviceToHost));
+        CK(cudaFree(m.canon_cnt));
+        m.canon_cnt = nullptr;
+        if (n) std::fprintf(stderr, "ternary: %llu invalid PTQ1_0 payload bytes rewritten to their table value (byte 0)\n", n);
+    }
     if (!m.stage) m.pin_free();   // kept for the streamed prefill uploads otherwise
     if (m.stage) {
         CK(cudaStreamCreateWithFlags(&m.cp, cudaStreamNonBlocking));
@@ -598,7 +618,13 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
             cudaGetLastError();
         }
     }
-    CK(q8_scratch_alloc(m.q8, cfg.t_max, kHidden));
+    // Q8_0 GEMVs quantize their own input: the scratch covers the widest Q8_0 input on the GPU. The main layers only have
+    // 5120-wide Q8_0 inputs; an MTP block can add ffn_down (17408) or eh_proj (10240) in Q8_0 (r3 sidecars).
+    int64_t q8_in = kHidden;
+    if (cfg.mtp)
+        for (const auto & kv : m.mtp_src().tensors)
+            if (kv.first.compare(0, 7, "blk.64.") == 0 && kv.second.type == GT_Q8_0) q8_in = std::max<int64_t>(q8_in, kv.second.ne[0]);
+    CK(q8_scratch_alloc(m.q8, cfg.t_max, q8_in));
     CK(actq8_alloc(m.act, cfg.t_max, kFFN));
     CK(op_rope_table(m.rope_cos, m.rope_sin, cfg.ctx_max, m.theta_scale, m.st));
     if (cfg.head) CK(cudaHostAlloc(reinterpret_cast<void **>(&m.h_lg), sizeof(float) * 8 * static_cast<size_t>(m.hd_v), cudaHostAllocDefault));
@@ -712,6 +738,19 @@ void GpuLayers::head(int T, int n_out, float * logits, float * h_rows) {
     std::memcpy(logits, m.h_lg, nb);
 }
 
+void GpuLayers::head_host(const float * h_host, int n, float * logits) {
+    Impl & m = *p_;
+    if (!m.cfg.head) throw std::runtime_error("GpuLayers::head_host: no head on the GPU");
+    if (n < 1 || n > 8 || n > m.cfg.t_max) throw std::runtime_error("GpuLayers::head_host: bad rows");
+    CK(cudaMemcpyAsync(m.xn, h_host, sizeof(float) * kHidden * static_cast<size_t>(n), cudaMemcpyHostToDevice, m.st));
+    m.quant_rot({&m.hd_w}, m.xn, kHidden, n, 0);
+    m.gemv(m.hd_w, m.xn, n, m.hd_lg);
+    const size_t nb = sizeof(float) * static_cast<size_t>(n) * static_cast<size_t>(m.hd_v);
+    CK(cudaMemcpyAsync(m.h_lg, m.hd_lg, nb, cudaMemcpyDeviceToHost, m.st));
+    CK(cudaStreamSynchronize(m.st));
+    std::memcpy(logits, m.h_lg, nb);
+}
+
 void GpuLayers::set_snapshot(bool on) {
     if (on && p_->cfg.roll_t <= 0) throw std::runtime_error("snapshots need cfg.roll_t > 0");
     p_->saving = on;
@@ -809,6 +848,8 @@ void GpuLayers::mtp_kv(const float * concat_host, int T, int pos0, float * k_hos
     if (T < 1 || T > m.cfg.t_max || pos0 < 0 || pos0 + T > m.cfg.ctx_max) throw std::runtime_error("mtp_kv: T or position out of range");
     LayerD l;
     WMat eh;
+    struct SrcGuard { Impl & m; ~SrcGuard() { m.cur_ix = nullptr; } } guard{m};
+    m.cur_ix = &m.mtp_src();
     {
         Planner pl;
         pl.base = m.svec;   // small vectors
@@ -817,7 +858,7 @@ void GpuLayers::mtp_kv(const float * concat_host, int T, int pos0, float * k_hos
         l.k_norm = m.vec(pl, "blk.64.attn_k_norm.weight", kHD, true);
     }
     auto load = [&](const char * name, uint8_t * dst) {
-        const GgufTensor & t = m.ix.get(name);
+        const GgufTensor & t = m.src().get(name);
         if (static_cast<size_t>(t.nbytes) > m.stage_bytes) throw std::runtime_error(std::string("staging buffer too small for ") + name);
         m.upload_tensor(dst, t);   // legacy stream: ordered after the earlier work on the blocking stream st
         return WMat{dst, static_cast<int>(t.type), t.ne[0], t.ne[1], nullptr};

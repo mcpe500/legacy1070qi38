@@ -134,6 +134,8 @@ dengan QuickJS; belum ada uji browser sungguhan.
 | `--vram-budget-mib N` | budget device memory proses; default 7373 MiB |
 | `--resident-gib N` | batas bobot layer CPU yang ditahan di page cache |
 | `--mtp-steps 0..3`, `--mtp-adaptive 0\|1` | draft MTP |
+| `--mtp-gguf FILE` | head MTP dari sidecar `blk.64.*` (`inject_mtp_gguf.py --mtp-only-out`), di-mmap terpisah; berlaku juga untuk mode server |
+| `--gen-mtp-steps 0..3` | jumlah draft untuk run ini saja; engine tetap memuat blok MTP (state file dari engine MTP bisa di-decode tanpa draft) |
 | `--pld 0\|1`, `--pld-max N` | prompt lookup decoding |
 | `--stream-min-t N` | minimum ukuran batch untuk prefill yang di-stream ke GPU |
 | `--state-save FILE`, `--state-load FILE` | simpan/buka state model |
@@ -142,7 +144,7 @@ dengan QuickJS; belum ada uji browser sungguhan.
 | `--gpu-mtp 0\|1\|auto` | penempatan blok MTP; auto mengikuti head dan sisa VRAM |
 | `--depth-bench N` | probe biaya decode pada posisi N dengan KV kosong |
 | `--rollback-test` | uji rollback DeltaNet bit-identik |
-| `--server --host H --port P` | jalankan HTTP/SSE server |
+| `--server --host H --port P` | jalankan HTTP/SSE server; dengan `--state-load` state dipakai sebagai checkpoint tetap, dengan `--state-save` tersedia `POST /v1/state/save` dan state disimpan saat SIGINT/SIGTERM |
 
 ## Arsitektur dan memori
 

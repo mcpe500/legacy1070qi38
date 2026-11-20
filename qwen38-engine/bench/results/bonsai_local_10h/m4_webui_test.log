@@ -1,0 +1,58 @@
+PASS ThinkParser split-invariant: '<think>\nI need to add 2 and 2.\n</think>\n'
+PASS ThinkParser keeps raw text: '<think>\nI need to add 2 and 2.\n</think>\n'
+PASS ThinkParser split-invariant: '<think>\n\n</think>\n\nOK'
+PASS ThinkParser keeps raw text: '<think>\n\n</think>\n\nOK'
+PASS ThinkParser split-invariant: '<think>\nuse a < b and <thin and </thi in'
+PASS ThinkParser keeps raw text: '<think>\nuse a < b and <thin and </thi in'
+PASS ThinkParser split-invariant: 'plain answer without tags'
+PASS ThinkParser keeps raw text: 'plain answer without tags'
+PASS ThinkParser split-invariant: '<think>\nunfinished reasoning that never '
+PASS ThinkParser keeps raw text: '<think>\nunfinished reasoning that never '
+PASS ThinkParser split-invariant: '<think>\nA\n</think>\n\nB <think>\nC\n</think>'
+PASS ThinkParser keeps raw text: '<think>\nA\n</think>\n\nB <think>\nC\n</think>'
+PASS ThinkParser split-invariant: '<think>é日本語🙂\n</think>\n\nünïcode'
+PASS ThinkParser keeps raw text: '<think>é日本語🙂\n</think>\n\nünïcode'
+PASS think/answer content
+PASS answer loses the blank lines after </think>
+PASS two switches per block
+PASS unfinished block stays in thinking mode
+PASS a lone '<' at the end is flushed at the end of the stream
+PASS held-back tag prefix is not lost
+PASS SSEParser: events cut at every position
+PASS SSEParser: CRLF
+PASS SSEParser: comment lines and partial event are ignored
+PASS buildRequest numbers
+PASS buildRequest: empty seed is omitted
+PASS buildRequest: seed, clamps
+PASS parseStops: one per line, empty lines dropped
+PASS parseStops: \n and \t escapes
+PASS parseStops: at most 4
+PASS parseStops: non-string -> []
+PASS buildRequest: adaptive MTP on and PLD off by default, no stop field
+PASS buildRequest: toggles and stop array
+PASS UI script compiles
+PASS every $('id') used by the UI exists in the page
+PASS control / telemetry element #temperature exists
+PASS control / telemetry element #top_k exists
+PASS control / telemetry element #top_p exists
+PASS control / telemetry element #min_p exists
+PASS control / telemetry element #repeat_penalty exists
+PASS control / telemetry element #presence_penalty exists
+PASS control / telemetry element #seed exists
+PASS control / telemetry element #max_tokens exists
+PASS control / telemetry element #mtp_steps exists
+PASS control / telemetry element #t_pp exists
+PASS control / telemetry element #t_tg exists
+PASS control / telemetry element #t_ttft exists
+PASS control / telemetry element #t_acc exists
+PASS control / telemetry element #t_vram exists
+PASS control / telemetry element #t_rss exists
+PASS control / telemetry element #t_pld exists
+PASS control / telemetry element #t_fill exists
+PASS control / telemetry element #pld exists
+PASS control / telemetry element #mtp_adaptive exists
+PASS control / telemetry element #stop exists
+PASS no external dependency (no CDN, no remote src/href)
+PASS page size under 100 KB
+
+result: PASS (0 failed)

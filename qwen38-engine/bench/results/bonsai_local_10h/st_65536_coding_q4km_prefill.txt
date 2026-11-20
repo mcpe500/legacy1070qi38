@@ -1,0 +1,2 @@
+{"state_save":"/tmp/b10h_states/coding_65536_q4km.state","tokens":65586,"reused_tokens":0,"state_mib":1000.3,"prefill_s":1508.43,"prefill_tok_s":43.480,"save_s":2.59,"load_s":38.72,"state_load_s":0.00,"ctx":66048,"gpu_layers":64,"vram_used_mib":7250.2,"peak_rss_kb":942416}
+{"tag":"st_65536_coding_q4km_prefill","rc":0,"wall_s":1550,"peak_vram_mib":7251,"vram_cap_ok":true,"max_rss_kb":942416}

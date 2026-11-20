@@ -180,7 +180,7 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
     struct Guard {   // an exception leaves the model state in an unknown position: forget the cache
         Generator * g;
         bool ok = false;
-        ~Guard() { if (!ok) { g->cached_.clear(); g->have_h_ = false; } }
+        ~Guard() { if (!ok) g->reset_cache(); }
     } guard{this};
     st = GenStats{};
     st.prompt_tokens = n_prompt;
@@ -193,7 +193,31 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
     if (gp.reuse && !cached_.empty() && cached_.size() < prompt.size() && (D == 0 || have_h_) &&
         std::equal(cached_.begin(), cached_.end(), prompt.begin())) {
         L = cached_.size();
+        st.reuse = "prefix";
     }
+    if (L == 0 && gp.reuse) {
+        // The longest valid checkpoint that is a proper prefix of the prompt. Its KV positions are intact (only later positions
+        // were written since it was taken), so restoring its recurrent state is enough to continue from it.
+        Checkpoint * best = nullptr;
+        for (Checkpoint & c : ck_) {
+            if (c.tokens.empty() || c.tokens.size() >= prompt.size() || (D > 0 && !c.have_h)) continue;
+            if (!std::equal(c.tokens.begin(), c.tokens.end(), prompt.begin())) continue;
+            if (!best || c.tokens.size() > best->tokens.size()) best = &c;
+        }
+        if (best) {
+            size_t off = 0;
+            eng_.load_state(0, [&](void * p, size_t n) { std::memcpy(p, best->state.data() + off, n); off += n; });
+            L = best->tokens.size();
+            have_h_ = best->have_h;
+            if (best->have_h) std::memcpy(last_h_.data(), best->h.data(), sizeof(float) * H);
+            mtp_start_ = best->mtp_start;
+            eng_.set_mtp_kv_start(mtp_start_);
+            st.reuse = "checkpoint";
+        }
+    }
+    // A run that does not extend a checkpoint rewrites some of its KV positions: forget it.
+    for (Checkpoint & c : ck_)
+        if (!c.tokens.empty() && L < c.tokens.size()) c.tokens.clear();
     const bool had_h = have_h_;
     cached_.clear();
     have_h_ = false;
@@ -241,6 +265,7 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
         pos += T;
         if (on_prefill) on_prefill(pos - static_cast<int>(L), n_prompt - static_cast<int>(L));
     }
+    if (gp.checkpoint && L < prompt.size()) take_checkpoint(ck_[1], prompt, D > 0);   // state of exactly the prompt
     st.prefill_s = secs(t_start, Clock::now());
     cached_.assign(prompt.begin(), prompt.end());   // fed tokens; extended below as tokens are fed
     if (gp.prefill_only) {   // the state holds the prompt; last_h_ (= hprev) is the h row of position n_prompt-1
@@ -435,6 +460,18 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
     guard.ok = true;
 }
 
+void Generator::take_checkpoint(Checkpoint & c, const std::vector<int32_t> & toks, bool have_h) {
+    // Recurrent part only (Engine::save_state(0)); the positional KV stays in the caches. The buffer is sized once.
+    const size_t nb = eng_.state_bytes(0);
+    if (c.state.size() != nb) c.state.resize(nb);
+    size_t off = 0;
+    eng_.save_state(0, [&](const void * p, size_t n) { std::memcpy(c.state.data() + off, p, n); off += n; });
+    c.tokens.assign(toks.begin(), toks.end());
+    c.have_h = have_h;
+    if (have_h) c.h.assign(last_h_.begin(), last_h_.end());
+    c.mtp_start = mtp_start_;
+}
+
 // ---- state file --------------------------------------------------------------------------------------------------------
 namespace {
 constexpr char kStateMagic[8] = {'Q', '3', '8', 'S', 'T', 'A', 'T', 'E'};
@@ -507,6 +544,7 @@ size_t Generator::load_state(const std::string & path) {
     if (h.have_h) get(last_h_.data(), last_h_.size() * sizeof(float));
     cached_.clear();
     have_h_ = false;
+    reset_cache();   // the loaded state replaces every KV position the checkpoints relied on
     eng_.reset();
     size_t moved = 0;
     eng_.load_state(static_cast<int>(h.n_pos), [&](void * p, size_t n) { get(p, n); moved += n; });
@@ -516,5 +554,6 @@ size_t Generator::load_state(const std::string & path) {
     have_h_ = h.have_h != 0;
     mtp_start_ = h.mtp_start;
     eng_.set_mtp_kv_start(mtp_start_);
+    if (pin_loaded_) take_checkpoint(ck_[0], cached_, have_h_);   // pinned: questions about a loaded document reuse it
     return moved;
 }

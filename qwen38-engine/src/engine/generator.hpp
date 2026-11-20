@@ -27,6 +27,11 @@ struct GenParams {
     int pld_max = 6;       // max PLD candidates per cycle (3-gram + 4-gram combined)
     int pld_min_len = 3;   // minimum suffix length to consider (3 or 4)
     bool reuse = true;     // continue from the cached state when it is a prefix of the new prompt
+    // Prompt checkpoint (server): after the prefill the recurrent state of the prompt (DeltaNet conv/ssm, about 150 MiB of
+    // host RAM, Engine::save_state(0)) is copied aside. A later prompt that extends that prompt but not the full cached
+    // sequence (the reply was trimmed, cut by a stop string, re-tokenized differently, or ended before <|im_end|>) restores
+    // it and reuses the prompt's KV positions instead of prefilling the whole conversation again.
+    bool checkpoint = false;
     bool prefill_only = false;   // stop after the prefill (no sampling): the state then holds exactly the prompt (--state-save)
     std::vector<float> * capture_logits = nullptr;   // receives the logits after the prefill (parity tests)
 };
@@ -39,6 +44,7 @@ struct GenStats {
     long long pld_hits = 0, pld_candidates = 0, mtp_fills = 0;
     uint64_t heap_allocs = 0;
     std::string finish = "length";   // "stop" (end token), "length", "abort" (callback returned false)
+    std::string reuse = "none";      // where reused_tokens came from: "none", "prefix" (cached sequence), "checkpoint" (prompt checkpoint)
     std::vector<int32_t> ids;        // generated tokens (the stop token is not included)
 };
 
@@ -49,7 +55,9 @@ public:
     // Called with the engine idle; one run at a time. `on_prefill(done, total)` (optional) reports prefill chunks.
     void run(const std::vector<int32_t> & prompt, const GenParams & gp, const std::function<bool(int32_t)> & on_token, GenStats & st,
              const std::function<void(int, int)> & on_prefill = nullptr);
-    void reset_cache() { cached_.clear(); have_h_ = false; }
+    void reset_cache() { cached_.clear(); have_h_ = false; for (Checkpoint & c : ck_) c.tokens.clear(); }
+    // Tokens of the prompt checkpoint (slot 1) and of the pinned state-load checkpoint (slot 0).
+    size_t checkpoint_tokens(int slot) const { return ck_[slot].tokens.size(); }
     size_t cached_tokens() const { return cached_.size(); }
     const std::vector<int32_t> & cached() const { return cached_; }
     // Model state file (--state-save / --state-load): header (magic, version, engine fingerprint, n_pos), the cached tokens,
@@ -57,6 +65,8 @@ public:
     // tokens continues from them without prefilling them again. Both return the number of state bytes moved.
     size_t save_state(const std::string & path) const;
     size_t load_state(const std::string & path);
+    // Server: keep the state of load_state as a pinned checkpoint (slot 0), see GenParams::checkpoint.
+    void set_pin_loaded(bool on) { pin_loaded_ = on; }
     bool is_stop(int32_t t) const;
 
 private:
@@ -65,5 +75,19 @@ private:
     int mtp_start_ = 0;                // first prompt position that went through the MTP block
     bool have_h_ = false;              // last_h_ holds the output-normed hidden row of position n-1 (needed to continue the MTP KV)
     std::vector<float> last_h_, hbuf_, hin_, hv_, hv_next_, hm_, hm2_, lrows_, lmtp_;
+    // Checkpoints (GenParams::checkpoint): tokens, recurrent state (Engine::save_state(0)), MTP pairing row. A checkpoint is
+    // valid while the KV positions 0 .. tokens.size()-1 still hold its tokens (a run that rewrites any of them clears it).
+    // Slot 0: the state loaded with load_state (pinned: a --state-load document stays reusable for every question about it);
+    // slot 1: the prompt of the last run.
+    struct Checkpoint {
+        std::vector<int32_t> tokens;
+        std::vector<uint8_t> state;
+        std::vector<float> h;
+        bool have_h = false;
+        int mtp_start = 0;
+    };
+    Checkpoint ck_[2];
+    bool pin_loaded_ = false;
+    void take_checkpoint(Checkpoint & c, const std::vector<int32_t> & toks, bool have_h);
     Sampler sampler_;
 };
