@@ -1017,8 +1017,10 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
     const bool longk = ctx_max > kFastCtxMax || long_kernels;
     if (longk && part && T <= kSplitTMax && iso3 && g_attn_dec2) {
         // decode v2: slices fixed by ctx_max (the CUDA graph replays the grid; the slice length follows the position on the
-        // device), about 256 positions per warp at the full context, at most kSplitTMax * kSplits / T slices (part buffer)
-        int nsl = std::min(ctx_max / 256, kSplitTMax * kSplits / T);
+        // device), at least 256 positions per warp, at most kSplitTMax * kSplits / T slices (part buffer)
+        // The slice count must not depend on T for T <= 5: an MTP verify row then sums exactly like the single-token
+        // decode row of the same position, so speculative decoding stays lossless (100 = the most slices 5 rows fit).
+        int nsl = std::min(ctx_max / 256, T <= 5 ? 100 : kSplitTMax * kSplits / T);
         nsl = std::max(kDecWarps, nsl / kDecWarps * kDecWarps);
         const dim3 g2(T * NKV, nsl / kDecWarps);
         attention_kernel_decode_iso3<0><<<g2, kDecWarps * 32, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache),

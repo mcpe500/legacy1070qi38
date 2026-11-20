@@ -1,0 +1,5 @@
+[st_65536_coding_q4km_prefill] rc 0 tokens 65586 prefill 1508.43 s (43.48 tok/s) state 1000.3 MiB, peak VRAM 7251
+[st_65536_coding_q4km_m0] rc 0 decode 11.5797 tok/s accept 0/0 pld_hits 0 state_load 6.095 s, peak VRAM 7261
+[st_65536_coding_q4km_m2] rc 0 decode 13.3502 tok/s accept 157/196 pld_hits 0 state_load 1.551 s, peak VRAM 7263
+[st_65536_coding_q4km_ad] rc 0 decode 14.13 tok/s accept 159/179 pld_hits 0 state_load 1.551 s, peak VRAM 7309
+[st_65536_coding_q4km_pldad] rc 0 decode 13.893 tok/s accept 158/186 pld_hits 3 state_load 1.55 s, peak VRAM 7309

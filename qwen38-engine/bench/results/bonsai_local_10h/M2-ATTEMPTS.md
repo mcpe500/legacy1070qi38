@@ -35,3 +35,23 @@ decode tok/s (509-token prompt, 256 tokens, greedy, `--mtp-steps 0`). Baseline: 
 | 32768 | 9.29 | 10.97 | 13.48 | 6351 |
 | 65536 | 7.06 | 7.92 | 11.52 | 6759 |
 | 131072 | 4.72 | 5.09 | **8.91** | 7349 |
+
+## After the first M2 commit
+
+| # | Attempt | Result | Kept |
+|---|---|---|---|
+| 9 | Decode attention v2 with the V bytes of each 16-position step staged in a per-warp shared buffer by coalesced loads during the softmax | 3.48 -> 4.24 ms (T=1, n=131072): more spills (160 B) | no |
+| 10 | **Bug found and fixed:** the slice count of decode attention v2 depended on T (`512 / T` slices at ctx > 26K), so an MTP verify row of a position did not sum like the single-token row of that position. At 64K real context (`pre_fix_64k/`) m2 and adaptive diverged from m0 at token 16. The slice count is now the same for every T <= 5 (100 slices, the most 5 rows fit in the partial buffer) | T=1 at n=131072: 3.48 -> 3.51 ms (unchanged); ctx 65536 m0 / m2 / ad ids identical | yes |
+
+## Best MTP at a real 64K context (`st_65536_coding_*`, coding suite 65586 tokens, r3 Q4_K_M, final build)
+
+One prefill with `--state-save` (1508.4 s, 43.5 tok/s), every decode from `--state-load` (1.55 s), 256 tokens:
+
+| Variant | tok/s | vs m0 | accepted | ids |
+|---|---:|---:|---:|---|
+| m0 (`--gen-mtp-steps 0`) | 11.58 | 1.000x | - | d7d3417a |
+| m2 | 13.35 | 1.153x | 157/196 | d7d3417a |
+| adaptive | **14.13** | 1.220x | 159/179 | d7d3417a |
+| PLD + adaptive | 13.89 | 1.200x | 158/186 | d7d3417a |
+
+The runs before the slice fix are kept in `pre_fix_64k/` (m2 and adaptive diverged from m0 at token 16).

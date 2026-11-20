@@ -1,0 +1,14 @@
+[
+  {"name": "SASS gate", "ok": true, "detail": "IDP.4A x4741 in the engine, 0 HFMA2/HMUL2/HADD2"},
+  {"name": "ternary_ab_test", "ok": true, "detail": "180/180 bit-identical (v3 decode on canonical weights)"},
+  {"name": "attn_long_test", "ok": true, "detail": "52/52 (decode v2 rel 3.4e-6, prefill prefetch)"},
+  {"name": "greedy parity M1", "ok": true, "detail": "138 MTP/PLD runs = text/ids of plain greedy"},
+  {"name": "128K run", "ok": true, "detail": "needle found, state round trip bit-identical"},
+  {"name": "Bonsai server stress", "ok": true, "detail": "57/57: 10 turns, checkpoint, stop, SSE, save/load"},
+  {"name": "server_test (Qwen)", "ok": true, "detail": "69/69 with QWEN_MT_DOT=0"},
+  {"name": "webui / stop filter", "ok": true, "detail": "webui_test PASS, stop_filter_test 36/36"},
+  {"name": "Qwen greedy + rollback", "ok": true, "detail": "48/48 = stage 4; rollback bit-identical"},
+  {"name": "Bonsai MTP rollback", "ok": true, "detail": "r3 Q4_K_M sidecar: bit-identical"},
+  {"name": "dn_rec / iso3 GPU", "ok": true, "detail": "dn_rec_ab_test PASS, iso3_gpu_test PASS"},
+  {"name": "VRAM cap", "ok": false, "detail": "engine <= 7349 MiB; once 7855 total (test + idle server)"}
+]

@@ -34,3 +34,9 @@ The < 50 min target is missed by 10.4 min. What is left after these attempts:
 - Attention (about 1430 s after the prefetch): 229 registers per thread allow one block of 8 warps per SM, so barriers
   and dequantization are exposed. Double-buffering the dequantized tile needs 64 KiB of shared memory at 16 positions per
   tile (48 KiB limit per block).
+
+## After the full run
+
+| # | Attempt | Result | Kept |
+|---|---|---|---|
+| 9 | Attention double-buffered: 8-position tiles, two FP32 K/V tile buffers (2 x 16 KiB), one barrier per tile, every warp dequantizes its share of tile i+1 (byte loads from the cache) before computing tile i, so dequant and compute of different warps overlap | 83.5 -> 110.1 ms (T=64, n=131072, with slices): the per-tile softmax and reduce-scatter overhead doubles at 8 positions | no |
