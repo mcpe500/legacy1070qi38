@@ -101,7 +101,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     const uint64_t nblocks = u64(ix, "qwen35.block_count");
     if (nblocks != 65 && nblocks != 64) throw std::runtime_error("gguf: qwen35.block_count = " + std::to_string(nblocks) + ", engine supports 64 (Bonsai, no MTP) or 65 (Qwen)");
     if (nblocks == 64 && cfg_.mtp_steps > 0 && cfg_.mtp_gguf.empty())
-        std::fprintf(stderr, "mtp: blk.64 absent (Ternary Bonsai), draft head disabled; --pld stays available\n");
+        std::fprintf(stderr, "mtp: blk.64 absent (Ternary Bonsai), draft head disabled (PLD runs on the draft path too: add --mtp-gguf)\n");
     expect(ix, "qwen35.embedding_length", kHidden);
     expect(ix, "qwen35.feed_forward_length", kFFN);
     expect(ix, "qwen35.attention.head_count", kNH);
@@ -321,7 +321,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         bool fit = head_fits();
         // The MTP rollback buffers (about 150 MiB) can push the head off the GPU at 128K. A CPU head costs about 0.2 s per
         // token (1 GiB from DDR4) and an MTP draft cycle needs it too: measured 2.49 tok/s with MTP 2 vs 4.72 without at
-        // 128K. In auto mode (--gpu-mtp auto) the draft head is dropped instead; --pld stays available.
+        // 128K. In auto mode (--gpu-mtp auto) the draft head is dropped instead (and with it PLD, which uses the same verify path).
         if (!fit && roll && cfg_.gpu_mtp < 0) {
             roll = false;
             if (head_fits()) {

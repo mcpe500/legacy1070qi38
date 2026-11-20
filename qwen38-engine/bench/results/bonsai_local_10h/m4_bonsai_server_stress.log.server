@@ -1,0 +1,28 @@
+
+$ taskset -c 0-3 /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/build/qwen38-engine -m /home/ivan/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf --mtp-gguf /home/ivan/models/27b-bonsai/procreations-mtp/r3_mtp_blk64_q4_k_m.gguf --gpu-layers auto --ctx 8192 --server --port 8766 --state-save /tmp/b10h_server_state.bin
+mtp: sidecar /home/ivan/models/27b-bonsai/procreations-mtp/r3_mtp_blk64_q4_k_m.gguf, 15 tensors, 272.9 MiB
+ternary: Hadamard basis (block 1024, explicit signs), gdn_v_grouped=1
+gpu-layers auto: 64 layers fit 7373 MiB at ctx 8192 (prefill streaming off)
+LM head: GPU
+MTP block: GPU
+VRAM plan: arena 6351.0 MiB, projected process total 6489.1 MiB (budget 7373)
+loaded in 38.60 s; CPU arena 251.0 MiB; CPU resident layers 0 (0.00 GiB), streamed 0.00 GiB
+GPU: layers 0..63, KV iso3, arena 6371.1 MiB (weights 5668.3 MiB, KV 106.2 MiB), device memory in use 6486.2 MiB
+server: http://127.0.0.1:8766  (GET /, /health, /v1/models, /v1/stats; POST /v1/chat/completions)
+state-save: 803 tokens, 160.0 MiB in 1.41 s to /tmp/b10h_server_state.bin
+server: signal 15, shutting down
+state-save: 803 tokens, 160.0 MiB in 1.46 s to /tmp/b10h_server_state.bin
+
+$ taskset -c 0-3 /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/build/qwen38-engine -m /home/ivan/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf --mtp-gguf /home/ivan/models/27b-bonsai/procreations-mtp/r3_mtp_blk64_q4_k_m.gguf --gpu-layers auto --ctx 8192 --server --port 8766 --state-save /tmp/b10h_server_state.bin --state-load /tmp/b10h_server_state.bin
+mtp: sidecar /home/ivan/models/27b-bonsai/procreations-mtp/r3_mtp_blk64_q4_k_m.gguf, 15 tensors, 272.9 MiB
+ternary: Hadamard basis (block 1024, explicit signs), gdn_v_grouped=1
+gpu-layers auto: 64 layers fit 7373 MiB at ctx 8192 (prefill streaming off)
+LM head: GPU
+MTP block: GPU
+VRAM plan: arena 6351.0 MiB, projected process total 6489.1 MiB (budget 7373)
+loaded in 38.02 s; CPU arena 251.0 MiB; CPU resident layers 0 (0.00 GiB), streamed 0.00 GiB
+GPU: layers 0..63, KV iso3, arena 6371.1 MiB (weights 5668.3 MiB, KV 106.2 MiB), device memory in use 6486.2 MiB
+state-load: 803 tokens, 160.0 MiB in 0.55 s from /tmp/b10h_server_state.bin
+server: http://127.0.0.1:8766  (GET /, /health, /v1/models, /v1/stats; POST /v1/chat/completions)
+server: signal 15, shutting down
+state-save: 835 tokens, 160.5 MiB in 1.44 s to /tmp/b10h_server_state.bin

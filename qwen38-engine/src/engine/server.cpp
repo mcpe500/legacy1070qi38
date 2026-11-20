@@ -4,6 +4,8 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <csignal>
+#include <thread>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
@@ -28,7 +30,9 @@ namespace {
 using Clock = std::chrono::steady_clock;
 double secs(Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double>(b - a).count(); }
 
-constexpr const char * kModelName = "qwen3.8-27b";
+constexpr const char * kDefaultModelName = "qwen3.8-27b";
+volatile std::sig_atomic_t g_stop_signal = 0;
+void on_stop_signal(int sig) { g_stop_signal = sig; }
 
 long long status_kb(const char * key) {
     std::ifstream f("/proc/self/status");
@@ -153,6 +157,8 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
     std::atomic<bool> busy{false};
     std::atomic<long long> n_requests{0};
     const auto t_boot = Clock::now();
+    // The API id stays the stable default (clients and the WebUI send it); the GGUF's general.name is reported in /v1/stats.
+    const std::string kModelName = kDefaultModelName;
 
     auto stats_json = [&]() {
         return json{{"vram_mib", eng.vram_used_mib()},
@@ -168,12 +174,18 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
                     {"mtp_steps_default", cfg.mtp_steps},
                     {"mtp_adaptive_default", true},
                     {"uptime_s", secs(t_boot, Clock::now())},
+                    {"model_name", opt.model_name},
+                    {"model_file", opt.model_file},
+                    {"checkpoint_tokens", gen.checkpoint_tokens(1)},
+                    {"pinned_tokens", gen.checkpoint_tokens(0)},
+                    {"state_save", !opt.state_save.empty()},
                     {"requests", n_requests.load()}};
     };
 
     auto stats_of = [](const GenStats & st, double live_tg) {
         const int fresh = st.prompt_tokens - st.reused_tokens;
-        return json{{"prompt_tokens", st.prompt_tokens}, {"reused_tokens", st.reused_tokens}, {"completion_tokens", st.generated},
+        return json{{"prompt_tokens", st.prompt_tokens}, {"reused_tokens", st.reused_tokens}, {"reuse", st.reuse},
+                    {"completion_tokens", st.generated},
                     {"pp_tok_s", st.prefill_s > 0 ? fresh / st.prefill_s : 0.0}, {"prefill_s", st.prefill_s},
                     {"tg_tok_s", live_tg}, {"ttft_ms", st.ttft_s * 1000.0}, {"mtp_steps", st.mtp_steps},
                     {"draft_n", st.draft_n}, {"draft_accepted", st.draft_acc},
@@ -194,6 +206,29 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
                         "application/json");
     });
     svr.Get("/v1/stats", [&](const httplib::Request &, httplib::Response & res) { res.set_content(dump(stats_json()), "application/json"); });
+    // Writes the model state (cached tokens + KV + recurrent state) to the --state-save path given at startup.
+    auto save_now = [&]() -> json {
+        const auto t0 = Clock::now();
+        const size_t b = gen.save_state(opt.state_save);
+        const double s = secs(t0, Clock::now());
+        std::fprintf(stderr, "state-save: %zu tokens, %.1f MiB in %.2f s to %s\n", gen.cached_tokens(), static_cast<double>(b) / 1048576.0, s,
+                     opt.state_save.c_str());
+        return json{{"status", "ok"}, {"tokens", gen.cached_tokens()}, {"bytes", b}, {"seconds", s}, {"path", opt.state_save}};
+    };
+    svr.Post("/v1/state/save", [&](const httplib::Request &, httplib::Response & res) {
+        if (opt.state_save.empty()) {
+            res.status = 400;
+            res.set_content(dump(error_body("the server was started without --state-save", "invalid_request_error")), "application/json");
+            return;
+        }
+        std::lock_guard<std::mutex> lk(gen_mtx);
+        try {
+            res.set_content(dump(save_now()), "application/json");
+        } catch (const std::exception & e) {
+            res.status = 500;
+            res.set_content(dump(error_body(e.what(), "server_error")), "application/json");
+        }
+    });
     svr.Post("/v1/cache/clear", [&](const httplib::Request &, httplib::Response & res) {
         std::lock_guard<std::mutex> lk(gen_mtx);
         gen.reset_cache();
@@ -224,6 +259,7 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
 
         auto num = [&](const char * k, double d) { return body.contains(k) && body[k].is_number() ? body[k].get<double>() : d; };
         GenParams gp;
+        gp.checkpoint = true;   // multi-turn: reuse the previous prompt even when the reply does not round-trip token for token
         gp.sp.temperature = static_cast<float>(num("temperature", 0.7));
         gp.sp.top_k = static_cast<int>(num("top_k", 20));
         gp.sp.top_p = static_cast<float>(num("top_p", 0.95));
@@ -236,7 +272,9 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
         gp.mtp_steps = static_cast<int>(num("mtp_steps", cfg.mtp_steps));
         auto flag = [&](const char * k, bool d) { return body.contains(k) && body[k].is_boolean() ? body[k].get<bool>() : d; };
         gp.mtp_adaptive = flag("mtp_adaptive", true);    // default on; "mtp_adaptive": false restores the fixed mtp_steps
-        gp.pld_enabled = flag("pld", false);              // prompt lookup decoding (n-gram drafts), off by default
+        // prompt lookup decoding (n-gram drafts), off by default; it runs on the MTP verify path (rollback buffers), so without a
+        // draft head it is off and x_stats.pld reports false
+        gp.pld_enabled = flag("pld", false) && eng.has_mtp();
         gp.pld_max = static_cast<int>(num("pld_max", 4));
         if (gp.pld_max < 1 || gp.pld_max > 4) { fail(400, "pld_max must be 1..4"); return; }
         // OpenAI `stop`: a string or an array of up to 4 non-empty strings of at most 128 bytes each.
@@ -416,9 +454,28 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
     });
 
     std::fprintf(stderr, "server: http://%s:%d  (GET /, /health, /v1/models, /v1/stats; POST /v1/chat/completions)\n", opt.host.c_str(), opt.port);
-    if (!svr.listen(opt.host.c_str(), opt.port)) {
+    // SIGINT / SIGTERM: stop accepting, let a running generation finish (the generation lock), then save the state when
+    // --state-save is set. The handler only sets a flag; a watcher thread does the work outside signal context.
+    std::signal(SIGINT, on_stop_signal);
+    std::signal(SIGTERM, on_stop_signal);
+    std::atomic<bool> done{false};
+    std::thread watcher([&] {
+        while (!done.load()) {
+            if (g_stop_signal) { svr.stop(); break; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    });
+    const bool ok = svr.listen(opt.host.c_str(), opt.port);
+    done = true;
+    watcher.join();
+    if (!ok && !g_stop_signal) {
         std::fprintf(stderr, "server: cannot listen on %s:%d\n", opt.host.c_str(), opt.port);
         return 1;
+    }
+    if (g_stop_signal) std::fprintf(stderr, "server: signal %d, shutting down\n", static_cast<int>(g_stop_signal));
+    if (!opt.state_save.empty()) {
+        std::lock_guard<std::mutex> lk(gen_mtx);
+        try { save_now(); } catch (const std::exception & e) { std::fprintf(stderr, "state-save failed: %s\n", e.what()); return 1; }
     }
     return 0;
 }
