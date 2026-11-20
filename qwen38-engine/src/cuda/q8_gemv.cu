@@ -1,5 +1,7 @@
 #include "q8_gemv.cuh"
 
+#include <cstdlib>
+
 #include "f16bits.hpp"
 
 // Pure FP32 path: fp16 scales are decoded with the integer helper from f16bits.hpp (tested against F16C for all bit patterns).
@@ -54,6 +56,52 @@ __global__ void q8_0_gemv_dp4a_kernel(const uint8_t * __restrict__ W, int64_t in
     if (lane == 0) y[t * out + o] = acc;
 }
 
+// Batched variant (issue #55): 8 output rows per block (one warp each) and TT tokens per pass. Each lane decodes the 8 weight
+// words of its block once (16-bit loads: the quants start at byte 2) and reuses them for the TT tokens, so the weights are read
+// once per TT tokens instead of once per token. Per (row, token) the lane order, the integer dot and the FP32 expression
+// acc += dw * dx * isum are those of q8_0_gemv_dp4a_kernel: bit-identical results.
+template <int TT>
+__global__ void __launch_bounds__(256) q8_0_gemv_dp4a_kernel_bt(const uint8_t * __restrict__ W, int64_t in, int64_t out,
+                                                               const int8_t * __restrict__ qx, const float * __restrict__ dx,
+                                                               float * __restrict__ y, int64_t T) {
+    const int lane = threadIdx.x & 31;
+    const int64_t o = static_cast<int64_t>(blockIdx.x) * 8 + (threadIdx.x >> 5);
+    if (o >= out) return;
+    const int64_t t0 = static_cast<int64_t>(blockIdx.y) * TT;
+    const int nt = static_cast<int>(min(static_cast<int64_t>(TT), T - t0));
+    const int64_t nb = in / 32;
+    const uint8_t * row = W + o * nb * 34;
+    float acc[TT];
+#pragma unroll
+    for (int t = 0; t < TT; ++t) acc[t] = 0.0f;
+    for (int64_t b = lane; b < nb; b += 32) {
+        const unsigned short * blk = reinterpret_cast<const unsigned short *>(row + b * 34);   // 2-byte aligned
+        const float dw = f16_bits_to_f32(__ldg(blk));
+        int wv[8];
+#pragma unroll
+        for (int k = 0; k < 8; ++k) wv[k] = static_cast<int>(static_cast<uint32_t>(__ldg(blk + 1 + 2 * k)) | (static_cast<uint32_t>(__ldg(blk + 2 + 2 * k)) << 16));
+#pragma unroll
+        for (int t = 0; t < TT; ++t) {
+            if (t < nt) {
+                const int4 * xq = reinterpret_cast<const int4 *>(qx + (t0 + t) * in + b * 32);
+                const int4 x0 = __ldg(xq), x1 = __ldg(xq + 1);
+                int isum = 0;
+                isum = __dp4a(wv[0], x0.x, isum); isum = __dp4a(wv[1], x0.y, isum);
+                isum = __dp4a(wv[2], x0.z, isum); isum = __dp4a(wv[3], x0.w, isum);
+                isum = __dp4a(wv[4], x1.x, isum); isum = __dp4a(wv[5], x1.y, isum);
+                isum = __dp4a(wv[6], x1.z, isum); isum = __dp4a(wv[7], x1.w, isum);
+                acc[t] += dw * dx[(t0 + t) * nb + b] * (float)isum;
+            }
+        }
+    }
+#pragma unroll
+    for (int t = 0; t < TT; ++t) {
+        float v = acc[t];
+        for (int off = 16; off > 0; off >>= 1) v += __shfl_xor_sync(0xffffffffu, v, off);
+        if (lane == 0 && t < nt) y[(t0 + t) * out + o] = v;
+    }
+}
+
 cudaError_t q8_scratch_alloc(Q8Scratch & s, int64_t T_max, int64_t in_max) {
     cudaError_t e = cudaMalloc(&s.qx, sizeof(int8_t) * T_max * in_max);
     if (e != cudaSuccess) return e;
@@ -72,6 +120,25 @@ void q8_scratch_free(Q8Scratch & s) {
 
 cudaError_t q8_0_gemv_dp4a(const uint8_t * d_W, int64_t in, int64_t out, const float * d_x, int64_t T,
                            float * d_y, const Q8Scratch & s, cudaStream_t stream) {
+    if (in % 32 != 0 || T > s.T_max || in > s.in_max) return cudaErrorInvalidValue;
+    dim3 gq((unsigned)(in / 32), (unsigned)T);
+    quantize_q8_1_kernel<<<gq, 32, 0, stream>>>(d_x, in, s.qx, s.dx);
+    static int bt = -1;   // QWEN_Q8_BT=0: the one-warp-per-(row, token) reference kernel
+    if (bt < 0) { const char * e = std::getenv("QWEN_Q8_BT"); bt = e ? std::atoi(e) : 1; }
+    if (!bt) {
+        dim3 gg((unsigned)out, (unsigned)T);
+        q8_0_gemv_dp4a_kernel<<<gg, 32, 0, stream>>>(d_W, in, out, s.qx, s.dx, d_y, T);
+        return cudaGetLastError();
+    }
+    const unsigned gx = static_cast<unsigned>((out + 7) / 8);
+    if (T <= 1) q8_0_gemv_dp4a_kernel_bt<1><<<dim3(gx, 1), 256, 0, stream>>>(d_W, in, out, s.qx, s.dx, d_y, T);
+    else if (T <= 4) q8_0_gemv_dp4a_kernel_bt<4><<<dim3(gx, 1), 256, 0, stream>>>(d_W, in, out, s.qx, s.dx, d_y, T);
+    else q8_0_gemv_dp4a_kernel_bt<8><<<dim3(gx, static_cast<unsigned>((T + 7) / 8)), 256, 0, stream>>>(d_W, in, out, s.qx, s.dx, d_y, T);
+    return cudaGetLastError();
+}
+
+cudaError_t q8_0_gemv_dp4a_ref(const uint8_t * d_W, int64_t in, int64_t out, const float * d_x, int64_t T,
+                               float * d_y, const Q8Scratch & s, cudaStream_t stream) {
     if (in % 32 != 0 || T > s.T_max || in > s.in_max) return cudaErrorInvalidValue;
     dim3 gq((unsigned)(in / 32), (unsigned)T);
     quantize_q8_1_kernel<<<gq, 32, 0, stream>>>(d_x, in, s.qx, s.dx);

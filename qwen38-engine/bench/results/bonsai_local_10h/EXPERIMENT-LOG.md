@@ -57,6 +57,23 @@ See `M2-ATTEMPTS.md` (every attempt with its numbers).
   (`m2_fix_ctx65536_p512_*`); real 64K coding context m0 / m2 / adaptive / PLD+adaptive ids `d7d3417a`.
 - Depth probe on the final build (`m2_depth3_*`): 32K 14.03, 64K 11.82, 128K 8.90 tok/s (peak 6351 / 6759 / 7349 MiB).
 
+## Quantization roofline and GPU dispatch (second session request)
+
+See `docs/QUANT_MATH_AND_GPU_DISPATCH.md` (formal arithmetic of every format, the identities the kernels rely on, the
+`__CUDA_ARCH__` plan) and `bench/quant_roofline_bench.cu` (`roofline_before.*`, `roofline_after.*`).
+
+- Measured ceilings: DRAM read 222.4 GB/s (86.9% of 256 GB/s), dp4a 3.65 T instr/s (14.6 T int8 MAC/s), FFMA 3.53 T/s.
+- T=1: Q4_K / Q5_K / IQ4_XS reach 88-91% of the measured bandwidth, PTQ1_0 54% (issue-bound at 1.75 bpw), Q3_K 30%,
+  Q6_K 52%. T >= 16: 4-11% of the int8 MAC peak for every format.
+- Kept: **batched Q8_0 GEMV** (8 rows per block, weights decoded once per 8 tokens, bit-identical to the old kernel):
+  T=4 2126 -> 622 us, T=64 33.8 -> 9.0 ms; `q8_gemv_parity` PASS; Qwen greedy 48/48; r3 Q8_0 MTP head adaptive
+  26.96 tok/s on the 509-token prompt (ids `26a58a94`).
+- Not kept: Q6_K `q - 32` and Q3_K `low2 - 4*!hbit` with OR/SUB/XOR instead of `__vsub4` / `__vcmpeq4` (same bytes):
+  Q3_K T=1 576.6 -> 613.9 us, Q6_K 631.0 -> 683.9 us, reverted. The FWHT + Q8_1 fusion already exists
+  (`rotate_q8_kernel`, shared memory); a register-only FWHT was not built (shuffles load the MIO pipe that limits the
+  GEMVs). The base-3 decode without div/mod is the M2 v3 kernel. IQ2 formats and Q2_K have no GPU kernel.
+- Only sm_61 is built and measured (hardware lock); the dispatch for sm_75..sm_120 is a documented plan.
+
 ## M3: 128K prefill
 
 See `M3-ATTEMPTS.md` (8 attempts with their numbers).
@@ -70,6 +87,13 @@ See `M3-ATTEMPTS.md` (8 attempts with their numbers).
   shared-memory activation reads for the bit-identical accumulation order; the attention part (about 1430 s) is
   latency-bound with one 8-warp block per SM (229 registers); see the analysis at the end of `M3-ATTEMPTS.md`.
 
+- Second session: one more GEMM attempt (M3-ATTEMPTS #10, more rows per warp with token slices: no gain) and a re-run
+  of the full 130965-token prefill on the final build (`m3_final_PTQ1_0_ctx131072_statetest`): **3636.85 s = 60.6 min**,
+  needle found in memory and from file, round trip bit-identical (save 4.56 s, load 2.77 s), decode after 128K 8.73 tok/s,
+  peak 7349 MiB. K/V reuse above 48x was not reached: 48 rows already need 229 registers per thread, and the variants
+  with more or fewer rows per block (#4, #6, #9) were slower. Drafter verify limits (T=5 lossless, T=17 needs, VRAM rows):
+  `docs/DRAFTER_V2_CONTRACT.md`.
+
 ## M4: server
 
 See `M4-README.md`.
@@ -80,6 +104,9 @@ See `M4-README.md`.
   for token (stop string, `max_tokens` inside an accepted MTP batch, trimmed or re-tokenized history) no longer forces a
   full prefill. `x_stats.reuse` reports the source.
 - PLD reported `false` without a draft head (it runs on the MTP verify path).
+- Final build re-run: Bonsai stress 57/57 (`m4_bonsai_server_stress_final.log`), `server_test` 69/69
+  (`m4_server_test_final.log`), `webui_test` PASS, Qwen rollback bit-identical (`final_qwen_rollback_test`).
+- Pre-training contract for MTP / EAGLE-3 / DFlash: `docs/DRAFTER_V2_CONTRACT.md`.
 - Regression: Bonsai stress 57/57 (10 turns, VRAM 6545 MiB, RSS 1123 MiB), `server_test` 69/69, `webui_test`,
   `stop_filter_test` 36/36, Qwen greedy 48/48 and rollback, Bonsai MTP rollback, `dn_rec_ab_test`, `iso3_gpu_test`.
 
@@ -91,7 +118,9 @@ See `M4-README.md`.
 | PTQ1_0 decode with MTP (509 tokens) | 18.48 (Qwen blk.64, MTP 2) | **26.65** (r3 Q4_K_M, adaptive) |
 | Depth probe 32K / 64K / 128K | 9.29 / 7.06 / 4.72 | 13.48 / 11.52 / **8.91** |
 | MTP at a real 64K context (coding) | - | 14.13 tok/s adaptive (1.22x over 11.58), lossless |
-| 128K prefill (130965 tokens) | 62.9 min | 60.4 min (target 50 missed) |
+| 128K prefill (130965 tokens) | 62.9 min | 60.4 min (final build re-run 60.6 min; target 50 missed) |
+| Q8_0 GEMV T=4 / T=64 (ffn_up shape) | 2126 us / 33.8 ms | 622 us / 9.0 ms |
+| r3 Q8_0 MTP head, adaptive, 509 tokens | - | 26.96 tok/s |
 | Decode after a real 128K context | 4.54 | 8.66 |
 | GEMV decode kernel ffn_up T=1 / lm_head T=1 | 208.3 / 2778 us | 150.1 / 1997 us |
 | Decode attention per layer, n = 131072, T = 1 / 5 | 8.80 / 37.0 ms | 3.48 / 15.5 ms |

@@ -40,3 +40,9 @@ The < 50 min target is missed by 10.4 min. What is left after these attempts:
 | # | Attempt | Result | Kept |
 |---|---|---|---|
 | 9 | Attention double-buffered: 8-position tiles, two FP32 K/V tile buffers (2 x 16 KiB), one barrier per tile, every warp dequantizes its share of tile i+1 (byte loads from the cache) before computing tile i, so dequant and compute of different warps overlap | 83.5 -> 110.1 ms (T=64, n=131072, with slices): the per-tile softmax and reduce-scatter overhead doubles at 8 positions | no |
+| 10 | tile2 GEMM with more rows per warp sharing each activation load: codes of R rows decoded first, tokens in slices of TH so fewer activation registers are live, `__launch_bounds__(256, 2)`. `<16,4,TH=8>` / `<16,4,TH=4>` / `<16,3,TH=8>` / `<32,2,TH=8>` | T=64 ffn_up 3090.8 (default) vs 4612.3 / 3795.1 / 3062.7 / 6028.3 us; the 128-register cap spills 40-248 B; `<32,2>` also gives 30/180 wrong results (the dx staging only covers 16 tokens). The restructured loop also pushed the default `<16,2>` from 127 to 146 registers (one block per SM, 762 -> 1064 us) | no, file reverted |
+
+## Re-run on the final build (`m3_final_PTQ1_0_ctx131072_statetest`)
+
+Prefill 3636.85 s (60.6 min, 36.01 tok/s); needle `MAGENTA-FALCON-42` in memory and from file; state round trip PASS
+(save 4.56 s, load 2.77 s); decode after 128K 8.73 tok/s; peak 7349 MiB, RSS 674 MB. The < 50 min target stays missed.

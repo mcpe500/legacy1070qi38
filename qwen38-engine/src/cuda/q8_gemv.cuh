@@ -20,3 +20,6 @@ void q8_scratch_free(Q8Scratch & s);
 // d_W: device pointer to out * (in/32) Q8_0 blocks (34 bytes each). d_x: [T][in] FP32. d_y: [T][out] FP32.
 cudaError_t q8_0_gemv_dp4a(const uint8_t * d_W, int64_t in, int64_t out, const float * d_x, int64_t T,
                            float * d_y, const Q8Scratch & s, cudaStream_t stream = 0);
+// Reference: one warp per (row, token), the kernel before the batched one (bit-identical results; tests and benchmarks).
+cudaError_t q8_0_gemv_dp4a_ref(const uint8_t * d_W, int64_t in, int64_t out, const float * d_x, int64_t T,
+                               float * d_y, const Q8Scratch & s, cudaStream_t stream = 0);

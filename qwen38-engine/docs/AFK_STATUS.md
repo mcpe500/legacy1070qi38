@@ -648,6 +648,8 @@ This was a 10-hour local marathon on the GTX 1070 Ti: no Colab, no RTX PRO 6000.
 | MTP at a real 64K context, coding | - | 14.13 tok/s adaptive vs 11.58 without drafts, ids identical |
 | 128K prefill, 130965 tokens | 62.9 min | 60.4 min: target < 50 min **missed**; needle and state round trip PASS |
 | Decode after a real 128K context | 4.54 tok/s | 8.66 tok/s |
+| Q8_0 GEMV T=4 / T=64 | 2126 us / 33.8 ms | 622 us / 9.0 ms (batched, bit-identical) |
+| Roofline T=1, % of measured 222 GB/s | - | Q4_K 88%, IQ4_XS 91%, PTQ1_0 54%, Q3_K 30% (`docs/QUANT_MATH_AND_GPU_DISPATCH.md`) |
 | Server | `--state-load` only | `--state-save` (`POST /v1/state/save`, clean SIGTERM), pinned state checkpoint, prompt checkpoint for multi-turn reuse |
 
 Gates:
@@ -662,6 +664,8 @@ Gates:
 - `dn_rec_ab_test`, `iso3_gpu_test`.
 
 One VRAM incident: a GPU unit test run next to an idle benchmark server reached 7855 MiB in total. The engine itself always stayed at or below 7349 MiB.
+
+Specs: `docs/QUANT_MATH_AND_GPU_DISPATCH.md`, `docs/DRAFTER_V2_CONTRACT.md` (VRAM rows 32K/64K/128K; T=5 lossless, T=17 needs).
 
 Readings to keep:
 - Recommended setting: r3 Q4_K_M + adaptive drafting.
