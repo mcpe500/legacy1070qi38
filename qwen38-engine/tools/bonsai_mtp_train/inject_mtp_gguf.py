@@ -27,7 +27,13 @@ The output is a new file (the input is only read): the original header with bloc
 qwen35.nextn_predict_layers = 1, the original tensor infos and data copied byte for byte, then the new tensors.
 Use --in-place to replace the input file after the new one is complete and verified (atomic rename).
 
+Standalone head file (--mtp-only-out FILE.gguf, no --base needed): a small GGUF with only the 15 quantized blk.64 tensors
+(about 273 MiB for q4_k_m, 450 MiB for q8_0). Copy it to the PC with the Bonsai GGUF and inject it there with
+--from-gguf FILE.gguf: the tensors are copied raw, so no torch is needed on that machine.
+
 Usage:
+  python3 inject_mtp_gguf.py --from-checkpoint mtp_final.safetensors --quant q4_k_m --mtp-only-out mtp_blk64_q4_k_m.gguf
+  python3 inject_mtp_gguf.py --base Ternary-Bonsai-2-27B-PTQ1_0.gguf --from-gguf mtp_blk64_q4_k_m.gguf --out ...-mtp.gguf
   python3 inject_mtp_gguf.py --base Ternary-Bonsai-2-27B-PTQ1_0.gguf --from-checkpoint mtp_blk64.safetensors \
       --quant q4_k_m --out Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf
   python3 inject_mtp_gguf.py --base Ternary-Bonsai-2-27B-PTQ1_0.gguf --from-gguf Qwen3.8-27B-UD-Q4_K_M.gguf --out ...
@@ -268,14 +274,58 @@ def quantize(name, arr, mode):
 # ------------------------------------------------------------------------------------------------------------ sources
 def load_checkpoint(path):
     if path.endswith(".safetensors"):
-        from safetensors.numpy import load_file   # noqa: E402
-        sd = load_file(path)
-        return {k: v.astype(np.float32) for k, v in sd.items()}
+        try:   # torch reads FP32 / F16 / BF16; safetensors.numpy has no bfloat16
+            from safetensors.torch import load_file   # noqa: E402
+            return {k: v.float().numpy() for k, v in load_file(path).items()}
+        except ImportError:
+            from safetensors.numpy import load_file   # noqa: E402
+            return {k: v.astype(np.float32) for k, v in load_file(path).items()}
     import torch   # noqa: E402
     sd = torch.load(path, map_location="cpu", weights_only=True)
     if "mtp" in sd and isinstance(sd["mtp"], dict):
         sd = sd["mtp"]
     return {k: v.float().numpy() for k, v in sd.items()}
+
+
+def write_mtp_only(ckpt, quant, out, alignment=32):
+    """A GGUF v3 holding only the blk.64 tensors (quantized as for an injection), usable as --from-gguf donor."""
+    sd = load_checkpoint(ckpt)
+    missing = [n for n in MTP_SHAPES if n not in sd]
+    if missing:
+        raise SystemExit(f"checkpoint lacks {missing}")
+    new = []
+    for name, (ne0, ne1) in MTP_SHAPES.items():
+        tt, raw = quantize(name, sd[name], quant)
+        new.append((name, [ne0] if ne1 is None else [ne0, ne1], tt, raw))
+        print(f"  {name:40s} type {tt:2d}  {len(raw) / 2**20:7.2f} MiB")
+    kv = [("general.architecture", T_STR, w_str("qwen35")), ("general.alignment", T_U32, struct.pack("<I", alignment)),
+          ("general.name", T_STR, w_str("Ternary Bonsai 2 27B MTP head (blk.64)")),
+          ("bonsai.mtp.source", T_STR, w_str(f"{os.path.basename(ckpt)} quantized {quant}"))]
+    infos, cur = [], 0
+    for name, dims, tt, raw in new:
+        infos.append((name, dims, tt, cur))
+        cur = (cur + len(raw) + alignment - 1) // alignment * alignment
+    tmp = out + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(GGUF_MAGIC + struct.pack("<IQQ", 3, len(new), len(kv)))
+        for k, vt, raw in kv:
+            f.write(w_str(k) + struct.pack("<I", vt) + raw)
+        for name, dims, tt, off in infos:
+            f.write(w_str(name) + struct.pack("<I", len(dims)) + struct.pack(f"<{len(dims)}Q", *dims) + struct.pack("<IQ", tt, off))
+        f.write(b"\0" * ((-f.tell()) % alignment))
+        data0 = f.tell()
+        for (name, dims, tt, raw), (_, _, _, off) in zip(new, infos):
+            f.write(b"\0" * (data0 + off - f.tell()))
+            f.write(raw)
+        f.write(b"\0" * ((-f.tell()) % alignment))
+    chk = Reader(tmp)   # verify: every tensor is there with the planned bytes
+    for name, dims, tt, raw in new:
+        d2, t2, got = chk.tensor_bytes(name)
+        if list(d2) != dims or t2 != tt or got[: len(raw)] != raw:
+            raise SystemExit(f"verify failed for {name}")
+    os.replace(tmp, out)
+    print(f"wrote {out}: {len(new)} blk.64 tensors, {os.path.getsize(out) / 2**20:.1f} MiB ({quant})")
+    return 0
 
 
 def main():
@@ -287,10 +337,15 @@ def main():
     src.add_argument("--from-gguf")
     ap.add_argument("--quant", default="q4_k_m", choices=["q4_k_m", "q8_0"])
     ap.add_argument("--in-place", action="store_true", help="replace --base with the result (after it is complete)")
+    ap.add_argument("--mtp-only-out", help="write only the quantized blk.64 tensors to this GGUF (needs --from-checkpoint, no --base)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
+    if a.mtp_only_out:
+        if not a.from_checkpoint:
+            ap.error("--mtp-only-out needs --from-checkpoint")
+        return write_mtp_only(a.from_checkpoint, a.quant, a.mtp_only_out)
     if not a.base or not (a.from_checkpoint or a.from_gguf):
         ap.error("--base and one of --from-checkpoint / --from-gguf are required")
 
