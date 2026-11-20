@@ -19,6 +19,8 @@
 
 struct EngineConfig {
     std::string gguf;
+    std::string mtp_gguf;        // optional MTP sidecar GGUF (blk.64.* only, --mtp-gguf): overrides/supplies the draft head
+                                 // without rewriting the main file; its tensors are mmapped from the sidecar
     int ctx_max = 4096;          // KV cache positions (hard cap 8192 on the Qwen path; 131072 on the Bonsai ternary
                                  // path with iso3 KV and the tiled attention kernel above 8192)
     int t_max = 512;             // largest batch of tokens in one forward call
@@ -118,6 +120,8 @@ public:
     std::function<void(int il, const float * x, int T)> tap;
 
     GgufIndex ix;
+    GgufIndex mtp_ix;                     // --mtp-gguf sidecar (empty when unused)
+    const GgufIndex * mtp_src = &ix;      // where the blk.64 tensors come from: ix, or mtp_ix with a sidecar
     Tokenizer tok;
     int64_t n_vocab = 0;
     int n_resident_layers = 0;

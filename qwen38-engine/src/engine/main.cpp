@@ -117,6 +117,7 @@ int main(int argc, char ** argv) {
             return argv[++i];
         };
         if (a == "-m") cfg.gguf = next();
+        else if (a == "--mtp-gguf") cfg.mtp_gguf = next();   // blk.64-only sidecar (inject_mtp_gguf.py --mtp-only-out)
         else if (a == "-p") prompt = next();
         else if (a == "-f" || a == "--prompt-file") {
             const std::string pf = next();
