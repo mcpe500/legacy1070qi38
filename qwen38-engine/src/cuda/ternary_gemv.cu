@@ -623,8 +623,18 @@ cudaError_t launch_ptq1_tile(const uint8_t * W, int64_t in, int64_t out, const A
 // once per row: two shared loads per dp4a made it shared-memory bound). Shared layout [word][TT + 4]: one lane reads its
 // TT consecutive words as 128-bit loads, and the +4 padding keeps the 8 lanes of a 128-byte phase on distinct banks.
 // Per row and token the accumulation is the reference one (acc += d * dx * dot, groups in order): bit-identical.
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+// sm_90 keeps 64 KiB of registers per SM, so a 256-thread block of this kernel fits four blocks where sm_61
+// fits two (measured: 127 registers x 256 threads = 32512 of the 65536 registers per SM, and forcing three on
+// sm_61 spills and costs 23%). The engine builds for sm_61 only; the branch keeps the source honest for a
+// multi-arch build and is compile-checked by scripts/arch_compile_check.sh on sm_61/75/86/89.
+#define PTQ1_TILE_MIN_BLOCKS 4
+#else
+#define PTQ1_TILE_MIN_BLOCKS 0   // no floor: the compiler picks the occupancy it can hold
+#endif
+
 template <int TT, int R, bool FAST>
-__global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_tile2(const uint8_t * __restrict__ W, int64_t in, int64_t out,
+__global__ void __launch_bounds__(PW * 32, PTQ1_TILE_MIN_BLOCKS) gemv_ptq1_0_kernel_tile2(const uint8_t * __restrict__ W, int64_t in, int64_t out,
                                                                     const int8_t * __restrict__ qx, const float * __restrict__ dx,
                                                                     int T, float * __restrict__ y) {
     constexpr int TS = TT + 4;

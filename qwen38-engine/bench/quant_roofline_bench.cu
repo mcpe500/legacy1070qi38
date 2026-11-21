@@ -126,7 +126,8 @@ int main(int argc, char ** argv) {
         {"PTQ1_0", 0, 143, 128, 28, 26}, {"Q2_0 (PQ2_0)", 1, 42, 64, 18, 0},
         {"Q3_K", 2, 11, 256, 110, 108}, {"Q4_K", 2, 12, 256, 144, 0}, {"Q5_K", 2, 13, 256, 176, 0}, {"Q6_K", 2, 14, 256, 210, 208},
         {"Q8_0", 3, 8, 32, 34, 0}, {"IQ4_NL", 2, 20, 32, 18, 0}, {"IQ4_XS", 2, 23, 256, 136, 0}, {"IQ3_S", 2, 21, 256, 110, 0},
-        {"IQ2_XXS", -1, 16, 256, 66, 0}, {"IQ2_XS", -1, 17, 256, 74, 0}, {"IQ2_S", -1, 22, 256, 82, 0}, {"Q2_K", -1, 10, 256, 84, 80},
+        {"Q2_K", 2, 10, 256, 84, 80},                                  // kernel since exp/bonsai-overnight-v2 (M4)
+        {"IQ2_XXS", -1, 16, 256, 66, 0}, {"IQ2_XS", -1, 17, 256, 74, 0}, {"IQ2_S", -1, 22, 256, 82, 0},
     };
     // kind 4 = the same PTQ1_0 weights through the opt-in fast prefill path (fast = true), measured next to kind 0
     const Fmt fast_fmt = {"PTQ1_0 fast", 4, 143, 128, 28, 26};

@@ -1,0 +1,6 @@
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 2072 MiB (budget 14541)
+[PASS] Q2_K in 5120 out 1741 T  1: rel_rms vs libggml q2_K dequant 8.314e-08 (bar 3.0e-06)
+[PASS] Q2_K in 5120 out 1741 T  3: rel_rms vs libggml q2_K dequant 8.392e-08 (bar 3.0e-06)
+[PASS] Q2_K in 5120 out 1741 T 16: rel_rms vs libggml q2_K dequant 8.255e-08 (bar 3.0e-06)
+[PASS] Q2_K in 5120 out 1741 T 64: rel_rms vs libggml q2_K dequant 8.161e-08 (bar 3.0e-06)
+q2_k_parity: 4 cases, 0 fail, worst rel_rms 8.392e-08 -> PASS
