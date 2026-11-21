@@ -122,6 +122,11 @@ add_executable(quant_roofline_bench bench/quant_roofline_bench.cu)
 target_link_libraries(quant_roofline_bench PRIVATE gpu_cuda CUDA::cudart)
 add_executable(ternary_ab_test tests/cuda/ternary_ab_test.cu)
 target_link_libraries(ternary_ab_test PRIVATE gpu_cuda CUDA::cudart)
+
+# Numeric gate for the opt-in PTQ1_0 fast-prefill kernel (fast = true): cosine >= 0.99999 against an
+# FP64 reference, and a greedy token identical to the default path at every prefill T.
+add_executable(ptq1_fast_gate tests/cuda/ptq1_fast_gate.cu)
+target_link_libraries(ptq1_fast_gate PRIVATE gpu_cuda CUDA::cudart)
 add_executable(attn_long_test tests/cuda/attn_long_test.cu)
 target_link_libraries(attn_long_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
 

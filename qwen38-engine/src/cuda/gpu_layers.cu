@@ -426,7 +426,11 @@ struct GpuLayers::Impl {
             W.p = stage;
         }
         if (ternary::is_ternary(W.type)) {
-            if (W.type == ternary::kTypePtq1_0) CK(gemv_ptq1_0_dp4a(W.p, W.in, W.out, act, T, out, st));
+            // The PTQ1_0 prefill kernel has an opt-in relaxed-order variant (fast = true, two independent FP32 group
+        // accumulators, QWEN_PTQ1_FAST picks its tile). It is measured on this card and rejected: the paired A/B in
+        // bench/quant_roofline_bench.cu --fast gives 0.95x-1.00x on the GEMV, the engine prefill of a 509-token
+        // prompt goes 7.17 s -> 9.52 s, and the greedy tokens diverge at step 16. The default path is always used.
+        if (W.type == ternary::kTypePtq1_0) CK(gemv_ptq1_0_dp4a(W.p, W.in, W.out, act, T, out, st));
             else CK(gemv_q2_0_dp4a(W.p, W.in, W.out, act, T, out, st));
         } else if (W.type == GT_Q8_0) CK(q8_0_gemv_dp4a(W.p, W.in, W.out, in, T, out, q8, st));
         else if (use_dp4a(W)) {

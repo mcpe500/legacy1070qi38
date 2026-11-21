@@ -28,7 +28,13 @@ cudaError_t gemv_q2_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const Act
 
 // y[t][o] = sum_i W[o][i] * x'[t][i] for the PTQ1_0 packing (type 143: one fp16 scale per 128 values at offset 26,
 // 26 payload bytes of base-3 digits). `in` must be a multiple of 128. Needs ternary_ptq1_init() once.
-cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s);
+// fast=false keeps the reference FP32 group order (bit-identical), and only decode (T <= 5) and the measured
+// prefill tiles use it. fast=true is the relaxed-order variant (two independent FP32 group accumulators, tile picked
+// by QWEN_PTQ1_FAST); it is exercised by tests/cuda/ptq1_fast_gate.cu only: on this card it is a measured loss
+// (bench/quant_roofline_bench.cu --fast: 0.95x-1.00x on the GEMV, 0.76x on the engine prefill, greedy tokens diverge
+// at step 16), so the engine never calls it.
+cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y,
+                             cudaStream_t s, bool fast = false);
 // Uploads the byte -> digit tables the kernel reads through constant memory. Idempotent, thread-unsafe by design
 // (call it once before the first GEMV, like qmat_init on the CPU side).
 void ternary_ptq1_init();
@@ -43,3 +49,9 @@ cudaError_t ternary_rotate_q8(const float * x, const float * signs, float * y, i
 // kernels, which must produce bit-identical outputs.
 cudaError_t gemv_q2_0_dp4a_ref(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s);
 cudaError_t gemv_ptq1_0_dp4a_ref(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s);
+
+// Occupancy diagnostic of the prefill tile kernels: how many 64-thread blocks per SM the driver keeps resident for
+// <16,2>, <8,4>, <32,1> and <16,1>, plus the register and shared-memory cost of <16,2>. bench/quant_roofline_bench.cu
+// uses it to tell an issue-bound prefill GEMV from an occupancy-bound one. Any pointer may be null.
+void ptq1_prefill_occupancy(int * blocks_16_2, int * blocks_8_4, int * blocks_32_1, int * blocks_16_1,
+                            int * regs_16_2, int * shared_bytes_16_2, int * max_threads);

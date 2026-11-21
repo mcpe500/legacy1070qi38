@@ -623,7 +623,7 @@ cudaError_t launch_ptq1_tile(const uint8_t * W, int64_t in, int64_t out, const A
 // once per row: two shared loads per dp4a made it shared-memory bound). Shared layout [word][TT + 4]: one lane reads its
 // TT consecutive words as 128-bit loads, and the +4 padding keeps the 8 lanes of a 128-byte phase on distinct banks.
 // Per row and token the accumulation is the reference one (acc += d * dx * dot, groups in order): bit-identical.
-template <int TT, int R>
+template <int TT, int R, bool FAST>
 __global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_tile2(const uint8_t * __restrict__ W, int64_t in, int64_t out,
                                                                     const int8_t * __restrict__ qx, const float * __restrict__ dx,
                                                                     int T, float * __restrict__ y) {
@@ -669,11 +669,15 @@ __global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_tile2(const uint8_
         row[r] = reinterpret_cast<const uint32_t *>(W + (live[r] ? o[r] : 0) * ngroups * ternary::kPtqGroupBytes);
     }
     float acc[R][TT];
+    float acc2[R][TT];   // FAST only: odd k groups, so adjacent k steps never share a dependency chain
     uint32_t nxt[R];
 #pragma unroll
     for (int r = 0; r < R; ++r) {
 #pragma unroll
-        for (int t = 0; t < TT; ++t) acc[r][t] = 0.0f;
+        for (int t = 0; t < TT; ++t) {
+            acc[r][t] = 0.0f;
+            acc2[r][t] = 0.0f;
+        }
         nxt[r] = lane < 7 * KG ? __ldg(row[r] + ld_g * 7 + ld_w) : 0u;
     }
     uint32_t xr[XPT];
@@ -722,7 +726,14 @@ __global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_tile2(const uint8_
                 const uint32_t c2 = tab[8 * ((wv >> 16) & 0xFFu) + off2], c3 = tab[8 * (wv >> 24) + off2];
                 const int c4 = static_cast<int>(__byte_perm(__byte_perm(c0, c1, 0x0040), __byte_perm(c2, c3, 0x0040), 0x5410));
 #pragma unroll
-                for (int t = 0; t < TT; ++t) acc[r][t] += d * dxv[t] * dp4a_f(c4, a4[t]);
+                for (int t = 0; t < TT; ++t) {
+                    if (FAST) {
+                        if ((k & 1) == 0) acc[r][t] += d * dxv[t] * dp4a_f(c4, a4[t]);
+                        else acc2[r][t] += d * dxv[t] * dp4a_f(c4, a4[t]);
+                    } else {
+                        acc[r][t] += d * dxv[t] * dp4a_f(c4, a4[t]);
+                    }
+                }
             }
         }
         if (more) store_step(buf ^ 1);
@@ -733,6 +744,7 @@ __global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_tile2(const uint8_
 #pragma unroll
         for (int t = 0; t < TT; ++t) {
             float v = acc[r][t];
+            if (FAST) v += acc2[r][t];
 #pragma unroll
             for (int off = 16; off > 0; off >>= 1) v += __shfl_xor_sync(0xffffffffu, v, off);
             if (lane == 0 && live[r] && t < nt) y[static_cast<int64_t>(t0 + t) * out + o[r]] = v;
@@ -740,10 +752,10 @@ __global__ void __launch_bounds__(PW * 32) gemv_ptq1_0_kernel_tile2(const uint8_
     }
 }
 
-template <int TT, int R>
+template <int TT, int R, bool FAST>
 cudaError_t launch_ptq1_tile2(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
     const dim3 grid(static_cast<unsigned>((out + PW * R - 1) / (PW * R)), static_cast<unsigned>((T + TT - 1) / TT));
-    gemv_ptq1_0_kernel_tile2<TT, R><<<grid, PW * 32, 0, s>>>(W, in, out, a.qx, a.dx, static_cast<int>(T), y);
+    gemv_ptq1_0_kernel_tile2<TT, R, FAST><<<grid, PW * 32, 0, s>>>(W, in, out, a.qx, a.dx, static_cast<int>(T), y);
     return cudaGetLastError();
 }
 
@@ -882,25 +894,58 @@ cudaError_t gemv_q2_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const Act
 
 namespace {
 // T > 5. QWEN_PTQ1_TILE (tuning only): 0 = v2 tile kernel, 1..n = tile2 variants below.
-cudaError_t ptq1_prefill_dispatch(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+cudaError_t ptq1_prefill_dispatch(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s, bool fast) {
     static int mode = -1;
     // Measured (tests/cuda/ternary_bench.cu, ffn_up 5120x17408, T = 16): v2 tile 1741 us, tile2 <16,4> 1158 us,
     // <16,1> 1275 us, <16,2> 762 us (the default; 123 registers, two blocks per SM).
     if (mode < 0) { const char * e = std::getenv("QWEN_PTQ1_TILE"); mode = e ? std::atoi(e) : 1; }
+    // Opt-in relaxed-order prefill: same lane mapping, same integer dots, two independent FP32 group
+    // accumulators (even groups in acc, odd ones in acc2), merged before the warp reduce. Never on the
+    // default path: the caller only sets fast for large chunked prefill, and the numeric gate is checked
+    // outside this kernel (cosine >= 0.99999 against the FP64 reference).
+    // Two accumulators cost registers, so the fastest tile is not always the default <16,2>: the tile is
+    // picked by QWEN_PTQ1_FAST (1 = <16,2>, 2 = <16,1>, 3 = <32,1>, 4 = <32,2>, 5 = <8,2>, 6 = <16,4>).
+    static int fmode = -1;
+    if (fmode < 0) { const char * e = std::getenv("QWEN_PTQ1_FAST"); fmode = e ? std::atoi(e) : 1; }
+    // fast = true only comes from the gate test; the engine always passes false (see gpu_layers.cu).
+    if (fast) switch (fmode) {
+        case 2: return launch_ptq1_tile2<16, 1, true>(W, in, out, a, T, y, s);
+        case 3: return launch_ptq1_tile2<32, 1, true>(W, in, out, a, T, y, s);
+        case 4: return launch_ptq1_tile2<32, 2, true>(W, in, out, a, T, y, s);
+        case 5: return launch_ptq1_tile2<8, 2, true>(W, in, out, a, T, y, s);
+        case 6: return launch_ptq1_tile2<16, 4, true>(W, in, out, a, T, y, s);
+        default: return launch_ptq1_tile2<16, 2, true>(W, in, out, a, T, y, s);
+    }
+    if (T <= 16) return launch_ptq1_tile2<16, 2, false>(W, in, out, a, T, y, s);
     switch (mode) {
         case 0: return T <= 8 ? launch_ptq1_tile<8>(W, in, out, a, T, y, s) : launch_ptq1_tile<16>(W, in, out, a, T, y, s);
-        case 2: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 4>(W, in, out, a, T, y, s);
-        case 4: return T <= 8 ? launch_ptq1_tile2<8, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 1>(W, in, out, a, T, y, s);
-        case 5: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s)
-                              : (T <= 16 ? launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<32, 1>(W, in, out, a, T, y, s));
-        case 6: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s)
-                              : (T <= 16 ? launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s) : launch_ptq1_tile2<32, 2>(W, in, out, a, T, y, s));
-        default: return T <= 8 ? launch_ptq1_tile2<8, 4>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 2>(W, in, out, a, T, y, s);
+        case 2: return T <= 8 ? launch_ptq1_tile2<8, 4, false>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 4, false>(W, in, out, a, T, y, s);
+        case 4: return T <= 8 ? launch_ptq1_tile2<8, 2, false>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 1, false>(W, in, out, a, T, y, s);
+        case 5: return T <= 8 ? launch_ptq1_tile2<8, 4, false>(W, in, out, a, T, y, s)
+                              : (T <= 16 ? launch_ptq1_tile2<16, 2, false>(W, in, out, a, T, y, s) : launch_ptq1_tile2<32, 1, false>(W, in, out, a, T, y, s));
+        case 6: return T <= 8 ? launch_ptq1_tile2<8, 4, false>(W, in, out, a, T, y, s)
+                              : (T <= 16 ? launch_ptq1_tile2<16, 2, false>(W, in, out, a, T, y, s) : launch_ptq1_tile2<32, 2, false>(W, in, out, a, T, y, s));
+        default: return T <= 8 ? launch_ptq1_tile2<8, 4, false>(W, in, out, a, T, y, s) : launch_ptq1_tile2<16, 2, false>(W, in, out, a, T, y, s);
     }
 }
 }  // namespace
 
-cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+void ptq1_prefill_occupancy(int * blocks_16_2, int * blocks_8_4, int * blocks_32_1, int * blocks_16_1,
+                            int * regs_16_2, int * shared_bytes_16_2, int * max_threads) {
+    int b = 0;
+    if (blocks_16_2) { *blocks_16_2 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&b, gemv_ptq1_0_kernel_tile2<16, 2, false>, PW * 32, 0) == cudaSuccess ? b : -1; }
+    if (blocks_8_4) { *blocks_8_4 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&b, gemv_ptq1_0_kernel_tile2<8, 4, false>, PW * 32, 0) == cudaSuccess ? b : -1; }
+    if (blocks_32_1) { *blocks_32_1 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&b, gemv_ptq1_0_kernel_tile2<32, 1, false>, PW * 32, 0) == cudaSuccess ? b : -1; }
+    if (blocks_16_1) { *blocks_16_1 = cudaOccupancyMaxActiveBlocksPerMultiprocessor(&b, gemv_ptq1_0_kernel_tile2<16, 1, false>, PW * 32, 0) == cudaSuccess ? b : -1; }
+    cudaFuncAttributes a{};
+    const bool ok = cudaFuncGetAttributes(&a, gemv_ptq1_0_kernel_tile2<16, 2, false>) == cudaSuccess;
+    if (regs_16_2) *regs_16_2 = ok ? a.numRegs : -1;
+    if (shared_bytes_16_2) *shared_bytes_16_2 = ok ? static_cast<int>(a.sharedSizeBytes) : -1;
+    if (max_threads) *max_threads = ok ? a.maxThreadsPerBlock : -1;
+}
+
+cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y,
+                             cudaStream_t s, bool fast) {
     if (in % (128 * KG) != 0) return cudaErrorInvalidValue;
     ternary_ptq1_init();
     static int dec = -1;   // decode kernel for T <= 5 (QWEN_PTQ1_DEC): 2 = v2 (digit tables), 3 = v3 (arithmetic decode)
@@ -942,19 +987,22 @@ cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const A
         if (T == 4) return launch_ptq1_v3<4, 2>(W, in, out, a, T, y, s);
         return launch_ptq1_v3<5, 2>(W, in, out, a, T, y, s);
     }
-    if (T <= 1) {
+    // fast is a prefill-only relaxation (T > 5 tiles). The v2 decode kernels below are unchanged and bit-identical.
+    if (T <= 5) {
         static int r1 = -1;   // rows per warp of the decode kernel (QWEN_PTQ1_R1, tuning)
         if (r1 < 0) { const char * e = std::getenv("QWEN_PTQ1_R1"); r1 = e ? std::atoi(e) : 4; }
-        if (r1 == 2) return launch_ptq1_v2<1, 2>(W, in, out, a, T, y, s);
-        if (r1 == 3) return launch_ptq1_v2<1, 3>(W, in, out, a, T, y, s);
-        if (r1 == 6) return launch_ptq1_v2<1, 6>(W, in, out, a, T, y, s);
-        return launch_ptq1_v2<1, 4>(W, in, out, a, T, y, s);
+        if (T <= 1) {
+            if (r1 == 2) return launch_ptq1_v2<1, 2>(W, in, out, a, T, y, s);
+            if (r1 == 3) return launch_ptq1_v2<1, 3>(W, in, out, a, T, y, s);
+            if (r1 == 6) return launch_ptq1_v2<1, 6>(W, in, out, a, T, y, s);
+            return launch_ptq1_v2<1, 4>(W, in, out, a, T, y, s);
+        }
+        if (T == 2) return launch_ptq1_v2<2, 2>(W, in, out, a, T, y, s);
+        if (T == 3) return launch_ptq1_v2<3, 2>(W, in, out, a, T, y, s);
+        if (T == 4) return launch_ptq1_v2<4, 2>(W, in, out, a, T, y, s);
+        return launch_ptq1_v2<5, 2>(W, in, out, a, T, y, s);
     }
-    if (T == 2) return launch_ptq1_v2<2, 2>(W, in, out, a, T, y, s);
-    if (T == 3) return launch_ptq1_v2<3, 2>(W, in, out, a, T, y, s);
-    if (T == 4) return launch_ptq1_v2<4, 2>(W, in, out, a, T, y, s);
-    if (T == 5) return launch_ptq1_v2<5, 2>(W, in, out, a, T, y, s);
-    return ptq1_prefill_dispatch(W, in, out, a, T, y, s);
+    return ptq1_prefill_dispatch(W, in, out, a, T, y, s, fast);
 }
 
 void ternary_ptq1_init() {
