@@ -237,10 +237,17 @@ def chunk_loss(f, h_tgt, lm_w, T, cos_w):
     return kl, cos * cos_w, agree
 
 
+def unroll_K(args):
+    """Unrolled self-rollout steps of this run: --unroll (1..8) for the `mtp` drafter, --df3-block (16) for the
+    `df3` block schedule, which is the draft count of the 17-row verification batch of the engine
+    (1 target row + B drafts, qwen38-engine src/engine/generator.cpp kVerifyMax)."""
+    return args.df3_block if args.drafter == "df3" else args.unroll
+
+
 def unrolled_loss(student, emb_fn, lm_w, ids, H, args):
     """ids [B, L], H [B, L, Hd] (teacher output-normed hidden). Steps k = 1..K as described in the module docstring."""
     B, L = ids.shape
-    K = args.unroll
+    K = unroll_K(args)
     total = 0.0
     logs = []
     h_in = H[:, : L - 1]                    # step 1: h of position i feeds the token x_{i+1}
@@ -394,7 +401,7 @@ def train(args):
         gn = torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
         opt.step()
         if step % args.log_every == 0:
-            K = args.unroll
+            K = unroll_K(args)
             avg = [[sum(l[k][j] for l in acc_logs) / len(acc_logs) for j in range(3)] for k in range(K)]
             rec = {"step": step, "lr": lr_at(step), "grad_norm": float(gn), "s": time.time() - t0,
                    "kl": [a[0] for a in avg], "cos_loss": [a[1] for a in avg], "top1_agree": [a[2] for a in avg]}
@@ -429,6 +436,8 @@ def selftest():
 
     class A:
         unroll, kl_chunk, temperature, cos_weight, step_decay, ckpt = 4, 16, 1.0, 0.5, 0.8, True
+        drafter = "mtp"      # the selftest exercises the `mtp` drafter (the `df3` block schedule uses unroll = df3_block)
+        df3_block = 4        # only read when drafter == "df3"
     s = MTPHead(d)
     opt = torch.optim.AdamW(s.parameters(), lr=3e-3)
     ids = torch.randint(0, V, (B, L))
@@ -473,7 +482,18 @@ def main():
     ap.add_argument("--grad-accum", type=int, default=8)
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--warmup", type=int, default=300)
-    ap.add_argument("--unroll", type=int, default=4)
+    ap.add_argument("--drafter", default="mtp", choices=["mtp", "df3"],
+                    help="mtp: the single-layer nextn head the engine loads as blk.64, trained with --unroll (1..8) "
+                         "unrolled self-rollout steps. df3: the block-diffusion schedule, --df3-block (default 16) drafts "
+                         "per verification batch; the student is the same head, while a 2-3 layer DFlash head needs a "
+                         "loader path the engine does not have yet (docs/DRAFTER_V2_CONTRACT.md section 2)")
+    ap.add_argument("--df3-block", type=int, default=16,
+                    help="draft block of the df3 schedule (B of a B+1 row verification batch); 16 is the batch the "
+                         "engine verifies losslessly since M2")
+    ap.add_argument("--df3-layers", type=int, default=2, choices=[2, 3],
+                    help="decoder layers of the target DFlash head, recorded in the run config and the export "
+                         "metadata; the engine loader knows one layer, so a real 2-3 layer head needs M4-style work")
+    ap.add_argument("--unroll", type=int, default=4, help="unrolled self-rollout steps of the `mtp` drafter (1..8)")
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--cos-weight", type=float, default=0.5)
     ap.add_argument("--step-decay", type=float, default=0.8)
@@ -492,6 +512,15 @@ def main():
     ap.add_argument("--export-init", help="write the dequantized --export-init source as safetensors to --out and exit")
     ap.add_argument("--latest", metavar="DIR", help="print the newest checkpoint safetensors of a run directory and exit")
     a = ap.parse_args()
+    # The `mtp` drafter trains 1..8 unrolled steps; `df3` runs the block schedule of --df3-block drafts, which is
+    # the draft count of the verification batch the engine verifies losslessly (M2 of issue #57).
+    if a.drafter == "mtp" and not (1 <= a.unroll <= 8):
+        ap.error("--unroll must be 1..8 for the `mtp` drafter (a larger block is the `df3` schedule)")
+    if a.drafter == "df3" and not (1 <= a.df3_block <= 32):
+        ap.error("--df3-block must be 1..32 (the engine verifies 16 drafts + 1 target row since M2)")
+    if a.drafter == "df3":
+        print(f"df3 schedule: block of {a.df3_block} drafts, target head of {a.df3_layers} decoder layers "
+              "(recorded in the export metadata; the engine loader knows one layer)", flush=True)
     if a.latest:
         p = latest_checkpoint(a.latest)
         if not p:

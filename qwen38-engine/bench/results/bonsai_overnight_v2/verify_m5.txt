@@ -1,0 +1,28 @@
+== 1. trainer selftest (CPU) ==
+/home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/tools/bonsai_mtp_train/train_bonsai_mtp.py:452: UserWarning: Converting a tensor with requires_grad=True to a scalar may lead to unexpected behavior.
+Consider using tensor.detach() first. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/autograd/generated/python_variable_methods.cpp:820.)
+  losses.append(float(loss))
+full-size student: 424.7M parameters, GGUF shapes ok
+selftest: PASS
+== 2. drafter schedule matrix ==
+  mtp unroll=1 df3_block=16 -> 1 step(s)
+  mtp unroll=2 df3_block=16 -> 2 step(s)
+  mtp unroll=4 df3_block=16 -> 4 step(s)
+  mtp unroll=6 df3_block=16 -> 6 step(s)
+  mtp unroll=8 df3_block=16 -> 8 step(s)
+  df3 unroll=4 df3_block=12 -> 12 step(s)
+  df3 unroll=4 df3_block=16 -> 16 step(s)
+schedule matrix: PASS
+== 3. CLI rejects --unroll 12 ==
+  --unroll 12 rejected: PASS
+== 4. notebook regenerate + check ==
+check_colab_notebook: PASS
+== 5. GGUF names the trainer exports are exactly the engine loader names ==
+  15 tensors, no missing and no extra; eh_proj (5120, 10240)
+GGUF name/shape audit: PASS
+== 6. the converter unrotates token_embd (embedding fix audit) ==
+  invert_path: prism.hadamard.inverse_weight_names -> hadamard_unrotate in tensor()
+  hf name    : token_embd.weight -> model.embed_tokens.weight (plain basis)
+  engine     : Engine::mtp_forward does qmat_row_to_f32(tok_embd_) + hadamard_unrotate(.., signs_5120_)
+embedding fix audit: PASS
+verify_m5: PASS

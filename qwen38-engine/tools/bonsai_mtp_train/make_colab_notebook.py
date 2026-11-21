@@ -294,7 +294,10 @@ BATCH = 2  #@param {type:"integer"}
 GRAD_ACCUM = 8  #@param {type:"integer"}
 LR = 2e-4  #@param {type:"number"}
 WARMUP = 300  #@param {type:"integer"}
-UNROLL = 4  #@param {type:"integer"}
+UNROLL = 4  #@param {type:"integer"}    # unrolled self-rollout steps of the `mtp` drafter, 1..8
+DRAFTER = "mtp"  #@param {type:"string"}    # mtp (single-layer nextn head, --unroll) | df3 (block schedule)
+DF3_BLOCK = 16  #@param {type:"integer"}    # draft block of the `df3` schedule = the 17-row verify batch of the engine
+DF3_LAYERS = 2  #@param {type:"integer"}    # decoder layers of the target DFlash head; the engine loader knows one
 KL_CHUNK = 256  #@param {type:"integer"}
 ONPOLICY_FRAC = 0.25  #@param {type:"number"}
 SAVE_EVERY = 250  #@param {type:"integer"}
@@ -339,6 +342,7 @@ for name, err in man.get("errors", {}).items():
 train_cmd = [PY, f"{TOOLS}/train_bonsai_mtp.py", "--teacher", TEACHER_DIR, "--corpus", CORPUS, "--out", RUN_DIR,
              "--steps", str(STEPS), "--seq-len", str(SEQ_LEN), "--batch", str(BATCH), "--grad-accum", str(GRAD_ACCUM),
              "--lr", str(LR), "--warmup", str(WARMUP), "--unroll", str(UNROLL), "--kl-chunk", str(KL_CHUNK),
+             "--drafter", str(DRAFTER), "--df3-block", str(DF3_BLOCK), "--df3-layers", str(DF3_LAYERS),
              "--onpolicy-frac", str(ONPOLICY_FRAC), "--save-every", str(SAVE_EVERY), "--keep-last", str(KEEP_LAST),
              "--time-limit-min", str(TIME_LIMIT_MIN), "--resume-from", RESUME_FROM, "--attn-impl", ATTN_IMPL,
              "--device", "cuda"] + INIT_ARGS
