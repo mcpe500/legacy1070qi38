@@ -388,6 +388,7 @@ struct GpuLayers::Impl {
         // split-K decode attention: above 8192 positions, and at every context on the ternary path (where the shared-memory
         // kernel's serial value pass costs about 1.5 ms per layer at 4K positions)
         attn_part = (cfg.ctx_max > 8192 || cfg.signs_5120) ? pl.take<float>(op_attention_part_floats()) : nullptr;
+        op_attention_set_verify_t(cfg.verify_t);
         rope_cos = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         rope_sin = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         pos_dev = pl.take<int>(64);

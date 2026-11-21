@@ -23,6 +23,10 @@ struct GpuConfig {
     bool stream_prefill = false;
     // DeltaNet rollback (MTP verification): largest batch whose DeltaNet state can be rolled back (0 = no buffers).
     int roll_t = 0;
+    // Largest verification batch the attention partial buffer and the rollback buffers are sized for (1 target row
+    // plus the accepted drafts). 17 = a Drafter v2 batch of 16 drafts + 1. The buffer grows with it, so the engine
+    // picks the largest value whose whole plan still fits vram_budget_mib and falls back to 8 or 5 otherwise.
+    int verify_t = 5;
     // Replay the whole layer stack as a CUDA graph for batches of 1..4 tokens (decode and MTP verification).
     bool use_graph = false;
     // Streamed prefill: register the CPU-layer weights of the mmap as pinned memory and overlap upload with compute.

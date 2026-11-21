@@ -123,6 +123,14 @@ target_link_libraries(quant_roofline_bench PRIVATE gpu_cuda CUDA::cudart)
 add_executable(ternary_ab_test tests/cuda/ternary_ab_test.cu)
 target_link_libraries(ternary_ab_test PRIVATE gpu_cuda CUDA::cudart)
 
+# Verification batch T = 17: lossless identity (T=17 vs T=5 vs single rows), FP64 parity, and latency.
+add_executable(verify_t17_test tests/cuda/verify_t17_test.cu)
+target_link_libraries(verify_t17_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
+
+# DeltaNet rollback for a verification batch of 17 rows (snapshot + conv/recurrence replay, keep = 1..17).
+add_executable(dn_rollback_test tests/cuda/dn_rollback_test.cu)
+target_link_libraries(dn_rollback_test PRIVATE gpu_cuda CUDA::cudart)
+
 # Numeric gate for the opt-in PTQ1_0 fast-prefill kernel (fast = true): cosine >= 0.99999 against an
 # FP64 reference, and a greedy token identical to the default path at every prefill T.
 add_executable(ptq1_fast_gate tests/cuda/ptq1_fast_gate.cu)

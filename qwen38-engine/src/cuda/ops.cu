@@ -422,6 +422,7 @@ __global__ void attention_kernel_tiled(const float * qbuf, const float * qfull, 
 // own slice of the positions and writing (m, l, o[256]) to `part`; attention_combine merges the slices. Without it a
 // decode step at 128K positions runs only 24 blocks (one per head) over the whole cache.
 constexpr int kSplits = 64;
+constexpr int kVerifySlices = 100;   // most slices a verification row sums (op_attention_part_floats, below)
 constexpr int kSplitTMax = 8;
 
 template <bool ISO3>
@@ -563,7 +564,10 @@ __global__ void attention_combine(const float * part, const float * qfull, float
 constexpr int kPQ = 8;                 // query tokens per block (= warps)
 constexpr int kPP = 16;                // positions per K/V tile
 constexpr int kQG = NH / NKV;          // 6 query heads per KV group
-constexpr int kPrefillPartRows = kSplitTMax * kSplits;   // (token x slice) rows of the shared partial buffer per head
+// (token x slice) rows of the partial buffer per head (op_attention_part_floats, sized by verify_t). The prefill
+// kernel slices while the rows of its T query rows fit in it, so a larger verify batch also lets prefill use more
+// slices over the positions.
+int kPrefillPartRows() { return op_attention_verify_t() * kVerifySlices; }
 
 // v[0..7] (one value per position of a group of 8, partial over this lane's dims) -> sum over the 32 lanes of
 // v[(lane >> 2) & 7], returned in every lane.
@@ -946,7 +950,15 @@ bool g_attn_tiled_ref = false;
 bool g_attn_dec2 = [] { const char * e = std::getenv("QWEN_ATTN_DEC"); return e ? std::atoi(e) != 0 : true; }();
 void op_attention_set_dec2(bool on) { g_attn_dec2 = on; }
 void op_attention_set_tiled_ref(bool on) { g_attn_tiled_ref = on; }
-size_t op_attention_part_floats() { return static_cast<size_t>(kSplitTMax) * NH * kSplits * (HD + 2); }
+// Largest batch the partial-attention buffer is sized for. It is the MTP verification batch (1 target row plus the
+// accepted drafts), so the Drafter v2 batch of 16 drafts + 1 = 17 rows is what the engine asks for when the VRAM
+// budget allows. The buffer holds verify_t * kSplits (token x slice) rows per head, and the split-K dispatch keeps
+// the slice count independent of T up to verify_t, which is what makes a verify row sum exactly like the
+// single-token decode row of the same position (speculative decoding stays lossless).
+int g_verify_t = kSplitTMax;
+void op_attention_set_verify_t(int t) { g_verify_t = t < 1 ? kSplitTMax : t; }
+int op_attention_verify_t() { return g_verify_t; }
+size_t op_attention_part_floats() { return static_cast<size_t>(g_verify_t) * NH * kVerifySlices * (HD + 2); }
 
 cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s) {
     rmsnorm_rows_kernel<<<rows, 256, 0, s>>>(x, w, y, n, eps);
@@ -1015,12 +1027,13 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
     // long_kernels (Ternary Bonsai): the split-K decode and K/V-reuse prefill kernels at every ctx_max. Without it (Qwen) the
     // shared-memory kernel below runs up to 8192 positions, unchanged and bit-identical to the stage 4/5 results.
     const bool longk = ctx_max > kFastCtxMax || long_kernels;
-    if (longk && part && T <= kSplitTMax && iso3 && g_attn_dec2) {
+    const int vt = op_attention_verify_t();
+    if (longk && part && T <= vt && iso3 && g_attn_dec2) {
         // decode v2: slices fixed by ctx_max (the CUDA graph replays the grid; the slice length follows the position on the
-        // device), at least 256 positions per warp, at most kSplitTMax * kSplits / T slices (part buffer)
-        // The slice count must not depend on T for T <= 5: an MTP verify row then sums exactly like the single-token
-        // decode row of the same position, so speculative decoding stays lossless (100 = the most slices 5 rows fit).
-        int nsl = std::min(ctx_max / 256, T <= 5 ? 100 : kSplitTMax * kSplits / T);
+        // device), at least 256 positions per warp, at most kVerifySlices slices (the part buffer holds vt x kVerifySlices rows per head)
+        // The slice count must not depend on T for T <= vt: an MTP verify row then sums exactly like the single-token
+        // decode row of the same position, so speculative decoding stays lossless.
+        int nsl = std::min(ctx_max / 256, kVerifySlices);
         nsl = std::max(kDecWarps, nsl / kDecWarps * kDecWarps);
         const dim3 g2(T * NKV, nsl / kDecWarps);
         attention_kernel_decode_iso3<0><<<g2, kDecWarps * 32, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache),
@@ -1045,7 +1058,7 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
         int ns = 1;
         if (part) {
             const int want = (2 * 19 * 8 + qt * NKV - 1) / (qt * NKV);   // about 2 waves of 8 blocks on the 19 SMs
-            ns = std::max(1, std::min(want, kPrefillPartRows / T));
+            ns = std::max(1, std::min(want, kPrefillPartRows() / T));
         }
         const dim3 gp(qt, NKV, ns);
         static int hpw = -1;

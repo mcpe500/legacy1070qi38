@@ -478,6 +478,7 @@ int main(int argc, char ** argv) {
                     "\"top1_match\":%s,\"gpu_layers\":%d,\"gpu_arena_mib\":%.1f,\"gpu_weights_mib\":%.1f,\"gpu_kv_mib\":%.1f,\"vram_used_mib\":%.1f,\"kv\":\"%s\",\"dp4a_mask\":%u,\"decode_gpu_s\":%.3f,\"decode_cpu_layers_s\":%.3f,\"decode_head_s\":%.3f,"
                     "\"mtp_steps\":%d,\"cycles\":%lld,\"draft_n\":%lld,\"draft_n_accepted\":%lld,\"accept_hist\":[%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld],\"mtp_adaptive\":%d,"
                     "\"mtp_prefill_s\":%.3f,\"prefill_main_s\":%.3f,\"mtp_draft_s\":%.3f,\"mtp_verify_s\":%.3f,\"mtp_rollback_s\":%.3f,\"stream_min_t\":%d,"
+                    "\"verify_t\":%d,\"verify_t_requested\":%d,\"roll_t\":%d,"
                     "\"pld_enabled\":%d,\"pld_hits\":%lld,\"pld_candidates\":%lld,\"mtp_fills\":%lld,"
                     "\"ttft_s\":%.3f,\"finish\":\"%s\",\"temperature\":%.3f,\"ctx\":%d,\"reused_tokens\":%d,\"state_load_s\":%.3f}\n",
                     json_escape(text).c_str(), load_s, st.prefill_s, (n_prompt - st.reused_tokens) / std::max(st.prefill_s, 1e-9), st.decode_s,
@@ -492,6 +493,7 @@ int main(int argc, char ** argv) {
                     st.accept_hist[5], st.accept_hist[6], st.accept_hist[7], st.accept_hist[8],
                     gp.mtp_adaptive ? 1 : 0,
                     st.mtp_prefill_s, st.prefill_main_s, st.t_draft, st.t_verify, st.t_roll, cfg.stream_min_t,
+                    eng.verify_t(), cfg.verify_t, eng.roll_t(),
                     gp.pld_enabled ? 1 : 0, st.pld_hits, st.pld_candidates, st.mtp_fills,
                     st.ttft_s, st.finish.c_str(), static_cast<double>(gp.sp.temperature), cfg.ctx_max, st.reused_tokens, state_load_s);
         return parity_fail ? 1 : 0;

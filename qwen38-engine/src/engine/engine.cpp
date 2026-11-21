@@ -234,7 +234,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     // --gpu-layers auto (-1) takes the largest contiguous prefix 0 .. n-1 whose plan fits. Prefill streaming needs a
     // staging buffer plus one FP32 KV layer (ctx_max * 8 KiB: 1 GiB at 128K); when it does not fit, it is turned off.
     bool roll = cfg_.mtp_steps > 0 && mtp_ok_;
-    auto gpu_config = [&](int n, bool stream, bool head, bool mtp = false) {
+    auto gpu_config = [&](int n, bool stream, bool head, bool mtp = false, int verify_t = kRollT) {
         GpuConfig gc;
         gc.n_layers = n;
         gc.ctx_max = cfg_.ctx_max;
@@ -242,7 +242,8 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         gc.kv_iso3 = cfg_.kv_iso3;
         gc.dp4a_mask = cfg_.dp4a_mask;
         gc.stream_prefill = stream;
-        gc.roll_t = roll ? kRollT : 0;
+        gc.roll_t = roll ? (verify_t > kRollT ? verify_t : kRollT) : 0;
+        gc.verify_t = verify_t;
         gc.use_graph = cfg_.cuda_graph;
         gc.pin_stream = cfg_.pin_stream;
         gc.vram_budget_mib = cfg_.vram_budget_mib;
@@ -257,10 +258,25 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         }
         return gc;
     };
+    // Verification batch: the requested value first, then the two fallbacks. The partial-attention buffer
+    // (verify_t x 100 slices x 24 heads x 258 floats = 42.1 MiB at 17) and the DeltaNet rollback buffers grow
+    // with it, so each candidate is checked against the whole plan. The last candidate is kRollT, which is what
+    // the plan below was validated with, so one of the three always fits. Without MTP there is no verification
+    // batch, so the buffers stay at kRollT and the plan costs the least.
+    verify_t_ = kRollT;
+    if (roll) {
+        for (int cand : {cfg_.verify_t, kRollTMid, kRollT}) {
+            if (cand < 1) continue;
+            if (GpuLayers::projected_mib(ix, gpu_config(0, false, false, false, cand)) <= cfg_.vram_budget_mib) { verify_t_ = cand; break; }
+        }
+    }
+    int verify_t = verify_t_;
+    roll_t_ = roll ? (verify_t > kRollT ? verify_t : kRollT) : 0;
+    auto gcfg = [&](int n, bool stream, bool head, bool mtp = false) { return gpu_config(n, stream, head, mtp, verify_t); };
     bool stream_on = false;
     if (cfg_.gpu_layers != 0) {
         const bool want_stream = cfg_.stream_min_t > 0;
-        auto fits = [&](int n, bool stream) { return GpuLayers::projected_mib(ix, gpu_config(n, stream, false)) <= cfg_.vram_budget_mib; };
+        auto fits = [&](int n, bool stream) { return GpuLayers::projected_mib(ix, gcfg(n, stream, false)) <= cfg_.vram_budget_mib; };
         if (cfg_.gpu_layers < 0) {
             int pick = 0;
             for (int n = kLayers; n >= 1 && pick == 0; --n) {
@@ -300,11 +316,21 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         }
     }
     const int g0 = cfg_.gpu_layers;
+    // The verification batch was picked with a zero-layer plan, so it can still be too large for the plan that the
+    // fixed layer count leaves (--gpu-layers 64 at 128K, say). Step it down to the largest value that fits here
+    // before anything is built, so a tight budget degrades the buffer instead of refusing the run.
+    for (int cand : {verify_t, kRollTMid, kRollT}) {
+        if (cand < 1 || cand > verify_t) continue;
+        if (GpuLayers::projected_mib(ix, gpu_config(g0, stream_on, false, false, cand)) <= cfg_.vram_budget_mib) { verify_t = cand; break; }
+        verify_t = cand == kRollT ? kRollT : (cand == kRollTMid ? kRollT : kRollTMid);
+    }
+    verify_t_ = verify_t;
+    roll_t_ = roll ? (verify_t > kRollT ? verify_t : kRollT) : 0;
     // LM head on the GPU: only with every layer there (the stream is already in VRAM), when it fits after the layers.
     // Auto (-1) puts it there if the plan stays under the budget; 1 requires it; 0 keeps it on the CPU.
     if (g0 == kLayers && cfg_.gpu_head != 0) {
         auto head_fits = [&]() {
-            bool fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true)) <= cfg_.vram_budget_mib;
+            bool fit = GpuLayers::projected_mib(ix, gcfg(g0, false, true)) <= cfg_.vram_budget_mib;
             // At long context the iso3 KV leaves no room for the head next to the prefill scratch (about 270 MiB at t_max 512).
             // Smaller prefill chunks free it: the batched GEMVs tile at most 16 tokens, so prefill speed barely changes.
             for (int tm : {256, 128, 64}) {
@@ -312,7 +338,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
                 if (cfg_.t_max <= tm) continue;   // already at or below this chunk size: try the next smaller one
                 const int keep = cfg_.t_max;
                 cfg_.t_max = tm;
-                fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true)) <= cfg_.vram_budget_mib;
+                fit = GpuLayers::projected_mib(ix, gcfg(g0, false, true)) <= cfg_.vram_budget_mib;
                 if (fit) std::fprintf(stderr, "LM head: prefill chunk lowered from %d to %d tokens so the head fits in VRAM\n", keep, tm);
                 else cfg_.t_max = keep;
             }
@@ -342,7 +368,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     // MTP draft head on the GPU: when the GGUF has blk.64, every layer and the LM head are on the GPU, and the block plus
     // its KV fit next to them (about 335 MiB of weights for the Qwen-format head, 0.8 KiB of iso3 KV per position).
     if (mtp_ok_ && head_on_ && cfg_.gpu_mtp != 0) {
-        const bool fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true, true)) <= cfg_.vram_budget_mib;
+        const bool fit = GpuLayers::projected_mib(ix, gcfg(g0, false, true, true)) <= cfg_.vram_budget_mib;
         if (!fit && cfg_.gpu_mtp == 1) throw std::runtime_error("--gpu-mtp 1: the MTP block does not fit the VRAM budget at this context");
         mtp_gpu_ = fit;
         std::fprintf(stderr, "MTP block: %s\n", fit ? "GPU" : "CPU (does not fit the VRAM budget)");
@@ -431,7 +457,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     arena_->freeze();
 
     if (g0 > 0) {
-        const GpuConfig gc = gpu_config(g0, stream_on, head_on_, mtp_gpu_);
+        const GpuConfig gc = gcfg(g0, stream_on, head_on_, mtp_gpu_);
         gpu_ = std::make_unique<GpuLayers>(ix, gc, eps_);
         for (int il = 0; il < g0; ++il) hint_layer(il, false);  // weights are in VRAM now: drop their file pages
         const double used = vram_used_mib();
@@ -574,7 +600,7 @@ void Engine::carve_buffers(Arena & a, int g0, bool roll) {
         } else {
             conv_state_.push_back(cpu_layer ? a.alloc_n<float>(kConvCh * (kConvK - 1)) : nullptr);
             ssm_state_.push_back(cpu_layer ? a.alloc_n<float>(kVHeads * kHeadDim * kHeadDim) : nullptr);
-            const size_t R = kRollT;
+            const size_t R = static_cast<size_t>(roll_t_);
             snap_conv_.push_back(roll && cpu_layer ? a.alloc_n<float>(kConvCh * (kConvK - 1)) : nullptr);
             snap_ssm_.push_back(roll && cpu_layer ? a.alloc_n<float>(kVHeads * kHeadDim * kHeadDim) : nullptr);
             sv_qkv_.push_back(roll && cpu_layer ? a.alloc_n<float>(R * kConvCh) : nullptr);
@@ -777,7 +803,7 @@ void Engine::dn_snapshot(bool on) {
 }
 
 void Engine::dn_rollback(int keep) {
-    if (keep < 1 || keep > kRollT) throw std::runtime_error("dn_rollback: keep out of range");
+    if (keep < 1 || keep > roll_t_) throw std::runtime_error("dn_rollback: keep out of range");
     if (gpu_) gpu_->rollback(keep);
     for (int il = std::max(cfg_.gpu_layers, 0); il < kLayers; ++il) {
         if (layers_[il].is_attn) continue;
