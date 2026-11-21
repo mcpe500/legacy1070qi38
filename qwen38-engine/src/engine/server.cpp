@@ -275,8 +275,10 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
         // prompt lookup decoding (n-gram drafts), off by default; it runs on the MTP verify path (rollback buffers), so without a
         // draft head it is off and x_stats.pld reports false
         gp.pld_enabled = flag("pld", false) && eng.has_mtp();
+        // Up to kPldMax (16) drafts per cycle: the verification batch is 17 rows (issue #57 M2/M3), and the batch the
+        // generator builds is capped by Engine::roll_t(), so a smaller VRAM plan degrades it, never overflows.
         gp.pld_max = static_cast<int>(num("pld_max", 4));
-        if (gp.pld_max < 1 || gp.pld_max > 4) { fail(400, "pld_max must be 1..4"); return; }
+        if (gp.pld_max < 1 || gp.pld_max > kPldMax) { fail(400, "pld_max out of range 1..16"); return; }
         // OpenAI `stop`: a string or an array of up to 4 non-empty strings of at most 128 bytes each.
         std::vector<std::string> stops;
         if (body.contains("stop") && !body["stop"].is_null()) {

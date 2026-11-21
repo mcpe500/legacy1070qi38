@@ -9,6 +9,13 @@
 #include "engine.hpp"
 #include "sampler.hpp"
 
+// Verification batch of the speculative path: 1 target row plus the accepted drafts. The buffers (attention
+// partials, DeltaNet rollback, MTP hidden rows) are sized by the engine for kVerifyMax rows, and the generator
+// derives its batch from Engine::roll_t() so a smaller plan degrades the draft count instead of overflowing.
+constexpr int kVerifyMax = 17;      // a Drafter v2 batch of 16 drafts + 1 target row
+constexpr int kPldMax = 16;         // PLD drafts per cycle (at most kVerifyMax - 1)
+constexpr int kVerifyHist = kVerifyMax;
+
 struct GenParams {
     SamplerParams sp;
     int max_tokens = 256;
@@ -21,10 +28,13 @@ struct GenParams {
     // Output is identical with and without it (every draft is verified); it only changes speed. CLI --mtp-adaptive 0 turns it off.
     bool mtp_adaptive = true;
     float mtp_p_keep = 0.5f, mtp_p_cont = 0.85f;
-    // Prompt Lookup Decoding (PLD): deterministic n-gram suffix match over prompt + generated history.
-    // When enabled, up to pld_max candidates (3-gram + 4-gram) are added to the verify batch before MTP drafts.
+    // Prompt Lookup Decoding (PLD): deterministic n-gram suffix match over prompt + generated history. When enabled, up to
+    // pld_max candidates fill the verification batch before the MTP drafts (the whole 17-row batch at pld_max = 16).
     bool pld_enabled = false;
-    int pld_max = 6;       // max PLD candidates per cycle (3-gram + 4-gram combined)
+    // Default measured: a suffix match that fills the whole 17-row batch wins only on highly repetitive
+    // text, and it loses 6x on the Indonesian chat workload (issue #57 M3), so the default stays at 4 drafts
+    // while the knob accepts up to kPldMax.
+    int pld_max = 4;       // max PLD candidates per cycle (3-gram + 4-gram combined), 1..kPldMax
     int pld_min_len = 3;   // minimum suffix length to consider (3 or 4)
     bool reuse = true;     // continue from the cached state when it is a prefix of the new prompt
     // Prompt checkpoint (server): after the prefill the recurrent state of the prompt (DeltaNet conv/ssm, about 150 MiB of
@@ -40,8 +50,9 @@ struct GenStats {
     int prompt_tokens = 0, reused_tokens = 0, generated = 0, mtp_steps = 0;
     double prefill_s = 0, prefill_main_s = 0, mtp_prefill_s = 0, ttft_s = 0, decode_s = 0;
     double t_draft = 0, t_verify = 0, t_roll = 0, dec_gpu = 0, dec_cpu = 0, dec_head = 0;
-    long long cycles = 0, draft_n = 0, draft_acc = 0, accept_hist[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    long long cycles = 0, draft_n = 0, draft_acc = 0, accept_hist[kVerifyHist] = {};   // one slot per possible accept count (0..kVerifyHist-1)
     long long pld_hits = 0, pld_candidates = 0, mtp_fills = 0;
+    double t_pld = 0;   // CPU time of the PLD suffix query per cycle (the n-gram index, no VRAM)
     uint64_t heap_allocs = 0;
     std::string finish = "length";   // "stop" (end token), "length", "abort" (callback returned false)
     std::string reuse = "none";      // where reused_tokens came from: "none", "prefix" (cached sequence), "checkpoint" (prompt checkpoint)
@@ -75,6 +86,9 @@ private:
     int mtp_start_ = 0;                // first prompt position that went through the MTP block
     bool have_h_ = false;              // last_h_ holds the output-normed hidden row of position n-1 (needed to continue the MTP KV)
     std::vector<float> last_h_, hbuf_, hin_, hv_, hv_next_, hm_, hm2_, lrows_, lmtp_;
+    // Verification batch rows this session may build (Engine::roll_t() clamped to kVerifyMax, 5 without MTP):
+    // the draft count is capped to vcap_ - 1 everywhere, so a smaller buffer plan degrades the batch, never overflows.
+    int vcap_ = 5;
     // Checkpoints (GenParams::checkpoint): tokens, recurrent state (Engine::save_state(0)), MTP pairing row. A checkpoint is
     // valid while the KV positions 0 .. tokens.size()-1 still hold its tokens (a run that rewrites any of them clears it).
     // Slot 0: the state loaded with load_state (pinned: a --state-load document stays reusable for every question about it);

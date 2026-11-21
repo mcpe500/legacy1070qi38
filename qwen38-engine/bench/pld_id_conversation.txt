@@ -1,0 +1,10 @@
+Saya menjalankan model 27B di GTX 1070 Ti yang hanya punya VRAM 8 GB dan RAM sistem 16 GB. Ukuran potongan prefill berapa yang sebaiknya dipakai?
+Mulailah dari 64 token per potongan. Kernel GEMM menumpuk 16 baris sekaligus, jadi bobot yang dibaca sekali dipakai empat tile, dan kernel pakai-ulang attention terukur 98 ms untuk 131072 posisi.
+Kalau tipe cache KV-nya?
+Pakai cache iso3 3 bit. Biayanya 400 byte per posisi per lapis, bukan 2048, dan itulah yang membuat konteks 131072 posisi masih muat di samping 5395 MiB bobot.
+Berapa token per detik untuk decoding?
+Sekitar 8,7 tok/s setelah konteks 128K sungguhan, dan sekitar 17 tok/s di 512 token. Kepala draft MTP menaikkan angka pendek itu menjadi sekitar 27 tok/s.
+Bagaimana kalau saya butuh konteks 128K sekaligus kepala draft?
+Tidak muat di kartu ini kalau kepala LM ada di GPU: sisa 24 MiB saja di 128K. Anda bisa pindahkan kepala ke CPU, biayanya sekitar 2,4 tok/s, atau batasi konteks sekitar 110K.
+Baik, terima kasih.
+Sekitar 8

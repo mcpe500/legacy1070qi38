@@ -154,14 +154,18 @@ struct PLDMatcher {
 Generator::Generator(Engine & e) : eng_(e), sampler_(e.n_vocab) {
     const size_t V = static_cast<size_t>(eng_.n_vocab);
     const size_t Tm = static_cast<size_t>(eng_.config().t_max);
+    // Verification batch rows: 1 target plus the drafts the engine's buffers allow (kVerifyMax when the plan
+    // fitted verify_t = 17, fewer after a VRAM fallback, 5 when there is no MTP block at all).
+    const size_t Tv = static_cast<size_t>(eng_.roll_t() > 1 ? eng_.roll_t() : 5);
     last_h_.assign(H, 0.0f);
     hbuf_.assign(Tm * H, 0.0f);
     hin_.assign(Tm * H, 0.0f);
-    hv_.assign(5 * static_cast<size_t>(H), 0.0f);      // 5 rows for T<=5 verify
-    hv_next_.assign(5 * static_cast<size_t>(H), 0.0f);
+    hv_.assign(Tv * H, 0.0f);
+    hv_next_.assign(Tv * H, 0.0f);
     hm_.assign(H, 0.0f);
     hm2_.assign(H, 0.0f);
-    lrows_.assign(5 * V, 0.0f);                         // 5 rows of logits
+    lrows_.assign(Tv * V, 0.0f);
+    vcap_ = static_cast<int>(Tv);
     lmtp_.assign(V, 0.0f);
     cached_.reserve(static_cast<size_t>(eng_.config().ctx_max) + 8);
 }
@@ -319,7 +323,10 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
         //  3. with no PLD candidate the standard MTP path [cur] + MTP drafts runs exactly like main.
         // T<=5 keeps the 5-row buffers, the MTP head strides and the rollback path identical to main
         // (32 GPU layers fit the VRAM budget again).
-        std::vector<int32_t> bt(6), vt(5), dr(4);   // max 5 verify tokens (4 drafts + 1 actual), as main
+        // Verify batch up to vcap_ rows (17 with the T=17 buffers): 1 target row plus at most vcap_ - 1
+        // drafts, which the PLD path may fill with suffix matches and the MTP path with draft head tokens.
+        const int vcap = vcap_;
+        std::vector<int32_t> bt(vcap + 1), vt(vcap), dr(vcap - 1);
         std::vector<float> * hv = &hv_, * hvn = &hv_next_;
         // hv row 0 = h of position pos-1 (the last prefill row)
         std::memcpy(hv->data(), hprev.data(), sizeof(float) * H);
@@ -335,20 +342,26 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
         while (true) {
             if (is_stop(cur)) { st.finish = "stop"; break; }
             if (!emit(cur)) break;
-            if (pos_new + 5 > cfg.ctx_max) { st.finish = "length"; break; }   // max 4 drafts + 1
+            if (pos_new + vcap > cfg.ctx_max) { st.finish = "length"; break; }   // max vcap - 1 drafts + 1
             const auto q0 = Clock::now();
+            auto q0p = q0;
 
             // ---- PLD candidates FIRST (priority routing): deterministic 3-gram + 4-gram suffix match.
             // The suffix must end at `cur` (the token at position pos_new), because the candidate
             // predicts the token at pos_new+1; cached_ only holds the tokens before cur at this point.
-            int32_t pld_cand[4];
+            int32_t pld_cand[kPldMax];
             int n_pld = 0;
             if (gp.pld_enabled) {
                 const size_t nc = cached_.size();
                 int32_t suffix[4] = {0, 0, 0, cur};
                 for (int i = 1; i <= 3; ++i) if (nc >= static_cast<size_t>(i)) suffix[3 - i] = cached_[nc - i];
-                n_pld = pld.query(suffix, 3, pld_cand, std::min(gp.pld_max, 4));
+                // A PLD cycle may take the whole verification batch: the MTP head is skipped on the next cycle's
+                // catch-up, and the sidecar it would have drafted from stays available for the cascade fallback.
+                n_pld = pld.query(suffix, 3, pld_cand, std::min(gp.pld_max, kPldMax));
+                if (n_pld > vcap - 1) n_pld = vcap - 1;
+                q0p = Clock::now();
             }
+            st.t_pld += secs(q0, q0p);
             st.pld_candidates += n_pld;
             if (n_pld > 0) st.pld_hits++;
 

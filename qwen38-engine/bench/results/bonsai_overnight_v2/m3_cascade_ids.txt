@@ -1,0 +1,8 @@
+# M3 lossless-parity ids (md5 of the "ids":[...] array), greedy temp 0 seed 42, ctx 4096, n 64,
+# Ternary-Bonsai-2-27B-PTQ1_0-mtpqwen.gguf, 64 GPU layers, taskset -c 0-3.
+# Reproduce with the three configurations named in M3-SUFFIX-PLD-CASCADE.md.
+workload                 non-MTP        r3-MTP        cascade16     pld-only16
+refactor                 3fe15206d737  3fe15206d737  3fe15206d737  -
+code from scratch        37c163f4f8c0  52ca4eefb6e5  52ca4eefb6e5  -
+english chat             b4acde9241    96259802d9    96259802d9    -
+indonesian chat          c72858bb411a  d48ff754f3e9  d48ff754f3e9  c72858bb411a

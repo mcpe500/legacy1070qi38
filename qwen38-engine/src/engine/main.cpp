@@ -163,7 +163,8 @@ int main(int argc, char ** argv) {
         else if (a == "--mtp-window") gp.mtp_window = std::atoi(next().c_str());
         else if (a == "--mtp-gpu-prefill") cfg.mtp_gpu_prefill = std::atoi(next().c_str()) != 0;
         else if (a == "--pld") gp.pld_enabled = std::atoi(next().c_str()) != 0;
-        else if (a == "--pld-max") gp.pld_max = std::atoi(next().c_str());
+        else if (a == "--pld-max") { gp.pld_max = std::atoi(next().c_str());
+                                    if (gp.pld_max < 1 || gp.pld_max > 16) { std::fprintf(stderr, "--pld-max must be 1..16\n"); return 2; } }
         else if (a == "--pld-min-len") gp.pld_min_len = std::atoi(next().c_str());
         else if (a == "--pin-stream") cfg.pin_stream = std::atoi(next().c_str()) != 0;
         else if (a == "--cuda-graph") cfg.cuda_graph = std::atoi(next().c_str()) != 0;
@@ -476,10 +477,10 @@ int main(int argc, char ** argv) {
                     "\"decode_tok_s\":%.4f,\"heap_allocs_in_decode_forward\":%llu,\"peak_rss_kb\":%lld,\"rss_anon_kb\":%lld,\"rss_file_kb\":%lld,"
                     "\"swap_used_kb_before\":%lld,\"swap_used_kb_after\":%lld,\"parity_failures\":%d,\"logits_cos\":%.6f,"
                     "\"top1_match\":%s,\"gpu_layers\":%d,\"gpu_arena_mib\":%.1f,\"gpu_weights_mib\":%.1f,\"gpu_kv_mib\":%.1f,\"vram_used_mib\":%.1f,\"kv\":\"%s\",\"dp4a_mask\":%u,\"decode_gpu_s\":%.3f,\"decode_cpu_layers_s\":%.3f,\"decode_head_s\":%.3f,"
-                    "\"mtp_steps\":%d,\"cycles\":%lld,\"draft_n\":%lld,\"draft_n_accepted\":%lld,\"accept_hist\":[%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld],\"mtp_adaptive\":%d,"
+                    "\"mtp_steps\":%d,\"cycles\":%lld,\"draft_n\":%lld,\"draft_n_accepted\":%lld,\"accept_hist\":[%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld],\"mtp_adaptive\":%d,"
                     "\"mtp_prefill_s\":%.3f,\"prefill_main_s\":%.3f,\"mtp_draft_s\":%.3f,\"mtp_verify_s\":%.3f,\"mtp_rollback_s\":%.3f,\"stream_min_t\":%d,"
                     "\"verify_t\":%d,\"verify_t_requested\":%d,\"roll_t\":%d,"
-                    "\"pld_enabled\":%d,\"pld_hits\":%lld,\"pld_candidates\":%lld,\"mtp_fills\":%lld,"
+                    "\"pld_enabled\":%d,\"pld_hits\":%lld,\"pld_candidates\":%lld,\"mtp_fills\":%lld,\"pld_step_us\":%.2f,"
                     "\"ttft_s\":%.3f,\"finish\":\"%s\",\"temperature\":%.3f,\"ctx\":%d,\"reused_tokens\":%d,\"state_load_s\":%.3f}\n",
                     json_escape(text).c_str(), load_s, st.prefill_s, (n_prompt - st.reused_tokens) / std::max(st.prefill_s, 1e-9), st.decode_s,
                     decode_tok_s,
@@ -490,11 +491,13 @@ int main(int argc, char ** argv) {
                     cfg.kv_iso3 ? "iso3" : "f32", cfg.dp4a_mask, st.dec_gpu, st.dec_cpu, st.dec_head,
                     D, st.cycles, st.draft_n, st.draft_acc,
                     st.accept_hist[0], st.accept_hist[1], st.accept_hist[2], st.accept_hist[3], st.accept_hist[4],
-                    st.accept_hist[5], st.accept_hist[6], st.accept_hist[7], st.accept_hist[8],
+                    st.accept_hist[5], st.accept_hist[6], st.accept_hist[7], st.accept_hist[8], st.accept_hist[9],
+                    st.accept_hist[10], st.accept_hist[11], st.accept_hist[12], st.accept_hist[13], st.accept_hist[14],
+                    st.accept_hist[15], st.accept_hist[16],
                     gp.mtp_adaptive ? 1 : 0,
                     st.mtp_prefill_s, st.prefill_main_s, st.t_draft, st.t_verify, st.t_roll, cfg.stream_min_t,
                     eng.verify_t(), cfg.verify_t, eng.roll_t(),
-                    gp.pld_enabled ? 1 : 0, st.pld_hits, st.pld_candidates, st.mtp_fills,
+                    gp.pld_enabled ? 1 : 0, st.pld_hits, st.pld_candidates, st.mtp_fills, 1e6 * st.t_pld / std::max<long long>(st.cycles, 1),
                     st.ttft_s, st.finish.c_str(), static_cast<double>(gp.sp.temperature), cfg.ctx_max, st.reused_tokens, state_load_s);
         return parity_fail ? 1 : 0;
     } catch (const std::exception & e) {
