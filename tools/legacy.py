@@ -1392,6 +1392,44 @@ def validate_spec(root):
                 warnings.append(f"HANDOFF-LOG.md: {oq} muncul {n}x di tabel")
     else:
         warnings.append("HANDOFF-LOG.md tidak ditemukan")
+
+    # --- Check C-NN references: every C-NN cited in spec/**/*.md must have a row in CLAIMS.md --------
+    claims_file = os.path.join(spec, "research", "CLAIMS.md")
+    claim_id_re = re.compile(r"\bC-(\d{1,3})\b")
+    defined_ids: set[str] = set()
+    if os.path.isfile(claims_file):
+        with open(claims_file, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                # Only count rows that look like a table row defining a claim:
+                # "| C-NN |" at the start (allowing leading whitespace and pipe).
+                m = re.match(r"^\|\s*(C-\d{1,3})\s*\|", line)
+                if m:
+                    defined_ids.add(m.group(1))
+    else:
+        warnings.append("spec/research/CLAIMS.md não encontrado")
+
+    if defined_ids:  # only check references when CLAIMS.md is present and parseable
+        missing_refs: dict[str, list[str]] = {}  # claim_id -> list of "file:line"
+        for dirpath, _dirs, files in sorted(os.walk(spec)):
+            for fname in sorted(files):
+                if not fname.endswith(".md"):
+                    continue
+                fpath = os.path.join(dirpath, fname)
+                # Skip CLAIMS.md itself — references there are definitions, not citations.
+                if os.path.abspath(fpath) == os.path.abspath(claims_file):
+                    continue
+                with open(fpath, "r", encoding="utf-8", errors="replace") as fh:
+                    for lineno, line in enumerate(fh, 1):
+                        for m in claim_id_re.finditer(line):
+                            cid = f"C-{m.group(1)}"
+                            if cid not in defined_ids:
+                                rel = os.path.relpath(fpath, root)
+                                missing_refs.setdefault(cid, []).append(f"{rel}:{lineno}")
+        for cid in sorted(missing_refs, key=lambda c: int(c.split("-")[1])):
+            locs = missing_refs[cid]
+            loc_str = ", ".join(locs[:3]) + ("…" if len(locs) > 3 else "")
+            errors.append(f"{cid} dikutip di {loc_str} tapi tidak ada baris di CLAIMS.md")
+
     return {"ok": not errors, "errors": errors, "warnings": warnings}
 
 
