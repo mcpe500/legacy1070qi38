@@ -435,6 +435,24 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
             guarded([&] { if (k + 1 < verify_T) eng_.dn_rollback(k + 1); });
             const auto q3 = Clock::now();
 
+            // ---- Re-anchor: run a single T=1 forward for the last accepted position so that:
+            //   1. hvn[k] is set by a T=1 sequential pass rather than the batched verify-batch pass,
+            //   2. the KV cache entries at pos_new+k are overwritten with their T=1-consistent values.
+            // Without this, the batched hidden state fed into the next cycle's MTP catch-up differs
+            // numerically from what a plain single-token decode would have produced (issue #59), causing
+            // a near-tie argmax flip that makes the MTP output diverge from the non-MTP greedy sequence.
+            // The re-anchor is skipped when k==0 (no draft was accepted: the verify row is a T=1 call
+            // by itself, so hvn[0] is already T=1-consistent) and when no MTP head is loaded (D==0).
+            if (k > 0 && D > 0) {
+                guarded([&] {
+                    eng_.forward_ex(&vt[k], 1, pos_new + k, nullptr, 0,
+                                   hvn->data() + static_cast<size_t>(k) * H);
+                });
+                st.dec_gpu += eng_.last_gpu_s; st.dec_cpu += eng_.last_cpu_s; st.dec_head += eng_.last_head_s;
+            }
+            const auto q4 = Clock::now();
+            st.t_reanchor += secs(q3, q4);
+
             st.t_draft += secs(q0, q1); st.t_verify += secs(q1, q2); st.t_roll += secs(q2, q3);
             ++st.cycles; st.draft_n += n_pld + De; st.draft_acc += k; ++st.accept_hist[k];
 
@@ -450,8 +468,11 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
                     if (pos >= 0) pld.add(cached_.data(), pos);
             }
 
-            // The verification hidden states (hvn) are exactly what the next cycle's catch-up needs.
-            // After swap, hv points to hvn data: hv[0]=cur, hv[1]=dr[0], hv[2]=dr[1], ...
+            // After the re-anchor, hvn[k] holds the T=1-consistent hidden state for position pos_new+k.
+            // All rows hvn[0..k-1] are from the verify batch (no re-anchor needed: only the last row
+            // feeds the next cycle's MTP catch-up, because k_prev is set to k below and the catch-up
+            // batch is [dr[0]..dr[k-1], cur] for positions pos_new-k..pos_new, using hv[0..k]).
+            // After swap, hv points to hvn data: hv[0]=cur, hv[1]=dr[0], ..., hv[k] = re-anchored last.
             // Next cycle's catch-up will use hv[0..k] for tokens at positions pos_new..pos_new+k.
             pos_new += k + 1;
             k_prev = k;

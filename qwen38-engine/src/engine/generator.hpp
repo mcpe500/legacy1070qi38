@@ -52,7 +52,8 @@ struct GenStats {
     double t_draft = 0, t_verify = 0, t_roll = 0, dec_gpu = 0, dec_cpu = 0, dec_head = 0;
     long long cycles = 0, draft_n = 0, draft_acc = 0, accept_hist[kVerifyHist] = {};   // one slot per possible accept count (0..kVerifyHist-1)
     long long pld_hits = 0, pld_candidates = 0, mtp_fills = 0;
-    double t_pld = 0;   // CPU time of the PLD suffix query per cycle (the n-gram index, no VRAM)
+    double t_pld = 0;       // CPU time of the PLD suffix query per cycle (the n-gram index, no VRAM)
+    double t_reanchor = 0;  // time of the T=1 re-anchor forward pass (only on cycles where k > 0)
     uint64_t heap_allocs = 0;
     std::string finish = "length";   // "stop" (end token), "length", "abort" (callback returned false)
     std::string reuse = "none";      // where reused_tokens came from: "none", "prefix" (cached sequence), "checkpoint" (prompt checkpoint)

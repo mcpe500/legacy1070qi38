@@ -500,6 +500,7 @@ int main(int argc, char ** argv) {
                     st.mtp_prefill_s, st.prefill_main_s, st.t_draft, st.t_verify, st.t_roll, cfg.stream_min_t,
                     eng.verify_t(), cfg.verify_t, eng.roll_t(),
                     gp.pld_enabled ? 1 : 0, st.pld_hits, st.pld_candidates, st.mtp_fills, 1e6 * st.t_pld / std::max<long long>(st.cycles, 1),
+                    1e6 * st.t_reanchor / std::max<long long>(st.draft_acc, 1),
                     st.ttft_s, st.finish.c_str(), static_cast<double>(gp.sp.temperature), cfg.ctx_max, st.reused_tokens, state_load_s);
         return parity_fail ? 1 : 0;
     } catch (const std::exception & e) {
