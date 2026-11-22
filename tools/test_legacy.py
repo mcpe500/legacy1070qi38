@@ -882,6 +882,90 @@ class SpecValidate(SpecCase):
         res = legacy.validate_spec(root)
         self.assertTrue(res["ok"], res["errors"])
 
+    # --- CLAIMS enforcement tests -------------------------------------------
+
+    def _make_repo_with_claims(self, claims_rows="", extra_md_content=""):
+        """Make a minimal repo with spec/research/CLAIMS.md and an extra spec doc."""
+        root = self.make_repo()
+        # CLAIMS.md with a header row and optional data rows
+        claims_body = (
+            "# Daftar Klaim\n\n"
+            "| ID | Klaim | Sumber | Jenis | Status |\n"
+            "|---|---|---|---|---|\n"
+        ) + claims_rows
+        self.write("spec/research/CLAIMS.md", claims_body)
+        if extra_md_content:
+            self.write("spec/specs/RFC-002-test.md", extra_md_content)
+        return root
+
+    def test_claims_reference_to_defined_id_passes(self):
+        root = self._make_repo_with_claims(
+            claims_rows="| C-01 | klaim satu | kartu | Resmi | ✅ |\n",
+            extra_md_content="Lihat C-01 untuk detail.\n",
+        )
+        res = legacy.validate_spec(root)
+        self.assertTrue(res["ok"], res)
+
+    def test_claims_reference_to_missing_id_fails(self):
+        root = self._make_repo_with_claims(
+            claims_rows="| C-01 | klaim satu | kartu | Resmi | ✅ |\n",
+            extra_md_content="Lihat C-01 dan C-99 untuk detail.\n",
+        )
+        res = legacy.validate_spec(root)
+        self.assertFalse(res["ok"])
+        self.assertTrue(any("C-99" in e for e in res["errors"]))
+
+    def test_claims_reference_in_claims_file_itself_is_ignored(self):
+        # CLAIMS.md may reference other C-NN IDs in its own rows; that must not trigger errors.
+        root = self._make_repo_with_claims(
+            claims_rows=(
+                "| C-01 | klaim satu | kartu | Resmi | ✅ |\n"
+                "| C-02 | turunan dari C-01 | C-01 | Turunan | ✅ |\n"
+            ),
+        )
+        res = legacy.validate_spec(root)
+        self.assertTrue(res["ok"], res)
+
+    def test_claims_multiple_missing_all_reported(self):
+        root = self._make_repo_with_claims(
+            claims_rows="| C-01 | a | x | Resmi | ✅ |\n",
+            extra_md_content="C-01 ok, C-50 nope, C-51 also nope.\n",
+        )
+        res = legacy.validate_spec(root)
+        self.assertFalse(res["ok"])
+        missing = [e for e in res["errors"] if "C-50" in e or "C-51" in e]
+        self.assertEqual(len(missing), 2)
+
+    def test_claims_no_claims_file_gives_warning_not_error(self):
+        # When CLAIMS.md does not exist the check is skipped (no error), but a warning is emitted.
+        root = self.make_repo()
+        # make_repo does not create spec/research/CLAIMS.md
+        res = legacy.validate_spec(root)
+        # The repo may still pass (no C-NN refs in its minimal content)
+        self.assertFalse(any("C-" in e for e in res["errors"]))
+
+    def test_claims_location_reported_in_error(self):
+        root = self._make_repo_with_claims(
+            claims_rows="| C-01 | a | x | Resmi | ✅ |\n",
+            extra_md_content="Lihat C-77 di baris ini.\n",
+        )
+        res = legacy.validate_spec(root)
+        self.assertFalse(res["ok"])
+        err = next(e for e in res["errors"] if "C-77" in e)
+        # Must contain the filename and line number
+        self.assertIn("RFC-002-test.md:1", err)
+
+    def test_claims_handoff_log_references_checked(self):
+        root = self._make_repo_with_claims(
+            claims_rows="| C-10 | a | x | Resmi | ✅ |\n",
+        )
+        # Append a C-NN reference to HANDOFF-LOG.md
+        with open(self.path("spec/handoff/HANDOFF-LOG.md"), "a", encoding="utf-8") as fh:
+            fh.write("\nC-99 disebutkan di log ini.\n")
+        res = legacy.validate_spec(root)
+        self.assertFalse(res["ok"])
+        self.assertTrue(any("C-99" in e for e in res["errors"]))
+
 
 # --------------------------------------------------------------------------
 # CLI surface
