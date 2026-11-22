@@ -25,6 +25,7 @@ Usage:
   python3 prepare_corpus.py --selftest        # formatters and quota arithmetic on synthetic rows, no network
 """
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -154,6 +155,10 @@ def main():
     ap.add_argument("--max-chars", type=int, default=24000, help="longer texts are cut at a line break (about 6K tokens)")
     ap.add_argument("--shard-size", type=int, default=10000)
     ap.add_argument("--shuffle-buffer", type=int, default=10000)
+    ap.add_argument("--on-error", default="skip", choices=["skip", "fail"],
+                    help="a source that cannot be streamed (gated, renamed, network): skip it or stop")
+    ap.add_argument("--min-fraction", type=float, default=0.9,
+                    help="exit code 1 when fewer than this fraction of --total samples were written")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -165,54 +170,81 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     man_p = os.path.join(a.out, "manifest.json")
     man = json.load(open(man_p)) if os.path.exists(man_p) else {"seed": a.seed, "done": {}, "counts": {}, "skipped": {}}
+    man.setdefault("errors", {})
     seen = set()
     rows = []
+    for spec in mix:   # hashes of the parts finished in an earlier run, so a resumed run still drops their duplicates
+        part = os.path.join(a.out, f"part-{spec['name']}.jsonl")
+        if man["done"].get(spec["name"]) and os.path.exists(part):
+            with open(part, encoding="utf-8") as f:
+                for line in f:
+                    seen.add(hashlib.sha1(json.loads(line)["text"].encode("utf-8")).hexdigest())
     for spec in mix:
         name = spec["name"]
         part = os.path.join(a.out, f"part-{name}.jsonl")
-        if man["done"].get(name):
+        if man["done"].get(name) and os.path.exists(part):
             print(f"{name}: done earlier ({man['counts'][name]} samples)")
             continue
         want, got, skipped = q[name], 0, 0
         print(f"{name}: streaming {want} samples from {spec['path']} {spec.get('name_cfg', spec.get('data_dir', ''))}", flush=True)
-        with open(part, "w", encoding="utf-8") as f:
-            for row in stream(spec, a.seed, a.shuffle_buffer):
-                text = fmt_row(spec, row)
-                if text is None or len(text) < a.min_chars:
-                    skipped += 1
-                    continue
-                if len(text) > a.max_chars:
-                    cut = text.rfind("\n", 0, a.max_chars)
-                    text = text[: cut if cut > a.max_chars // 2 else a.max_chars] + "<|im_end|>\n"
-                h = hashlib.sha1(text.encode("utf-8")).hexdigest()
-                if h in seen:
-                    skipped += 1
-                    continue
-                seen.add(h)
-                f.write(json.dumps({"text": text, "source": name, "lang": spec["lang"]}, ensure_ascii=False) + "\n")
-                got += 1
-                if got % 5000 == 0:
-                    print(f"  {name}: {got}/{want}", flush=True)
-                if got >= want:
-                    break
+        try:
+            with open(part, "w", encoding="utf-8") as f:
+                for row in stream(spec, a.seed, a.shuffle_buffer):
+                    text = fmt_row(spec, row)
+                    if text is None or len(text) < a.min_chars:
+                        skipped += 1
+                        continue
+                    if len(text) > a.max_chars:
+                        cut = text.rfind("\n", 0, a.max_chars)
+                        text = text[: cut if cut > a.max_chars // 2 else a.max_chars] + "<|im_end|>\n"
+                    h = hashlib.sha1(text.encode("utf-8")).hexdigest()
+                    if h in seen:
+                        skipped += 1
+                        continue
+                    seen.add(h)
+                    f.write(json.dumps({"text": text, "source": name, "lang": spec["lang"]}, ensure_ascii=False) + "\n")
+                    got += 1
+                    if got % 5000 == 0:
+                        print(f"  {name}: {got}/{want}", flush=True)
+                    if got >= want:
+                        break
+        except Exception as e:   # gated dataset without a token, renamed config, network error
+            msg = f"{type(e).__name__}: {str(e)[:300]}"
+            man["errors"][name] = msg
+            print(f"  ERROR {name}: {msg}", flush=True)
+            if a.on_error == "fail":
+                json.dump(man, open(man_p, "w"), indent=1)
+                raise SystemExit(f"source {name} failed (--on-error fail)")
         man["done"][name] = got >= want
         man["counts"][name] = got
         man["skipped"][name] = skipped
         json.dump(man, open(man_p, "w"), indent=1)
         if got < want:
             print(f"  WARNING {name}: stream ended at {got} of {want}")
-    # interleave all parts into shuffled shards
+    # interleave all parts into shuffled shards (old shards first removed: their count may differ)
+    for old in glob.glob(os.path.join(a.out, "shard-*.jsonl")):
+        os.remove(old)
     for spec in mix:
-        with open(os.path.join(a.out, f"part-{spec['name']}.jsonl"), encoding="utf-8") as f:
-            rows.extend(f.readlines())
+        part = os.path.join(a.out, f"part-{spec['name']}.jsonl")
+        if os.path.exists(part):
+            with open(part, encoding="utf-8") as f:
+                rows.extend(f.readlines())
     random.Random(a.seed).shuffle(rows)
     for i in range(0, len(rows), a.shard_size):
         with open(os.path.join(a.out, f"shard-{i // a.shard_size:05d}.jsonl"), "w", encoding="utf-8") as f:
             f.writelines(rows[i: i + a.shard_size])
     man["total"] = len(rows)
+    man["requested"] = a.total
     man["shares"] = {s["name"]: s["share"] for s in mix}
     json.dump(man, open(man_p, "w"), indent=1)
     print(f"wrote {len(rows)} samples in {(len(rows) + a.shard_size - 1) // a.shard_size} shards to {a.out}")
+    for name, msg in man["errors"].items():
+        if not man["done"].get(name):
+            print(f"  missing source {name}: {msg}")
+    if len(rows) < a.min_fraction * a.total:
+        print(f"only {len(rows)} of {a.total} samples (< --min-fraction {a.min_fraction})", file=sys.stderr)
+        return 1
+    return 0
 
 
 def selftest():

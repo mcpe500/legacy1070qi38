@@ -25,13 +25,21 @@ Logged per step k: KL, cosine, and top-1 agreement with the teacher (a proxy of 
 Memory plan (96 GB): teacher BF16 54 GB; student FP32 master 1.7 GB + AdamW 3.4 GB + grads 1.7 GB; activations of the student
 with gradient checkpointing per unroll step; KL in chunks of --kl-chunk positions (logits 248,320 x chunk in FP32).
 
-Output: OUT/mtp_step{N}.safetensors (FP32, GGUF tensor names: feed it to inject_mtp_gguf.py) and OUT/train_state.pt (resume).
+Output: OUT/mtp_step{N}.safetensors (FP32, GGUF tensor names: feed it to inject_mtp_gguf.py; the newest --keep-last are
+kept), OUT/train_state.pt (student + optimizer + step, written atomically), OUT/mtp_final.safetensors when --steps is
+reached, OUT/train_log.jsonl.
+
+Resume: --resume-from auto (default) continues from OUT/train_state.pt when it exists; --resume-from PATH takes a
+train_state.pt (or a directory holding one) from elsewhere; --resume-from none starts fresh. A resumed run reshuffles the
+corpus with seed + step (batches are not replayed one by one).
+Warm start: --init-mtp-safetensors FILE (a blk.64 safetensors: an mtp_step*.safetensors of an earlier run or the output of
+--export-init), or --init gguf:QWEN.gguf / st:FILE. The init is ignored when a train state is resumed.
 
 Usage:
   python3 train_bonsai_mtp.py --teacher /models/Ternary-Bonsai-2-27B-bf16 --corpus /data/bonsai_mtp_corpus --out runs/mtp1 \
       --init gguf:/models/Qwen3.8-27B-UD-Q4_K_M.gguf --steps 12000
   python3 train_bonsai_mtp.py --selftest        # tiny random teacher on CPU: shapes, losses, backward, export names
-  python3 train_bonsai_mtp.py --export-init gguf:QWEN.gguf --out x.safetensors   # dequantized init only (pipeline test)
+  python3 train_bonsai_mtp.py --export-init gguf:QWEN.gguf --out x.safetensors   # dequantized init only (warm start file)
 """
 import argparse
 import glob
@@ -39,6 +47,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import time
 
@@ -157,10 +166,11 @@ def load_init(spec, d):
 class Teacher:
     """Frozen Hugging Face causal LM. hidden(): output-normed last hidden state (hook on the final norm), lm_head shared."""
 
-    def __init__(self, path, device, dtype=torch.bfloat16):
+    def __init__(self, path, device, dtype=torch.bfloat16, attn_impl=None):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         self.tok = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-        self.model = AutoModelForCausalLM.from_pretrained(path, dtype=dtype, device_map={"": device}, trust_remote_code=True)
+        kw = {"attn_implementation": attn_impl} if attn_impl else {}
+        self.model = AutoModelForCausalLM.from_pretrained(path, dtype=dtype, device_map={"": device}, trust_remote_code=True, **kw)
         self.model.eval().requires_grad_(False)
         self.embed = self.model.get_input_embeddings()
         self.lm_head = self.model.get_output_embeddings()
@@ -174,10 +184,12 @@ class Teacher:
         norm.register_forward_hook(lambda m, i, o: setattr(self, "_h", o))
         cfg = self.model.config
         tc = getattr(cfg, "text_config", cfg)
+        rp = getattr(tc, "rope_parameters", None) or {}   # transformers 5 keeps theta / partial factor here
+        hd = getattr(tc, "head_dim", 256)
+        prf = rp.get("partial_rotary_factor", getattr(tc, "partial_rotary_factor", 0.25))
         self.dims = Dims(hidden=tc.hidden_size, n_head=tc.num_attention_heads, n_kv=tc.num_key_value_heads,
-                         head_dim=getattr(tc, "head_dim", 256), ffn=tc.intermediate_size,
-                         rope_dim=int(getattr(tc, "partial_rotary_factor", 0.25) * getattr(tc, "head_dim", 256)),
-                         theta=getattr(tc, "rope_theta", 1e7), eps=tc.rms_norm_eps)
+                         head_dim=hd, ffn=tc.intermediate_size, rope_dim=int(round(prf * hd)),
+                         theta=float(rp.get("rope_theta", getattr(tc, "rope_theta", 1e7))), eps=tc.rms_norm_eps)
 
     @torch.no_grad()
     def hidden(self, ids):
@@ -265,16 +277,52 @@ def random_batches(vocab, seq_len, batch, seed):
         yield torch.randint(0, vocab, (batch, seq_len), generator=g)
 
 
+def find_resume(spec, out):
+    """--resume-from: 'auto' -> OUT/train_state.pt if present, 'none' -> None, else a train_state.pt or a directory holding one."""
+    if spec in (None, "", "none"):
+        return None
+    if spec == "auto":
+        p = os.path.join(out, "train_state.pt")
+        return p if os.path.exists(p) else None
+    p = os.path.join(spec, "train_state.pt") if os.path.isdir(spec) else spec
+    if not os.path.exists(p):
+        raise SystemExit(f"--resume-from {spec}: no train_state.pt found")
+    return p
+
+
+def prune_checkpoints(out, keep):
+    """Keeps the newest `keep` mtp_step*.safetensors in OUT (0 keeps all)."""
+    if keep <= 0:
+        return
+    files = sorted(glob.glob(os.path.join(out, "mtp_step*.safetensors")),
+                   key=lambda p: int(re.search(r"mtp_step(\d+)\.safetensors$", p).group(1)))
+    for p in files[:-keep]:
+        os.remove(p)
+
+
+def latest_checkpoint(out):
+    """Path of the newest mtp_step*.safetensors (or mtp_final.safetensors) in OUT, None if there is none."""
+    fin = os.path.join(out, "mtp_final.safetensors")
+    if os.path.exists(fin):
+        return fin
+    files = glob.glob(os.path.join(out, "mtp_step*.safetensors"))
+    return max(files, key=lambda p: int(re.search(r"mtp_step(\d+)\.safetensors$", p).group(1))) if files else None
+
+
 def train(args):
     dev = torch.device(args.device)
     torch.backends.cuda.matmul.allow_tf32 = True
-    teacher = Teacher(args.teacher, dev, dtype=torch.float32 if args.teacher_f32 else torch.bfloat16)
+    torch.backends.cudnn.allow_tf32 = True
+    os.makedirs(args.out, exist_ok=True)
+    resume = find_resume(args.resume_from, args.out)
+    teacher = Teacher(args.teacher, dev, dtype=torch.float32 if args.teacher_f32 else torch.bfloat16, attn_impl=args.attn_impl)
     d = teacher.dims
     student = MTPHead(d).to(dev)
-    init = load_init(args.init, d)
+    init_spec = f"st:{args.init_mtp_safetensors}" if args.init_mtp_safetensors else args.init
+    init = None if resume else load_init(init_spec, d)
     if init is not None:
         student.load_gguf_state(init)
-        print(f"init: {args.init}")
+        print(f"init: {init_spec}")
     n_par = sum(p.numel() for p in student.parameters())
     print(f"student: {n_par / 1e6:.1f}M parameters; teacher dims {vars(d)}")
     if args.optim == "sgd":   # --smoke on a small machine: no optimizer state
@@ -283,13 +331,21 @@ def train(args):
         opt = torch.optim.AdamW(student.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.01, fused=dev.type == "cuda")
     step0 = 0
     st_path = os.path.join(args.out, "train_state.pt")
-    os.makedirs(args.out, exist_ok=True)
-    if os.path.exists(st_path):
-        st = torch.load(st_path, map_location="cpu", weights_only=False)
+    if resume:
+        st = torch.load(resume, map_location="cpu", weights_only=False)
         student.load_state_dict(st["student"])
-        opt.load_state_dict(st["opt"])
-        step0 = st["step"]
-        print(f"resumed at step {step0}")
+        if st.get("optim") in (None, args.optim):
+            opt.load_state_dict(st["opt"])
+        else:
+            print(f"resume: optimizer {st.get('optim')} != --optim {args.optim}, optimizer state reset")
+        step0 = int(st["step"])
+        print(f"resumed at step {step0} from {resume}")
+    if step0 >= args.steps:
+        print(f"nothing to do: step {step0} >= --steps {args.steps}")
+        if not os.path.exists(os.path.join(args.out, "mtp_final.safetensors")):
+            from safetensors.torch import save_file
+            save_file(student.gguf_state(), os.path.join(args.out, "mtp_final.safetensors"))
+        return
 
     def lr_at(s):
         if s < args.warmup:
@@ -305,6 +361,21 @@ def train(args):
     emb_fn = lambda t: teacher.embed(t)   # noqa: E731  (frozen, BF16)
     t0 = time.time()
     log_f = open(os.path.join(args.out, "train_log.jsonl"), "a")
+
+    def save(done_steps):
+        from safetensors.torch import save_file
+        sd = student.gguf_state()
+        ck = os.path.join(args.out, f"mtp_step{done_steps}.safetensors")
+        save_file(sd, ck + ".tmp")
+        os.replace(ck + ".tmp", ck)
+        torch.save({"student": student.state_dict(), "opt": opt.state_dict(), "step": done_steps, "optim": args.optim,
+                    "args": vars(args)}, st_path + ".tmp")
+        os.replace(st_path + ".tmp", st_path)
+        prune_checkpoints(args.out, args.keep_last)
+        if done_steps == args.steps:
+            save_file(sd, os.path.join(args.out, "mtp_final.safetensors"))
+        print(f"saved step {done_steps}: {ck}", flush=True)
+
     for step in range(step0, args.steps):
         for g in opt.param_groups:
             g["lr"] = lr_at(step)
@@ -331,11 +402,15 @@ def train(args):
             log_f.write(json.dumps(rec) + "\n")
             log_f.flush()
         if (step + 1) % args.save_every == 0 or step + 1 == args.steps:
-            from safetensors.torch import save_file
-            save_file(student.gguf_state(), os.path.join(args.out, f"mtp_step{step + 1}.safetensors"))
-            torch.save({"student": student.state_dict(), "opt": opt.state_dict(), "step": step + 1}, st_path + ".tmp")
-            os.replace(st_path + ".tmp", st_path)
-            print(f"saved step {step + 1}", flush=True)
+            save(step + 1)
+        elif args.time_limit_min and (time.time() - t0) / 60.0 >= args.time_limit_min:
+            save(step + 1)   # stop cleanly before a session limit; the next run resumes from here
+            print(f"time limit of {args.time_limit_min} min reached after step {step + 1}, stopping", flush=True)
+            break
+        if args.time_limit_min and (time.time() - t0) / 60.0 >= args.time_limit_min:
+            print(f"time limit of {args.time_limit_min} min reached after step {step + 1}, stopping", flush=True)
+            break
+    log_f.close()
 
 
 def selftest():
@@ -387,6 +462,11 @@ def main():
     ap.add_argument("--corpus")
     ap.add_argument("--out")
     ap.add_argument("--init", default="random", help="random | gguf:PATH (blk.64 of a qwen35 GGUF) | st:PATH")
+    ap.add_argument("--init-mtp-safetensors", help="warm start from a blk.64 safetensors (same as --init st:PATH)")
+    ap.add_argument("--resume-from", default="auto", help="auto (OUT/train_state.pt if present) | none | PATH (file or dir)")
+    ap.add_argument("--keep-last", type=int, default=2, help="keep the newest N mtp_step*.safetensors in --out (0 = all)")
+    ap.add_argument("--time-limit-min", type=float, default=0, help="save and stop after this many minutes (0 = no limit)")
+    ap.add_argument("--attn-impl", default=None, help="teacher attention implementation: sdpa | flash_attention_2 | eager")
     ap.add_argument("--steps", type=int, default=12000)
     ap.add_argument("--seq-len", type=int, default=2048)
     ap.add_argument("--batch", type=int, default=2)
@@ -410,11 +490,21 @@ def main():
     ap.add_argument("--smoke", action="store_true", help="random token ids instead of --corpus (pipeline test)")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--export-init", help="write the dequantized --export-init source as safetensors to --out and exit")
+    ap.add_argument("--latest", metavar="DIR", help="print the newest checkpoint safetensors of a run directory and exit")
     a = ap.parse_args()
+    if a.latest:
+        p = latest_checkpoint(a.latest)
+        if not p:
+            print(f"no checkpoint in {a.latest}", file=sys.stderr)
+            return 1
+        print(p)
+        return 0
     if a.selftest:
         return selftest()
     if a.export_init:
         from safetensors.torch import save_file
+        if not a.out:
+            ap.error("--export-init needs --out FILE.safetensors")
         sd = load_init(a.export_init, Dims())
         s = MTPHead(Dims())
         s.load_gguf_state(sd)
