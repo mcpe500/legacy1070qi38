@@ -1,0 +1,45 @@
+
+prompt: <|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+
+generated: ```cpp
+#include <cstdint>
+
+enum class Op : uint8_t {
+    ADD = 0,
+    SUB = 1,
+    MUL = 2,
+    DIV = 3,
+    MOD = 4,
+    AND = 5,
+    OR = 6,
+    XOR = 7,
+    SHL = 8,
+    SHR = 9,
+    NOT = 10,
+    NEG = 11,
+    LOAD = 12,
+    STORE = 13,
+    PUSH = 14,
+    POP = 15,
+    JMP = 16,
+    JZ = 17,
+    JNZ = 18,
+    CALL = 19,
+    RET = 20,
+    CMP = 21,
+    INC = 22,
+    DEC = 23,
+    MOV = 24,
+    LEA = 25,
+    NOP = 26,
+    HALT = 27,
+    IN = 28,
+    OUT = 29,
+    SWAP =
+{"prompt_tokens":32768,"generated_tokens":256,"ids":[71093,10504,198,1032,361,93631,29,271,8746,523,10356,535,2535,23,516,313,198,262,15349,283,220,15,11,198,262,15665,283,220,16,11,198,262,245875,283,220,17,11,198,262,44718,283,220,18,11,198,262,18107,283,220,19,11,198,262,3449,283,220,20,11,198,262,2639,283,220,21,11,198,262,67521,283,220,22,11,198,262,6232,43,283,220,23,11,198,262,74413,283,220,24,11,198,262,4045,283,220,16,15,11,198,262,81167,283,220,16,16,11,198,262,37069,283,220,16,17,11,198,262,51967,283,220,16,18,11,198,262,68127,283,220,16,19,11,198,262,44205,283,220,16,20,11,198,262,85211,283,220,16,21,11,198,262,604,57,283,220,16,22,11,198,262,604,67561,283,220,16,23,11,198,262,24932,283,220,16,24,11,198,262,17944,283,220,17,15,11,198,262,70136,283,220,17,16,11,198,262,17579,283,220,17,17,11,198,262,41402,283,220,17,18,11,198,262,36382,283,220,17,19,11,198,262,10824,32,283,220,17,20,11,198,262,83391,283,220,17,21,11,198,262,19908,51,283,220,17,22,11,198,262,1897,283,220,17,23,11,198,262,9516,283,220,17,24,11,198,262,13000,2456,283],"text":"```cpp\n#include <cstdint>\n\nenum class Op : uint8_t {\n    ADD = 0,\n    SUB = 1,\n    MUL = 2,\n    DIV = 3,\n    MOD = 4,\n    AND = 5,\n    OR = 6,\n    XOR = 7,\n    SHL = 8,\n    SHR = 9,\n    NOT = 10,\n    NEG = 11,\n    LOAD = 12,\n    STORE = 13,\n    PUSH = 14,\n    POP = 15,\n    JMP = 16,\n    JZ = 17,\n    JNZ = 18,\n    CALL = 19,\n    RET = 20,\n    CMP = 21,\n    INC = 22,\n    DEC = 23,\n    MOV = 24,\n    LEA = 25,\n    NOP = 26,\n    HALT = 27,\n    IN = 28,\n    OUT = 29,\n    SWAP =","load_s":38.80,"prefill_s":0.32,"prefill_tok_s":27.750,"decode_s":17.83,"decode_tok_s":14.3603,"heap_allocs_in_decode_forward":0,"peak_rss_kb":847020,"rss_anon_kb":143076,"rss_file_kb":675704,"swap_used_kb_before":362732,"swap_used_kb_after":362732,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":6702.7,"gpu_weights_mib":5668.3,"gpu_kv_mib":431.6,"vram_used_mib":6830.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":15.338,"decode_cpu_layers_s":0.000,"decode_head_s":0.650,"mtp_steps":2,"cycles":87,"draft_n":174,"draft_n_accepted":170,"accept_hist":[1,2,84,0,0,0,0,0,0],"mtp_adaptive":0,"mtp_prefill_s":0.003,"prefill_main_s":0.322,"mtp_draft_s":1.778,"mtp_verify_s":15.993,"mtp_rollback_s":0.054,"stream_min_t":40,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":174,"ttft_s":0.326,"finish":"length","temperature":0.000,"ctx":33280,"reused_tokens":32759,"state_load_s":0.929}
+{"tag":"st_32768_repetitive_q4km_m2","rc":0,"wall_s":58,"peak_vram_mib":6831,"vram_cap_ok":true,"max_rss_kb":847020}

@@ -7,7 +7,8 @@ Mix (share of the samples, override with --mix FILE.json):
   15 %  reasoning / chain of thought: open-thoughts/OpenThoughts-114k
   20 %  English dialogue: HuggingFaceH4/ultrachat_200k (train_sft)
   10 %  Indonesian: uonlp/CulturaX (id) and wikimedia/wikipedia (20231101.id)
-  10 %  multilingual zh / ja / de / es: uonlp/CulturaX and CohereForAI/aya_collection (aya_dataset)
+  10 %  multilingual zh / ja / de / es: uonlp/CulturaX and CohereLabs/aya_collection (config aya_dataset; its
+        `language` column holds ISO 639-3 codes such as jpn / zho / spa / deu, not display names)
 
 Every sample is written as ChatML text (the template Bonsai and qwen38-engine use), so the teacher sees the same token
 layout at distillation time as at inference time. Plain documents (CulturaX, Wikipedia, starcoderdata) become a user turn
@@ -56,8 +57,11 @@ DEFAULT_MIX = [
     {"name": "culturax-ja", "share": 0.015, "path": "uonlp/CulturaX", "name_cfg": "ja", "split": "train", "fmt": "doc:ja", "lang": "ja"},
     {"name": "culturax-de", "share": 0.015, "path": "uonlp/CulturaX", "name_cfg": "de", "split": "train", "fmt": "doc:de", "lang": "de"},
     {"name": "culturax-es", "share": 0.015, "path": "uonlp/CulturaX", "name_cfg": "es", "split": "train", "fmt": "doc:es", "lang": "es"},
-    {"name": "aya", "share": 0.04, "path": "CohereForAI/aya_collection", "name_cfg": "aya_dataset", "split": "train", "fmt": "aya",
-     "lang": "multi", "languages": ["Chinese", "Simplified Chinese", "Japanese", "German", "Spanish"]},
+    # aya_collection config aya_dataset: human-written prompts, `language` is an ISO 639-3 code (jpn 6259, zho 4909,
+    # spa 3854, deu 241 rows in the train parquet). The earlier allowlist of display names ("Japanese", ...) matched
+    # nothing and the source silently ended at 0 samples.
+    {"name": "aya", "share": 0.04, "path": "CohereLabs/aya_collection", "name_cfg": "aya_dataset", "split": "train",
+     "fmt": "aya", "lang": "multi", "languages": ["jpn", "zho", "spa", "deu"]},
 ]
 
 DOC_PROMPTS = {
@@ -145,6 +149,42 @@ def stream(spec, seed, buffer):
     return ds.shuffle(seed=seed, buffer_size=buffer)
 
 
+# -------------------------------------------------------------------------------------------------- resume / retry
+GATED_MARKERS = ("gated", "401", "403", "access to dataset", "credentials", "log in with", "unauthorized", "permission")
+
+
+def error_is_gated(msg):
+    """True when a recorded error looks like a missing-token / gated-repo failure (retrying it without a token
+    will fail the same way again)."""
+    m = str(msg).lower()
+    return any(k in m for k in GATED_MARKERS)
+
+
+def token_available():
+    if os.environ.get("HF_TOKEN"):
+        return True
+    try:
+        from huggingface_hub import get_token
+        return bool(get_token())
+    except Exception:
+        return False
+
+
+def should_retry_source(name, man, have_token, retry_errors):
+    """True when a source that is not done should be streamed again. A source whose earlier attempt failed with a
+    gated-looking error is only retried when a token is now available or --retry-errors was given, so rerunning
+    cell 5 with an empty HF_TOKEN does not re-fail the same gated sources one by one. Finished sources and sources
+    never attempted are unaffected, and nothing ever deletes samples already on Drive."""
+    if man["done"].get(name):
+        return False
+    err = man.get("errors", {}).get(name)
+    if err is None:
+        return True
+    if retry_errors or have_token:
+        return True
+    return not error_is_gated(err)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out")
@@ -159,6 +199,9 @@ def main():
                     help="a source that cannot be streamed (gated, renamed, network): skip it or stop")
     ap.add_argument("--min-fraction", type=float, default=0.9,
                     help="exit code 1 when fewer than this fraction of --total samples were written")
+    ap.add_argument("--retry-errors", action="store_true",
+                    help="retry sources whose earlier attempt failed even when the error looks gated and HF_TOKEN "
+                         "is still missing (they are retried automatically once a token is available)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -185,11 +228,16 @@ def main():
         if man["done"].get(name) and os.path.exists(part):
             print(f"{name}: done earlier ({man['counts'][name]} samples)")
             continue
-        want, got, skipped = q[name], 0, 0
+        if not should_retry_source(name, man, token_available(), a.retry_errors):
+            print(f"  {name}: earlier attempt failed with a gated-looking error and no HF_TOKEN is set: skipping "
+                  f"(rerun with --retry-errors, or set HF_TOKEN, to force). error: {man['errors'][name]}")
+            continue
+        want, got, skipped, seen_rows = q[name], 0, 0, 0
         print(f"{name}: streaming {want} samples from {spec['path']} {spec.get('name_cfg', spec.get('data_dir', ''))}", flush=True)
         try:
             with open(part, "w", encoding="utf-8") as f:
                 for row in stream(spec, a.seed, a.shuffle_buffer):
+                    seen_rows += 1
                     text = fmt_row(spec, row)
                     if text is None or len(text) < a.min_chars:
                         skipped += 1
@@ -218,9 +266,13 @@ def main():
         man["done"][name] = got >= want
         man["counts"][name] = got
         man["skipped"][name] = skipped
-        json.dump(man, open(man_p, "w"), indent=1)
         if got < want:
-            print(f"  WARNING {name}: stream ended at {got} of {want}")
+            why = ("stream produced 0 rows: the config name, split or schema does not match (nothing was filtered)"
+                   if seen_rows == 0 else f"stream ended after {seen_rows} rows")
+            print(f"  WARNING {name}: stopped at {got} of {want} samples ({why}; rejected/short/duplicate: {skipped})")
+            if seen_rows == 0:
+                man["errors"][name] = f"streamed 0 rows (config/schema mismatch?): {spec['path']} {spec.get('name_cfg', '')}"
+        json.dump(man, open(man_p, "w"), indent=1)
     # interleave all parts into shuffled shards (old shards first removed: their count may differ)
     for old in glob.glob(os.path.join(a.out, "shard-*.jsonl")):
         os.remove(old)
@@ -263,15 +315,25 @@ def selftest():
         ({"fmt": "sharegpt"}, {"system": "Think step by step.", "conversations": [{"from": "human", "value": "2+2?"}, {"from": "gpt", "value": "<think>2+2=4</think>4"}]}),
         ({"fmt": "messages"}, {"messages": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello!"}]}),
         ({"fmt": "doc:id"}, {"text": "Jakarta adalah ibu kota Indonesia."}),
-        ({"fmt": "aya", "languages": ["German"]}, {"inputs": "Wie geht's?", "targets": "Gut, danke.", "language": "German"}),
-        ({"fmt": "aya", "languages": ["German"]}, {"inputs": "x", "targets": "y", "language": "French"}),
+        # aya_collection config aya_dataset: `language` holds ISO 639-3 codes, not display names
+        ({"fmt": "aya", "languages": ["deu"]}, {"inputs": "Wie geht's?", "targets": "Gut, danke.", "language": "deu"}),
+        ({"fmt": "aya", "languages": ["deu"]}, {"inputs": "x", "targets": "y", "language": "fra"}),
     ]
     for spec, row in samples:
         t = fmt_row(spec, row)
-        exp_none = spec["fmt"] == "aya" and row["language"] == "French"
+        exp_none = spec["fmt"] == "aya" and row["language"] == "fra"
         good = (t is None) if exp_none else (t is not None and t.count("<|im_start|>assistant") == 1 and t.endswith("<|im_end|>\n"))
         ok &= good
         print(f"[{'PASS' if good else 'FAIL'}] {spec['fmt']}: {repr(t[:70]) if t else None}")
+    man_gated = {"done": {}, "errors": {"a": "GatedRepoError: 401 Access to dataset bigcode/starcoderdata. You must log in"}}
+    man_other = {"done": {}, "errors": {"b": "ConnectionError: read timed out"}}
+    retry_ok = (should_retry_source("a", man_gated, False, False) is False     # gated, no token: skip
+                and should_retry_source("a", man_gated, True, False) is True   # token now available: retry
+                and should_retry_source("a", man_gated, False, True) is True   # --retry-errors: retry
+                and should_retry_source("b", man_other, False, False) is True  # non-gated error: always retry
+                and should_retry_source("c", {"done": {"c": True}, "errors": {}}, False, False) is False)  # done: skip
+    ok &= retry_ok
+    print(f"[{'PASS' if retry_ok else 'FAIL'}] should_retry_source: gated skip/retry logic")
     print("selftest:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

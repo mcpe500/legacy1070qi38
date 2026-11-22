@@ -218,6 +218,28 @@ int main(int argc, char ** argv) {
             std::printf("[TIME] kv=%s n=%d T=%d: reuse kernel %.2f ms, reuse + slices %.2f ms, old tiled %.2f ms (%.1fx)\n",
                         iso3 ? "iso3" : "f32 ", n, T, ms[0], ms[1], ms[2], ms[2] / std::min(ms[0], ms[1]));
         }
+        // decode timing: T = 1 and 5 query rows at the largest n, split-K kernel vs the v2 slice kernel (iso3 only)
+        if (iso3) {
+            for (int T : {1, 5}) {
+                const int n = max_n;
+                cudaEvent_t a, b;
+                CK(cudaEventCreate(&a));
+                CK(cudaEventCreate(&b));
+                float ms[2] = {0, 0};
+                for (int k = 0; k < 2; ++k) {
+                    op_attention_set_dec2(k == 1);
+                    CK(op_attention(d.q, d.qfull, d.kc, d.vc, d.out, T, n - T, iso3, 131072, 0, nullptr, d.part));
+                    CK(cudaEventRecord(a));
+                    for (int r = 0; r < 10; ++r) CK(op_attention(d.q, d.qfull, d.kc, d.vc, d.out, T, n - T, iso3, 131072, 0, nullptr, d.part));
+                    CK(cudaEventRecord(b));
+                    CK(cudaEventSynchronize(b));
+                    CK(cudaEventElapsedTime(&ms[k], a, b));
+                    ms[k] /= 10;
+                }
+                op_attention_set_dec2(true);
+                std::printf("[TIME] kv=iso3 n=%d decode T=%d: split-K %.3f ms, v2 slices %.3f ms (%.2fx)\n", n, T, ms[0], ms[1], ms[0] / ms[1]);
+            }
+        }
         CK(cudaFree(d.kc));
         CK(cudaFree(d.vc));
     }

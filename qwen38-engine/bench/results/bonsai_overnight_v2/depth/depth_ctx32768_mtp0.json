@@ -1,0 +1,1 @@
+{"depth_bench":32768,"steps":32,"decode_tok_s":14.0414,"ctx":32768,"gpu_layers":64,"load_s":38.25,"cpu_arena_mib":259.2,"gpu_arena_mib":6226.3,"gpu_kv_mib":400.0,"vram_used_mib":6350.2,"peak_rss_kb":564740}

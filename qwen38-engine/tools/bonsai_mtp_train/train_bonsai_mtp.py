@@ -38,7 +38,8 @@ Warm start: --init-mtp-safetensors FILE (a blk.64 safetensors: an mtp_step*.safe
 Usage:
   python3 train_bonsai_mtp.py --teacher /models/Ternary-Bonsai-2-27B-bf16 --corpus /data/bonsai_mtp_corpus --out runs/mtp1 \
       --init gguf:/models/Qwen3.8-27B-UD-Q4_K_M.gguf --steps 12000
-  python3 train_bonsai_mtp.py --selftest        # tiny random teacher on CPU: shapes, losses, backward, export names
+  python3 train_bonsai_mtp.py --selftest        # tiny random teacher on CPU: shapes, losses, backward, export names,
+                                                 # external warm-start mapping, warning-free generate, save triggers
   python3 train_bonsai_mtp.py --export-init gguf:QWEN.gguf --out x.safetensors   # dequantized init only (warm start file)
 """
 import argparse
@@ -62,6 +63,26 @@ GGUF_NAMES = {   # student parameter -> GGUF tensor name (blk.64)
     "k_norm": "blk.64.attn_k_norm.weight", "post_norm": "blk.64.post_attention_norm.weight",
     "gate_proj": "blk.64.ffn_gate.weight", "up_proj": "blk.64.ffn_up.weight", "down_proj": "blk.64.ffn_down.weight",
     "head_norm": "blk.64.nextn.shared_head_norm.weight",
+}
+
+# External warm-start schemas (other names for the same 15 tensors). ProCreations/Ternary-Bonsai-2-27B-MTP ships
+# model_mtp.safetensors with the Qwen HF nextn naming (mtp.fc, mtp.layers.0.*, mtp.norm) for the same single layer.
+EXTERNAL_ALIASES = {
+    "enorm": ("mtp.pre_fc_norm_embedding.weight",),
+    "hnorm": ("mtp.pre_fc_norm_hidden.weight",),
+    "eh_proj": ("mtp.fc.weight",),
+    "attn_norm": ("mtp.layers.0.input_layernorm.weight",),
+    "q_proj": ("mtp.layers.0.self_attn.q_proj.weight",),
+    "k_proj": ("mtp.layers.0.self_attn.k_proj.weight",),
+    "v_proj": ("mtp.layers.0.self_attn.v_proj.weight",),
+    "o_proj": ("mtp.layers.0.self_attn.o_proj.weight",),
+    "q_norm": ("mtp.layers.0.self_attn.q_norm.weight",),
+    "k_norm": ("mtp.layers.0.self_attn.k_norm.weight",),
+    "post_norm": ("mtp.layers.0.post_attention_layernorm.weight",),
+    "gate_proj": ("mtp.layers.0.mlp.gate_proj.weight",),
+    "up_proj": ("mtp.layers.0.mlp.up_proj.weight",),
+    "down_proj": ("mtp.layers.0.mlp.down_proj.weight",),
+    "head_norm": ("mtp.norm.weight",),
 }
 
 
@@ -141,14 +162,50 @@ class MTPHead(nn.Module):
                 own[n].copy_(t)
 
 
+def student_shapes(d: Dims):
+    """Parameter name -> tensor shape of the student layout (shape checks for the external warm-start mapping)."""
+    H, nh, nkv, hd, f = d.hidden, d.n_head, d.n_kv, d.head_dim, d.ffn
+    return {"enorm": (H,), "hnorm": (H,), "eh_proj": (H, 2 * H), "attn_norm": (H,),
+            "q_proj": (nh * 2 * hd, H), "k_proj": (nkv * hd, H), "v_proj": (nkv * hd, H),
+            "o_proj": (H, nh * hd), "q_norm": (hd,), "k_norm": (hd,), "post_norm": (H,),
+            "gate_proj": (f, H), "up_proj": (f, H), "down_proj": (H, f), "head_norm": (H,)}
+
+
+def map_external_state(sd, d: Dims):
+    """Renames an external blk.64 schema (GGUF names or the ProCreations mtp.* / HF nextn names) into the internal
+    GGUF names, checking every tensor shape. SystemExits with the offending names when a tensor is missing or has
+    the wrong shape, instead of a cryptic reshape error later."""
+    shapes = student_shapes(d)
+    out = {}
+    for param, gguf_name in GGUF_NAMES.items():
+        src = next((c for c in (gguf_name,) + EXTERNAL_ALIASES.get(param, ()) if c in sd), None)
+        if src is None:
+            raise SystemExit(f"warm start: no tensor for {gguf_name} (looked for {gguf_name} and "
+                             f"{EXTERNAL_ALIASES.get(param, ())}); keys present: {sorted(sd)[:10]} ...")
+        t = torch.as_tensor(sd[src]).float()
+        if tuple(t.shape) != shapes[param]:
+            raise SystemExit(f"warm start: {src} has shape {list(t.shape)}, expected {list(shapes[param])} for {gguf_name}")
+        out[gguf_name] = t
+    known = set(GGUF_NAMES.values()) | {a for v in EXTERNAL_ALIASES.values() for a in v}
+    extras = [k for k in sd if k not in known]
+    if extras:
+        print(f"warm start: ignoring {len(extras)} unknown tensors: {sorted(extras)[:6]} ...")
+    return out
+
+
 def load_init(spec, d):
-    """gguf:PATH (dequantize blk.64 of a qwen35 GGUF with llama.cpp gguf-py), st:PATH (safetensors), or random."""
+    """gguf:PATH (dequantize blk.64 of a qwen35 GGUF with llama.cpp gguf-py), st:PATH (safetensors; a foreign schema
+    such as ProCreations model_mtp.safetensors is auto-mapped, shapes checked), or random."""
     if spec is None or spec == "random":
         return None
     kind, path = spec.split(":", 1)
     if kind == "st":
         from safetensors.torch import load_file
-        return load_file(path)
+        sd = load_file(path)
+        if not any(k in sd for k in GGUF_NAMES.values()) and any(k.startswith("mtp.") for k in sd):
+            print("warm start: external schema detected (mtp.* keys), mapping to the blk.64 names")
+            return map_external_state(sd, d)
+        return sd
     if kind == "gguf":
         sys.path.insert(0, os.path.expanduser("~/llama.cpp/gguf-py"))
         from gguf import GGUFReader, quants   # noqa: E402
@@ -162,6 +219,39 @@ def load_init(spec, d):
     raise SystemExit(f"bad --init {spec}")
 
 
+def generation_pad_id(tok):
+    """A pad token id that never collides with eos, so generate() padding can be told apart from real eos tokens.
+    Prefers the tokenizer's own pad token, then common Qwen-style reserve pad tokens. None = keep pad == eos
+    (the caller then rewrites the generated tail: every position after a row's first eos is eos anyway)."""
+    pad = getattr(tok, "pad_token_id", None)
+    eos = getattr(tok, "eos_token_id", None)
+    if pad is not None and eos is not None and pad != eos:
+        return pad
+    for special in ("<|finetune_right_pad_id|>", "<|video_pad|>", "<|fim_pad|>", "<|object_ref_pad|>"):
+        try:
+            i = tok.convert_tokens_to_ids(special)
+        except Exception:
+            i = None
+        if isinstance(i, int) and i >= 0 and (eos is None or i != eos):
+            return i
+    return None
+
+
+def report_accelerators():
+    """Prints whether the fused teacher kernels are importable (flash-linear-attention, causal-conv1d) or the run
+    falls back to the slower PyTorch reference paths. A causal-conv1d fallback costs roughly 4x the step time."""
+    for mod, what in (("flash-linear-attention", "Triton kernels for the 48 Gated DeltaNet layers"),
+                      ("causal-conv1d", "fused conv1d of the Gated DeltaNet convs")):
+        try:
+            m = __import__(mod.replace("-", "_"))
+            if mod == "causal-conv1d" and not hasattr(m, "causal_conv1d_fn"):
+                raise RuntimeError("causal_conv1d_fn missing")
+            print(f"accelerator: {mod}: ACTIVE ({what})", flush=True)
+        except Exception as e:
+            print(f"accelerator: {mod}: FALLBACK to the PyTorch reference path "
+                  f"({type(e).__name__}: {str(e)[:90]})", flush=True)
+
+
 # ------------------------------------------------------------------------------------------------------------ teacher
 class Teacher:
     """Frozen Hugging Face causal LM. hidden(): output-normed last hidden state (hook on the final norm), lm_head shared."""
@@ -169,6 +259,7 @@ class Teacher:
     def __init__(self, path, device, dtype=torch.bfloat16, attn_impl=None):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         self.tok = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+        self.tok.padding_side = "left"   # generation with padded batches must pad on the left (decoder-only model)
         kw = {"attn_implementation": attn_impl} if attn_impl else {}
         self.model = AutoModelForCausalLM.from_pretrained(path, dtype=dtype, device_map={"": device}, trust_remote_code=True, **kw)
         self.model.eval().requires_grad_(False)
@@ -198,8 +289,19 @@ class Teacher:
 
     @torch.no_grad()
     def continue_(self, ids, n_new, temp=0.8, top_p=0.95):
-        return self.model.generate(input_ids=ids, max_new_tokens=n_new, do_sample=True, temperature=temp, top_p=top_p,
-                                   pad_token_id=self.tok.pad_token_id or self.tok.eos_token_id)
+        """Teacher continuation for the on-policy batches: left padding side, an explicit attention_mask, and a
+        pad id that never collides with eos, so transformers emits neither the missing-attention-mask nor the
+        right-padding warning, and the generated rows never contain pad ids (they are rewritten to eos, which in
+        ChatML is just a turn boundary, a token the corpus contains everywhere)."""
+        tok = self.tok
+        eos = tok.eos_token_id
+        pad = generation_pad_id(tok)
+        out = self.model.generate(input_ids=ids, attention_mask=torch.ones_like(ids), max_new_tokens=n_new,
+                                  do_sample=True, temperature=temp, top_p=top_p,
+                                  pad_token_id=pad if pad is not None else eos)
+        if pad is not None and pad != eos:
+            out[out == pad] = eos   # rows that finished early were padded with `pad`; eos instead, never pad in the data
+        return out
 
 
 # ------------------------------------------------------------------------------------------------------------ data
@@ -237,10 +339,17 @@ def chunk_loss(f, h_tgt, lm_w, T, cos_w):
     return kl, cos * cos_w, agree
 
 
+def unroll_K(args):
+    """Unrolled self-rollout steps of this run: --unroll (1..8) for the `mtp` drafter, --df3-block (16) for the
+    `df3` block schedule, which is the draft count of the 17-row verification batch of the engine
+    (1 target row + B drafts, qwen38-engine src/engine/generator.cpp kVerifyMax)."""
+    return args.df3_block if args.drafter == "df3" else args.unroll
+
+
 def unrolled_loss(student, emb_fn, lm_w, ids, H, args):
     """ids [B, L], H [B, L, Hd] (teacher output-normed hidden). Steps k = 1..K as described in the module docstring."""
     B, L = ids.shape
-    K = args.unroll
+    K = unroll_K(args)
     total = 0.0
     logs = []
     h_in = H[:, : L - 1]                    # step 1: h of position i feeds the token x_{i+1}
@@ -309,11 +418,23 @@ def latest_checkpoint(out):
     return max(files, key=lambda p: int(re.search(r"mtp_step(\d+)\.safetensors$", p).group(1))) if files else None
 
 
+def save_due(next_step, args, since_last_s):
+    """A checkpoint is due at a --save-every multiple, at --steps, or once --save-every-min minutes have passed
+    since the last save (whichever comes first; 0 disables the time trigger, 0 for --save-every disables the
+    step trigger). Long Colab steps (71-76 s without causal-conv1d) then never lose more than 20 minutes."""
+    if args.save_every and next_step % args.save_every == 0:
+        return True
+    if next_step == args.steps:
+        return True
+    return bool(args.save_every_min) and since_last_s >= args.save_every_min * 60.0
+
+
 def train(args):
     dev = torch.device(args.device)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     os.makedirs(args.out, exist_ok=True)
+    report_accelerators()
     resume = find_resume(args.resume_from, args.out)
     teacher = Teacher(args.teacher, dev, dtype=torch.float32 if args.teacher_f32 else torch.bfloat16, attn_impl=args.attn_impl)
     d = teacher.dims
@@ -361,6 +482,17 @@ def train(args):
     emb_fn = lambda t: teacher.embed(t)   # noqa: E731  (frozen, BF16)
     t0 = time.time()
     log_f = open(os.path.join(args.out, "train_log.jsonl"), "a")
+    last_save_t, last_log_t, last_log_step = t0, t0, step0
+
+    # SIGINT/SIGTERM only set a flag: the loop finishes the current optimizer step and then saves atomically,
+    # so a Ctrl-C or an external kill never cuts a save in half and never loses the last --save-every-min minutes.
+    stop = {"sig": None}
+    import signal
+
+    def _sig(s, _f):
+        stop["sig"] = s
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _sig)
 
     def save(done_steps):
         from safetensors.torch import save_file
@@ -393,22 +525,31 @@ def train(args):
             acc_logs.append(logs)
         gn = torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
         opt.step()
+        now = time.time()
         if step % args.log_every == 0:
-            K = args.unroll
+            K = unroll_K(args)
             avg = [[sum(l[k][j] for l in acc_logs) / len(acc_logs) for j in range(3)] for k in range(K)]
+            sps = (now - last_log_t) / max(1, step - last_log_step)   # seconds per optimizer step
             rec = {"step": step, "lr": lr_at(step), "grad_norm": float(gn), "s": time.time() - t0,
-                   "kl": [a[0] for a in avg], "cos_loss": [a[1] for a in avg], "top1_agree": [a[2] for a in avg]}
+                   "kl": [a[0] for a in avg], "cos_loss": [a[1] for a in avg], "top1_agree": [a[2] for a in avg],
+                   "sec_per_step": round(sps, 3),
+                   "tok_per_sec": round(args.batch * args.grad_accum * args.seq_len / sps, 1) if sps else None,
+                   "elapsed_min": round((now - t0) / 60.0, 1),
+                   "eta_h": round((args.steps - step - 1) * sps / 3600.0, 2)}
             print(json.dumps(rec), flush=True)
             log_f.write(json.dumps(rec) + "\n")
             log_f.flush()
-        if (step + 1) % args.save_every == 0 or step + 1 == args.steps:
+            last_log_t, last_log_step = now, step
+        if save_due(step + 1, args, now - last_save_t):
             save(step + 1)
-        elif args.time_limit_min and (time.time() - t0) / 60.0 >= args.time_limit_min:
-            save(step + 1)   # stop cleanly before a session limit; the next run resumes from here
+            last_save_t = now
+        if args.time_limit_min and (now - t0) / 60.0 >= args.time_limit_min:
             print(f"time limit of {args.time_limit_min} min reached after step {step + 1}, stopping", flush=True)
             break
-        if args.time_limit_min and (time.time() - t0) / 60.0 >= args.time_limit_min:
-            print(f"time limit of {args.time_limit_min} min reached after step {step + 1}, stopping", flush=True)
+        if stop["sig"] is not None:
+            if now - last_save_t > 1.0:   # the signal arrived between saves: one more atomic save right here
+                save(step + 1)
+            print(f"{signal.Signals(stop['sig']).name} received after step {step + 1}, stopping", flush=True)
             break
     log_f.close()
 
@@ -429,6 +570,8 @@ def selftest():
 
     class A:
         unroll, kl_chunk, temperature, cos_weight, step_decay, ckpt = 4, 16, 1.0, 0.5, 0.8, True
+        drafter = "mtp"      # the selftest exercises the `mtp` drafter (the `df3` block schedule uses unroll = df3_block)
+        df3_block = 4        # only read when drafter == "df3"
     s = MTPHead(d)
     opt = torch.optim.AdamW(s.parameters(), lr=3e-3)
     ids = torch.randint(0, V, (B, L))
@@ -451,6 +594,85 @@ def selftest():
     ok &= shapes_ok
     print(f"loss {losses[0]:.4f} -> {losses[-1]:.4f}; per-step (kl, cos, top1) at the end: "
           + ", ".join(f"k{k + 1}=({a:.3f},{b:.3f},{c:.2f})" for k, (a, b, c) in enumerate(logs)))
+    # external warm-start mapping: a small student re-keyed to the ProCreations mtp.* schema must load back unchanged,
+    # and a wrong shape must SystemExit with a message that names the tensor
+    dsm = Dims(hidden=64, n_head=4, n_kv=2, head_dim=16, rope_dim=8, ffn=96, theta=1e7, eps=1e-6)
+    sm = MTPHead(dsm)
+    ref = {n: w.detach().clone() for n, w in sm.named_parameters()}
+    external = {al[0]: ref[param] for param, al in EXTERNAL_ALIASES.items()}
+    mapped = map_external_state(external, dsm)
+    map_ok = all(torch.equal(mapped[GGUF_NAMES[p]], ref[p]) for p in ref)
+    bad = dict(external)
+    bad["mtp.fc.weight"] = torch.zeros(1)
+    try:
+        map_external_state(bad, dsm)
+        shape_exit = False
+    except SystemExit:
+        shape_exit = True
+    ok &= map_ok and shape_exit
+    print(f"external warm-start mapping (ProCreations mtp.* -> blk.64): {'ok' if map_ok else 'WRONG'}; "
+          f"wrong shape rejected: {'yes' if shape_exit else 'NO'}")
+
+    # generation pad id: a tokenizer whose pad collides with eos and knows a reserve pad token gets that token,
+    # one without any gets None (pad == eos; the generated tail is rewritten to eos instead)
+    class _Tok:
+        pad_token_id = eos_token_id = 0
+
+        def convert_tokens_to_ids(self, s):
+            return {"<|video_pad|>": 7}.get(s)
+    pad_id = generation_pad_id(_Tok())
+    class _Tok2:
+        pad_token_id = eos_token_id = 0
+
+        def convert_tokens_to_ids(self, s):
+            return None
+    pad_none = generation_pad_id(_Tok2())
+    pad_ok = pad_id == 7 and pad_none is None
+    ok &= pad_ok
+    print(f"generation pad id: reserve={pad_id}, none-fallback={pad_none}: {'ok' if pad_ok else 'WRONG'}")
+
+    # generate() with pad_token_id == eos_token_id must not emit a transformers warning when the batch is
+    # explicitly masked (the two warnings the on-policy path used to print on every step)
+    gen_ok, gen_note = True, "skipped (transformers not installed)"
+    try:
+        import logging as _logging
+        from transformers import GPT2Config, GPT2LMHeadModel
+        gm = GPT2LMHeadModel(GPT2Config(vocab_size=64, n_embd=32, n_layer=1, n_head=2, n_positions=32,
+                                        bos_token_id=1, eos_token_id=0))
+        gm.eval()
+        recs = []
+
+        class _H(_logging.Handler):
+            def emit(self, r):
+                recs.append(r.getMessage())
+        h = _H()
+        lg = _logging.getLogger("transformers")
+        lg.addHandler(h)
+        gids = torch.randint(0, 64, (2, 8))
+        with torch.no_grad():
+            gm.generate(input_ids=gids, attention_mask=torch.ones_like(gids), max_new_tokens=4, do_sample=False,
+                        pad_token_id=0)
+        lg.removeHandler(h)
+        bad_recs = [m for m in recs if any(k in m.lower() for k in ("attention mask", "right-pad", "padding side", "pad_token"))]
+        gen_ok = not bad_recs
+        gen_note = "no warning" if not bad_recs else f"{len(bad_recs)} warning(s): {bad_recs[:2]}"
+    except ImportError:
+        pass
+    ok &= gen_ok
+    print(f"generate() with pad == eos, explicit mask: {gen_note}")
+
+    # save triggers: step multiples, the final step, the wall-clock trigger, and the disabled combinations
+    class _S:
+        save_every, save_every_min, steps = 500, 20.0, 2000
+    sv = _S()
+    trig_ok = (save_due(500, sv, 0.0) and save_due(2000, sv, 0.0) and not save_due(499, sv, 0.0)
+               and not save_due(499, sv, 19 * 60.0))
+    sv.save_every_min = 0.0
+    trig_ok &= not save_due(499, sv, 1e9)   # time trigger disabled
+    sv.save_every_min, sv.save_every = 20.0, 0
+    trig_ok &= save_due(499, sv, 21 * 60.0) and not save_due(499, sv, 1.0) and save_due(2000, sv, 0.0)
+    ok &= trig_ok
+    print(f"save triggers (step / final / minutes / disabled combos): {'ok' if trig_ok else 'WRONG'}")
     print(f"full-size student: {n_par / 1e6:.1f}M parameters, GGUF shapes {'ok' if shapes_ok else 'WRONG'}")
     print("selftest:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
@@ -473,7 +695,18 @@ def main():
     ap.add_argument("--grad-accum", type=int, default=8)
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--warmup", type=int, default=300)
-    ap.add_argument("--unroll", type=int, default=4)
+    ap.add_argument("--drafter", default="mtp", choices=["mtp", "df3"],
+                    help="mtp: the single-layer nextn head the engine loads as blk.64, trained with --unroll (1..8) "
+                         "unrolled self-rollout steps. df3: the block-diffusion schedule, --df3-block (default 16) drafts "
+                         "per verification batch; the student is the same head, while a 2-3 layer DFlash head needs a "
+                         "loader path the engine does not have yet (docs/DRAFTER_V2_CONTRACT.md section 2)")
+    ap.add_argument("--df3-block", type=int, default=16,
+                    help="draft block of the df3 schedule (B of a B+1 row verification batch); 16 is the batch the "
+                         "engine verifies losslessly since M2")
+    ap.add_argument("--df3-layers", type=int, default=2, choices=[2, 3],
+                    help="decoder layers of the target DFlash head, recorded in the run config and the export "
+                         "metadata; the engine loader knows one layer, so a real 2-3 layer head needs M4-style work")
+    ap.add_argument("--unroll", type=int, default=4, help="unrolled self-rollout steps of the `mtp` drafter (1..8)")
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--cos-weight", type=float, default=0.5)
     ap.add_argument("--step-decay", type=float, default=0.8)
@@ -483,6 +716,8 @@ def main():
     ap.add_argument("--no-ckpt", dest="ckpt", action="store_false")
     ap.add_argument("--log-every", type=int, default=10)
     ap.add_argument("--save-every", type=int, default=500)
+    ap.add_argument("--save-every-min", type=float, default=20.0,
+                    help="also save when this many wall-clock minutes passed since the last save (0 = only --save-every)")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--device", default="cuda", help="cuda (training) or cpu (--smoke tests)")
     ap.add_argument("--optim", default="adamw", choices=["adamw", "sgd"])
@@ -492,6 +727,15 @@ def main():
     ap.add_argument("--export-init", help="write the dequantized --export-init source as safetensors to --out and exit")
     ap.add_argument("--latest", metavar="DIR", help="print the newest checkpoint safetensors of a run directory and exit")
     a = ap.parse_args()
+    # The `mtp` drafter trains 1..8 unrolled steps; `df3` runs the block schedule of --df3-block drafts, which is
+    # the draft count of the verification batch the engine verifies losslessly (M2 of issue #57).
+    if a.drafter == "mtp" and not (1 <= a.unroll <= 8):
+        ap.error("--unroll must be 1..8 for the `mtp` drafter (a larger block is the `df3` schedule)")
+    if a.drafter == "df3" and not (1 <= a.df3_block <= 32):
+        ap.error("--df3-block must be 1..32 (the engine verifies 16 drafts + 1 target row since M2)")
+    if a.drafter == "df3":
+        print(f"df3 schedule: block of {a.df3_block} drafts, target head of {a.df3_layers} decoder layers "
+              "(recorded in the export metadata; the engine loader knows one layer)", flush=True)
     if a.latest:
         p = latest_checkpoint(a.latest)
         if not p:

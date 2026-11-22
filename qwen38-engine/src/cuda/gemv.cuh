@@ -11,6 +11,7 @@
 // ssm_alpha/ssm_beta packing of Ternary Bonsai).
 enum GemvType : int {
     GT_Q8_0 = 8,
+    GT_Q2_K = 10,
     GT_BF16 = 30,
     GT_Q3_K = 11,
     GT_Q4_K = 12,

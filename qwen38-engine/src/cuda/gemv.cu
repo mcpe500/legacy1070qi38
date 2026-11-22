@@ -257,6 +257,7 @@ cudaError_t gemv_fp32_pair(int type, const uint8_t * W1, const uint8_t * W2, int
 
 int64_t gemv_row_bytes(int type, int64_t in) {
     switch (type) {
+        case GT_Q2_K: return in / 256 * 84;
         case GT_Q4_K: return in / 256 * 144;
         case GT_Q5_K: return in / 256 * 176;
         case GT_Q6_K: return in / 256 * 210;

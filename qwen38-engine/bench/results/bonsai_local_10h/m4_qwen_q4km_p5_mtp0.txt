@@ -1,0 +1,11 @@
+
+prompt: The capital of France is
+generated:  Paris.
+The capital of Germany is Berlin.
+The capital of Italy is Rome.
+The capital of Spain is Madrid.
+The capital of Portugal is Lisbon.
+The capital of Greece is Athens.
+The capital of the United
+{"prompt_tokens":5,"generated_tokens":48,"ids":[11751,13,198,760,6511,314,9564,369,19241,13,198,760,6511,314,14898,369,21047,13,198,760,6511,314,17163,369,23327,13,198,760,6511,314,32208,369,77916,13,198,760,6511,314,23655,369,44299,13,198,760,6511,314,279,3516],"text":" Paris.\nThe capital of Germany is Berlin.\nThe capital of Italy is Rome.\nThe capital of Spain is Madrid.\nThe capital of Portugal is Lisbon.\nThe capital of Greece is Athens.\nThe capital of the United","load_s":60.36,"prefill_s":1.78,"prefill_tok_s":2.809,"decode_s":23.44,"decode_tok_s":2.0482,"heap_allocs_in_decode_forward":0,"peak_rss_kb":8726868,"rss_anon_kb":208408,"rss_file_kb":8432444,"swap_used_kb_before":364268,"swap_used_kb_after":377324,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":32,"gpu_arena_mib":7119.6,"gpu_weights_mib":6646.2,"gpu_kv_mib":25.0,"vram_used_mib":7260.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":2.014,"decode_cpu_layers_s":19.176,"decode_head_s":2.126,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.000,"prefill_main_s":1.771,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"ttft_s":1.780,"finish":"length","temperature":0.000,"ctx":4096,"reused_tokens":0,"state_load_s":0.000}
+{"tag":"m4_qwen_q4km_p5_mtp0","rc":0,"wall_s":86,"peak_vram_mib":7261,"vram_cap_ok":true,"max_rss_kb":8726868}

@@ -422,6 +422,7 @@ __global__ void attention_kernel_tiled(const float * qbuf, const float * qfull, 
 // own slice of the positions and writing (m, l, o[256]) to `part`; attention_combine merges the slices. Without it a
 // decode step at 128K positions runs only 24 blocks (one per head) over the whole cache.
 constexpr int kSplits = 64;
+constexpr int kVerifySlices = 100;   // most slices a verification row sums (op_attention_part_floats, below)
 constexpr int kSplitTMax = 8;
 
 template <bool ISO3>
@@ -563,7 +564,10 @@ __global__ void attention_combine(const float * part, const float * qfull, float
 constexpr int kPQ = 8;                 // query tokens per block (= warps)
 constexpr int kPP = 16;                // positions per K/V tile
 constexpr int kQG = NH / NKV;          // 6 query heads per KV group
-constexpr int kPrefillPartRows = kSplitTMax * kSplits;   // (token x slice) rows of the shared partial buffer per head
+// (token x slice) rows of the partial buffer per head (op_attention_part_floats, sized by verify_t). The prefill
+// kernel slices while the rows of its T query rows fit in it, so a larger verify batch also lets prefill use more
+// slices over the positions.
+int kPrefillPartRows() { return op_attention_verify_t() * kVerifySlices; }
 
 // v[0..7] (one value per position of a group of 8, partial over this lane's dims) -> sum over the 32 lanes of
 // v[(lane >> 2) & 7], returned in every lane.
@@ -633,16 +637,36 @@ __global__ void __launch_bounds__(kPQ * (kQG / HPW) * 32) attention_kernel_prefi
         for (int k = 0; k < 8; ++k) o[r][k] = 0.0f;
     }
 
+    // iso3: the raw bytes of the next tile are loaded into registers while the current tile is computed (one block per SM:
+    // without this the global-load latency of every tile was exposed between two barriers). Same bytes, same result.
+    constexpr int RPT = (2 * kPP * 25 + NT - 1) / NT;   // raw words per thread and tile
+    uint32_t pre[RPT];
+    auto load_raw = [&](int jt, int npt) {
+#pragma unroll
+        for (int k = 0; k < RPT; ++k) {
+            const int i = tid + NT * k;
+            const int kv = i / (kPP * 25), rem = i % (kPP * 25), p = rem / 25, w = rem % 25;
+            pre[k] = (i < 2 * kPP * 25 && p < npt)
+                         ? __ldg(reinterpret_cast<const uint32_t *>((kv ? vc : kc) + static_cast<int64_t>(jt + p) * 400 + g * 100) + w)
+                         : 0u;
+        }
+    };
+    if (ISO3 && js < je) load_raw(js, min(kPP, je - js));
+
     for (int j0 = js; j0 < je; j0 += kPP) {
         const int np = min(kPP, je - j0);
         __syncthreads();   // previous tile fully consumed
         if (ISO3) {
-            for (int i = tid; i < 2 * kPP * 25; i += NT) {
-                const int kv = i / (kPP * 25), rem = i % (kPP * 25), p = rem / 25, w = rem % 25;
-                raw[kv][p][w] = p < np ? __ldg(reinterpret_cast<const uint32_t *>((kv ? vc : kc) + static_cast<int64_t>(j0 + p) * 400 + g * 100) + w)
-                                       : 0u;
+#pragma unroll
+            for (int k = 0; k < RPT; ++k) {
+                const int i = tid + NT * k;
+                if (i < 2 * kPP * 25) {
+                    const int kv = i / (kPP * 25), rem = i % (kPP * 25), p = rem / 25, w = rem % 25;
+                    raw[kv][p][w] = pre[k];
+                }
             }
             __syncthreads();
+            if (j0 + kPP < je) load_raw(j0 + kPP, min(kPP, je - j0 - kPP));   // in flight during the dequant and the compute
             // 2 tensors x 16 positions x 2 halves x 32 groups of 4 values = 2048 groups; the group index is tid & 31
 #pragma unroll
             for (int i = 0; i < 2048 / NT; ++i) {
@@ -771,11 +795,170 @@ __global__ void attention_combine_n(const float * part, const float * qfull, flo
     attn_o[static_cast<int64_t>(t) * (NH * HD) + h * HD + tid] = O * (1.0f / L) * sigm_f(gate);
 }
 
+
+// ---- iso3 decode attention v2 (issue #55 M2, T <= kSplitTMax, ctx_max > 8192 or the Bonsai path). The split-K kernel above
+// spent one warp per position with six full warp reductions (30 shuffles), a block-wide barrier per 256-position tile and
+// a 4x redundant iso3 decode of V: about 12 GB/s of K/V traffic at 128K. Here every warp owns one slice of the positions
+// and the 6 query heads of the KV group, with the lane layout of the prefill kernel (lane L: dims 8L .. 8L+7 = iso3 groups
+// 2L, 2L+1 of half L/16) and no barrier in the loop. The quaternion rotation of iso3 is moved out of the loop: with
+// k = nm * M c (M = the group's rotation, c = codebook values) the score is nm * (M^T q) . c, so q is rotated once, and
+// V is accumulated as o' = sum p * nm * c and rotated once at the end (o = M o'). Scores of 8 positions per reduce-scatter,
+// online softmax per 16 positions. Each warp writes its own (m, l, o) slice; attention_combine_n merges the ns slices.
+constexpr int kDecWarps = 4;   // warps (slices) per block
+
+__device__ __forceinline__ void iso3_codes8(const uint8_t * blk, int gi0, const float * cb, float (&c)[8]) {
+    // codebook values of groups gi0 and gi0 + 1 (gi0 even) of one 50-byte iso3 half block (2-byte aligned: one 16-bit load)
+    const uint32_t qs = __ldg(reinterpret_cast<const unsigned short *>(blk + 2 + gi0));
+    const uint32_t sg = __ldg(blk + 34 + (gi0 >> 1));
+#pragma unroll
+    for (int k = 0; k < 8; ++k) c[k] = cb[((qs >> (2 * k)) & 3) | (((sg >> k) & 1) << 2)];
+}
+
+template <int NSL_MAX>
+__global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso3(const float * __restrict__ qbuf, const uint8_t * __restrict__ kc,
+                                                                                  const uint8_t * __restrict__ vc, float * __restrict__ part,
+                                                                                  int pos0, const int * pos_dev, int nsl) {
+    constexpr int QG = NH / NKV;
+    __shared__ float s_cb[8];
+    if (pos_dev) pos0 = *pos_dev;
+    const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
+    if (tid < 8) s_cb[tid] = iso3_codebook[tid];
+    __syncthreads();
+    const int t = blockIdx.x / NKV, g = blockIdx.x % NKV;
+    const int sl = blockIdx.y * kDecWarps + warp;           // slice of this warp
+    const int n = pos0 + t + 1;
+    const int chunk = ((n + nsl - 1) / nsl + 15) / 16 * 16;
+    const int js = min(n, sl * chunk), je = min(n, js + chunk);
+    const int hf = lane >> 4, gi0 = (2 * lane) & 31;
+    const float kq_scale = 1.0f / sqrtf(static_cast<float>(HD));
+    // rotation of the lane's two groups: M = L(p), p = (w, -x, -y, -z) as in iso3_group
+    float pw[2], px[2], py[2], pz[2];
+#pragma unroll
+    for (int k = 0; k < 2; ++k) {
+        pw[k] = iso3_quat_w[gi0 + k]; px[k] = -iso3_quat_x[gi0 + k]; py[k] = -iso3_quat_y[gi0 + k]; pz[k] = -iso3_quat_z[gi0 + k];
+    }
+    float q[QG][8], o[QG][8], m[QG], l[QG];
+#pragma unroll
+    for (int r = 0; r < QG; ++r) {
+        const float4 * qp = reinterpret_cast<const float4 *>(qbuf + (static_cast<int64_t>(t) * NH + g * QG + r) * HD + lane * 8);
+        const float4 a = qp[0], b = qp[1];
+        const float v[8] = {a.x, a.y, a.z, a.w, b.x, b.y, b.z, b.w};
+#pragma unroll
+        for (int k = 0; k < 2; ++k) {   // q' = M^T q (scaled)
+            const float q0 = v[4 * k] * kq_scale, q1 = v[4 * k + 1] * kq_scale, q2 = v[4 * k + 2] * kq_scale, q3 = v[4 * k + 3] * kq_scale;
+            q[r][4 * k + 0] = pw[k] * q0 + px[k] * q1 + py[k] * q2 + pz[k] * q3;
+            q[r][4 * k + 1] = -px[k] * q0 + pw[k] * q1 + pz[k] * q2 - py[k] * q3;
+            q[r][4 * k + 2] = -py[k] * q0 - pz[k] * q1 + pw[k] * q2 + px[k] * q3;
+            q[r][4 * k + 3] = -pz[k] * q0 + py[k] * q1 - px[k] * q2 + pw[k] * q3;
+        }
+        m[r] = -INFINITY;
+        l[r] = 0.0f;
+#pragma unroll
+        for (int k = 0; k < 8; ++k) o[r][k] = 0.0f;
+    }
+    for (int j0 = js; j0 < je; j0 += 16) {
+        float s[2][QG];
+#pragma unroll
+        for (int c = 0; c < 2; ++c) {
+            float pv[QG][8];
+#pragma unroll
+            for (int pp = 0; pp < 8; ++pp) {
+                const int j = j0 + c * 8 + pp;
+                float cv[8];
+                float nm = 0.0f;
+                if (j < je) {
+                    const uint8_t * kb = kc + (static_cast<int64_t>(j) * 8 + g * 2 + hf) * 50;
+                    iso3_codes8(kb, gi0, s_cb, cv);
+                    nm = f16_to_f32(__ldg(reinterpret_cast<const unsigned short *>(kb)));
+                } else {
+#pragma unroll
+                    for (int k = 0; k < 8; ++k) cv[k] = 0.0f;
+                }
+#pragma unroll
+                for (int r = 0; r < QG; ++r) {
+                    float d = q[r][0] * cv[0];
+#pragma unroll
+                    for (int k = 1; k < 8; ++k) d += q[r][k] * cv[k];
+                    pv[r][pp] = d * nm;
+                }
+            }
+            const bool ok = j0 + c * 8 + ((lane >> 2) & 7) < je;
+#pragma unroll
+            for (int r = 0; r < QG; ++r) {
+                const float v = reduce_scatter8(pv[r], lane);
+                s[c][r] = ok ? v : -INFINITY;
+            }
+        }
+        float pr[2][QG];
+#pragma unroll
+        for (int r = 0; r < QG; ++r) {
+            float tm = fmaxf(s[0][r], s[1][r]);
+            tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 4));
+            tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 8));
+            tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 16));
+            const float mn = fmaxf(m[r], tm);   // finite: position j0 < je is valid
+            pr[0][r] = expf(s[0][r] - mn);
+            pr[1][r] = expf(s[1][r] - mn);
+            float ts = pr[0][r] + pr[1][r];
+            ts += __shfl_xor_sync(0xffffffffu, ts, 4);
+            ts += __shfl_xor_sync(0xffffffffu, ts, 8);
+            ts += __shfl_xor_sync(0xffffffffu, ts, 16);
+            const float corr = expf(m[r] - mn);
+            l[r] = l[r] * corr + ts;
+            m[r] = mn;
+#pragma unroll
+            for (int k = 0; k < 8; ++k) o[r][k] *= corr;
+        }
+        const int nv = min(16, je - j0);
+        for (int p = 0; p < nv; ++p) {
+            const uint8_t * vb = vc + (static_cast<int64_t>(j0 + p) * 8 + g * 2 + hf) * 50;
+            float cv[8];
+            iso3_codes8(vb, gi0, s_cb, cv);
+            const float nm = f16_to_f32(__ldg(reinterpret_cast<const unsigned short *>(vb)));
+            const int src = (p & 7) * 4;
+#pragma unroll
+            for (int r = 0; r < QG; ++r) {
+                const float w = __shfl_sync(0xffffffffu, p < 8 ? pr[0][r] : pr[1][r], src) * nm;
+#pragma unroll
+                for (int k = 0; k < 8; ++k) o[r][k] += w * cv[k];
+            }
+        }
+    }
+#pragma unroll
+    for (int r = 0; r < QG; ++r) {
+        float * dst = part + ((static_cast<int64_t>(t) * NH + g * QG + r) * nsl + sl) * (HD + 2);
+        float out[8];
+#pragma unroll
+        for (int k = 0; k < 2; ++k) {   // o = M o'
+            const float c0 = o[r][4 * k], c1 = o[r][4 * k + 1], c2 = o[r][4 * k + 2], c3 = o[r][4 * k + 3];
+            out[4 * k + 0] = pw[k] * c0 - px[k] * c1 - py[k] * c2 - pz[k] * c3;
+            out[4 * k + 1] = pw[k] * c1 + px[k] * c0 + py[k] * c3 - pz[k] * c2;
+            out[4 * k + 2] = pw[k] * c2 - px[k] * c3 + py[k] * c0 + pz[k] * c1;
+            out[4 * k + 3] = pw[k] * c3 + px[k] * c2 - py[k] * c1 + pz[k] * c0;
+        }
+        float * d8 = dst + 2 + lane * 8;   // slice rows are HD + 2 floats: not 16-byte aligned
+#pragma unroll
+        for (int k = 0; k < 8; ++k) d8[k] = out[k];
+        if (lane == 0) { dst[0] = js < je ? m[r] : -INFINITY; dst[1] = l[r]; }
+    }
+}
+
 }  // namespace
 
 bool g_attn_tiled_ref = false;
+// iso3 decode v2 (QWEN_ATTN_DEC=1, default) or the split-K kernel (0); op_attention_set_dec2 for tests
+bool g_attn_dec2 = [] { const char * e = std::getenv("QWEN_ATTN_DEC"); return e ? std::atoi(e) != 0 : true; }();
+void op_attention_set_dec2(bool on) { g_attn_dec2 = on; }
 void op_attention_set_tiled_ref(bool on) { g_attn_tiled_ref = on; }
-size_t op_attention_part_floats() { return static_cast<size_t>(kSplitTMax) * NH * kSplits * (HD + 2); }
+// Largest batch the partial-attention buffer is sized for. It is the MTP verification batch (1 target row plus the
+// accepted drafts), so the Drafter v2 batch of 16 drafts + 1 = 17 rows is what the engine asks for when the VRAM
+// budget allows. The buffer holds verify_t * kSplits (token x slice) rows per head, and the split-K dispatch keeps
+// the slice count independent of T up to verify_t, which is what makes a verify row sum exactly like the
+// single-token decode row of the same position (speculative decoding stays lossless).
+int g_verify_t = kSplitTMax;
+void op_attention_set_verify_t(int t) { g_verify_t = t < 1 ? kSplitTMax : t; }
+int op_attention_verify_t() { return g_verify_t; }
+size_t op_attention_part_floats() { return static_cast<size_t>(g_verify_t) * NH * kVerifySlices * (HD + 2); }
 
 cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s) {
     rmsnorm_rows_kernel<<<rows, 256, 0, s>>>(x, w, y, n, eps);
@@ -844,6 +1027,20 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
     // long_kernels (Ternary Bonsai): the split-K decode and K/V-reuse prefill kernels at every ctx_max. Without it (Qwen) the
     // shared-memory kernel below runs up to 8192 positions, unchanged and bit-identical to the stage 4/5 results.
     const bool longk = ctx_max > kFastCtxMax || long_kernels;
+    const int vt = op_attention_verify_t();
+    if (longk && part && T <= vt && iso3 && g_attn_dec2) {
+        // decode v2: slices fixed by ctx_max (the CUDA graph replays the grid; the slice length follows the position on the
+        // device), at least 256 positions per warp, at most kVerifySlices slices (the part buffer holds vt x kVerifySlices rows per head)
+        // The slice count must not depend on T for T <= vt: an MTP verify row then sums exactly like the single-token
+        // decode row of the same position, so speculative decoding stays lossless.
+        int nsl = std::min(ctx_max / 256, kVerifySlices);
+        nsl = std::max(kDecWarps, nsl / kDecWarps * kDecWarps);
+        const dim3 g2(T * NKV, nsl / kDecWarps);
+        attention_kernel_decode_iso3<0><<<g2, kDecWarps * 32, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache),
+                                                                        part, pos0, pos_dev, nsl);
+        attention_combine_n<<<grid, 256, 0, s>>>(part, qfull, attn_o, nsl);
+        return cudaGetLastError();
+    }
     if (longk && part && T <= kSplitTMax) {
         const dim3 g2(T * NKV, kSplits);
         if (iso3) attention_kernel_split<true><<<g2, 256, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache), part, pos0, pos_dev);
@@ -861,7 +1058,7 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
         int ns = 1;
         if (part) {
             const int want = (2 * 19 * 8 + qt * NKV - 1) / (qt * NKV);   // about 2 waves of 8 blocks on the 19 SMs
-            ns = std::max(1, std::min(want, kPrefillPartRows / T));
+            ns = std::max(1, std::min(want, kPrefillPartRows() / T));
         }
         const dim3 gp(qt, NKV, ns);
         static int hpw = -1;

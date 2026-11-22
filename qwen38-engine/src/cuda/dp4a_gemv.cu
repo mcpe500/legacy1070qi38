@@ -65,11 +65,16 @@ struct UnitW {
     uint32_t w[8];     // 32 weights as int8, positions 0..31 in order
     float s0, s1;      // scale of positions 0..15 and 16..31
     float mn;          // minimum coefficient (multiplies the activation block sum)
+    // Q2_K only: the minimum differs between the two 16-value halves (one scale byte each), so the correction
+    // term needs the per-half activation sums as well. TWO_MIN selects that path in the kernel; every other
+    // format leaves these zero and keeps the single-term correction bit-identical.
+    float mn0, mn1;
 };
 
 template <int T> struct Prep;
 
 template <> struct Prep<GT_Q4_K> {
+    static constexpr bool TWO_MIN = false;
     static constexpr int BLOCK_BYTES = 144, UPB = 8;
     static __device__ __forceinline__ void run(const uint8_t * blk, int s, UnitW & u) {
         const float d = half_at(blk), dmin = half_at(blk + 2);
@@ -87,6 +92,7 @@ template <> struct Prep<GT_Q4_K> {
 };
 
 template <> struct Prep<GT_Q5_K> {
+    static constexpr bool TWO_MIN = false;
     static constexpr int BLOCK_BYTES = 176, UPB = 8;
     static __device__ __forceinline__ void run(const uint8_t * blk, int s, UnitW & u) {
         const float d = half_at(blk), dmin = half_at(blk + 2);
@@ -109,6 +115,7 @@ template <> struct Prep<GT_Q5_K> {
 };
 
 template <> struct Prep<GT_Q6_K> {
+    static constexpr bool TWO_MIN = false;
     static constexpr int BLOCK_BYTES = 210, UPB = 8;
     static __device__ __forceinline__ void run(const uint8_t * blk, int s, UnitW & u) {
         const float d = half_at(blk + 208);
@@ -130,6 +137,7 @@ template <> struct Prep<GT_Q6_K> {
 };
 
 template <> struct Prep<GT_Q3_K> {
+    static constexpr bool TWO_MIN = false;
     static constexpr int BLOCK_BYTES = 110, UPB = 8;
     static __device__ __forceinline__ void run(const uint8_t * blk, int s, UnitW & u) {
         const float d_all = half_at(blk + 108);
@@ -163,6 +171,7 @@ template <> struct Prep<GT_Q3_K> {
 };
 
 template <> struct Prep<GT_IQ4_XS> {
+    static constexpr bool TWO_MIN = false;
     static constexpr int BLOCK_BYTES = 136, UPB = 8;
     static __device__ __forceinline__ void run(const uint8_t * blk, int ib, UnitW & u) {
         const float d = half_at(blk);
@@ -183,6 +192,7 @@ template <> struct Prep<GT_IQ4_XS> {
 };
 
 template <> struct Prep<GT_IQ4_NL> {
+    static constexpr bool TWO_MIN = false;
     static constexpr int BLOCK_BYTES = 18, UPB = 1;
     static __device__ __forceinline__ void run(const uint8_t * blk, int, UnitW & u) {
         u.s0 = u.s1 = half_at(blk);
@@ -197,7 +207,41 @@ template <> struct Prep<GT_IQ4_NL> {
     }
 };
 
+// Q2_K (ggml type 10, 256 values in 84 bytes, ggml-common.h block_q2_K): scales[16] at offset 0 (one byte per
+// 16 values: low nibble = scale, high nibble = min), qs[64] at 16 (4 two-bit codes per byte), then the fp16 d
+// at 80 and dmin at 82. A unit is 32 values = one shift s & 3 over 32 payload bytes of one 128-value half
+// (s >> 2), with the two 16-value halves taking the two neighbouring scale bytes. Because the halves carry
+// different minimums, the correction term needs each half's activation sum: the kernel gets it with a
+// __dp4a against 0x01010101 (an exact integer byte sum, no rounding).
+template <> struct Prep<GT_Q2_K> {
+    static constexpr bool TWO_MIN = true;
+    static constexpr int BLOCK_BYTES = 84, UPB = 8;
+    static __device__ __forceinline__ void run(const uint8_t * blk, int s, UnitW & u) {
+        const float d = half_at(blk + 80), dmin = half_at(blk + 82);
+        const uint8_t * sc = blk;   // uint8, so the high nibble shifts logically like the libggml dequantizer
+        const int half = s >> 2, j = s & 3;                 // 128-value half and the shift inside the byte
+        const int is0 = 8 * half + 2 * j, is1 = is0 + 1;    // scale byte of each 16-value half
+        u.s0 = d * static_cast<float>(sc[is0] & 0xF);
+        u.s1 = d * static_cast<float>(sc[is1] & 0xF);
+        u.mn0 = dmin * static_cast<float>(sc[is0] >> 4);
+        u.mn1 = dmin * static_cast<float>(sc[is1] >> 4);
+        u.mn = 0.0f;
+        const uint8_t * q = blk + 16 + 32 * half;   // 32 payload bytes of this half; 4-byte aligned (row = o*in/256*84,
+        // block stride 84, payload at 20), so a uint4 load is not legal and the words are read one by one.
+        const uint32_t qq[8] = {
+            *reinterpret_cast<const uint32_t *>(q +  0), *reinterpret_cast<const uint32_t *>(q +  4),
+            *reinterpret_cast<const uint32_t *>(q +  8), *reinterpret_cast<const uint32_t *>(q + 12),
+            *reinterpret_cast<const uint32_t *>(q + 16), *reinterpret_cast<const uint32_t *>(q + 20),
+            *reinterpret_cast<const uint32_t *>(q + 24), *reinterpret_cast<const uint32_t *>(q + 28),
+        };
+        const int sh = 2 * j;
+#pragma unroll
+        for (int g = 0; g < 8; ++g) u.w[g] = lop3_and(qq[g] >> sh, 0x03030303u);   // codes 0..3 as int8 bytes
+    }
+};
+
 template <> struct Prep<GT_IQ3_S> {
+    static constexpr bool TWO_MIN = false;
     static constexpr int BLOCK_BYTES = 110, UPB = 8;
     static __device__ __forceinline__ void run(const uint8_t * blk, int ib32, UnitW & u) {
         const float d = half_at(blk);
@@ -283,7 +327,19 @@ __global__ void gemv_dp4a_kernel(const uint8_t * __restrict__ W, int64_t in, int
                 i1 = __dp4a(static_cast<int>(uw.w[7]), xb.w, i1);
                 const float dxv = dx[static_cast<int64_t>(t0 + t) * nb32 + u];
                 const float sxv = sx[static_cast<int64_t>(t0 + t) * nb32 + u];
-                acc[t] += dxv * (uw.s0 * static_cast<float>(i0) + uw.s1 * static_cast<float>(i1)) - uw.mn * sxv;
+                if (P::TWO_MIN) {
+                    // Q2_K: the two 16-value halves have different minimums, so each half's activation sum
+                    // (an exact integer byte sum against 0x01010101) scales its own correction term.
+                    int q0 = 0, q1 = 0;
+                    q0 = __dp4a(0x01010101, xa.x, q0); q0 = __dp4a(0x01010101, xa.y, q0);
+                    q0 = __dp4a(0x01010101, xa.z, q0); q0 = __dp4a(0x01010101, xa.w, q0);
+                    q1 = __dp4a(0x01010101, xb.x, q1); q1 = __dp4a(0x01010101, xb.y, q1);
+                    q1 = __dp4a(0x01010101, xb.z, q1); q1 = __dp4a(0x01010101, xb.w, q1);
+                    acc[t] += dxv * (uw.s0 * static_cast<float>(i0) + uw.s1 * static_cast<float>(i1))
+                              - dxv * (uw.mn0 * static_cast<float>(q0) + uw.mn1 * static_cast<float>(q1));
+                } else {
+                    acc[t] += dxv * (uw.s0 * static_cast<float>(i0) + uw.s1 * static_cast<float>(i1)) - uw.mn * sxv;
+                }
             }
         }
     }
@@ -344,7 +400,8 @@ cudaError_t actq8_quantize(const float * x, int64_t in, int64_t T, const ActQ8 &
 
 bool gemv_dp4a_supported(int type) {
     switch (type) {
-        case GT_Q4_K: case GT_Q5_K: case GT_Q6_K: case GT_Q3_K: case GT_IQ4_NL: case GT_IQ3_S: case GT_IQ4_XS: return true;
+        case GT_Q4_K: case GT_Q5_K: case GT_Q6_K: case GT_Q3_K: case GT_IQ4_NL: case GT_IQ3_S: case GT_IQ4_XS:
+        case GT_Q2_K: return true;
         default: return false;
     }
 }
@@ -354,6 +411,7 @@ cudaError_t gemv_dp4a(int type, const uint8_t * W, int64_t in, int64_t out, cons
     if (T > a.T_max || in > a.in_max) return cudaErrorInvalidValue;
     switch (type) {
         case GT_Q4_K: return launch<GT_Q4_K>(W, in, out, a, T, y, s);
+        case GT_Q2_K: return launch<GT_Q2_K>(W, in, out, a, T, y, s);
         case GT_Q5_K: return launch<GT_Q5_K>(W, in, out, a, T, y, s);
         case GT_Q6_K: return launch<GT_Q6_K>(W, in, out, a, T, y, s);
         case GT_Q3_K: return launch<GT_Q3_K>(W, in, out, a, T, y, s);

@@ -1,0 +1,9 @@
+{"tag": "suite_512_none", "peak_vram_mib": 6045, "cap_ok": true}
+{"tag": "suite_512_donor", "peak_vram_mib": 7115, "cap_ok": true}
+{"tag": "suite_512_q4km", "peak_vram_mib": 6545, "cap_ok": true}
+{"tag": "suite_512_q8", "peak_vram_mib": 7855, "cap_ok": false}
+{"tag": "suite_4096_none", "peak_vram_mib": 7187, "cap_ok": true}
+{"tag": "suite_4096_q4km", "peak_vram_mib": 6545, "cap_ok": true}
+{"tag": "suite_4096_donor", "peak_vram_mib": 6599, "cap_ok": true}
+{"tag": "suite_4096_q8", "peak_vram_mib": 6657, "cap_ok": true}
+{"tag": "suite_512_donor", "peak_vram_mib": 6599, "cap_ok": true}

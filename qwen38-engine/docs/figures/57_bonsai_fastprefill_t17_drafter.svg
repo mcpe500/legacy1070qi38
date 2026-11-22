@@ -1,0 +1,236 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1480" viewBox="0 0 1200 1480" role="img"><defs></defs>
+<rect x="0" y="0" width="1200" height="1480" rx="0" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="24" y="38" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="21" font-weight="700" fill="#1f2328" text-anchor="start">Maraton v2: dinding prefill 128K, verifikasi T=17 lossless, Suffix-PLD/Drafter v2</text>
+<text x="24" y="62" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="13" font-weight="400" fill="#57606a" text-anchor="start">exp/bonsai-overnight-v2-prefill-t17-drafter · issue #57 · GTX 1070 Ti sm_61 (cap 7373 MiB) · data: bench/results/bonsai_overnight_v2/</text>
+<rect x="24" y="84" width="1152" height="320" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="40" y="110" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="700" fill="#1f2328" text-anchor="start">A. M1: varian prefill PTQ1_0 urutan FP32 direlaksasi (fast) — kerugian terukur, tidak dipasang</text>
+<text x="40" y="126" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="12" font-weight="400" fill="#1f2328" text-anchor="start">A/B berpasangan dalam satu proses (7 ronde, terbaik tiap sisi), bentuk ffn_up 5120×17408</text>
+<line x1="60" y1="296.0" x2="1140" y2="296.0" stroke="#57606a" stroke-width="1.0" stroke-dasharray="4,3"/>
+<text x="56" y="300.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="end">1.00x</text>
+<rect x="84.0" y="237.76000000000002" width="62.0" height="58.23999999999999" rx="2" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<text x="115.0" y="229.76000000000002" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">0.708x</text>
+<text x="115.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;16,2&gt;</text>
+<text x="115.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=16</text>
+<rect x="168.0" y="237.76000000000002" width="62.0" height="58.23999999999999" rx="2" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<text x="199.0" y="229.76000000000002" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">0.708x</text>
+<text x="199.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;16,2&gt;</text>
+<text x="199.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=64</text>
+<rect x="252.0" y="160.20000000000002" width="62.0" height="135.79999999999998" rx="2" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<text x="283.0" y="152.20000000000002" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">0.985x</text>
+<text x="283.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;16,1&gt;</text>
+<text x="283.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=16</text>
+<rect x="336.0" y="156.0" width="62.0" height="140.0" rx="2" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<text x="367.0" y="148.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">1.000x</text>
+<text x="367.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;16,1&gt;</text>
+<text x="367.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=64</text>
+<rect x="420.0" y="156.0" width="62.0" height="140.0" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="451.0" y="148.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">1.000x</text>
+<text x="451.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;32,1&gt;</text>
+<text x="451.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=16</text>
+<rect x="504.0" y="156.0" width="62.0" height="140.0" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="535.0" y="148.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">1.000x</text>
+<text x="535.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;32,1&gt;</text>
+<text x="535.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=64</text>
+<rect x="588.0" y="156.0" width="62.0" height="140.0" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="619.0" y="148.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">1.000x</text>
+<text x="619.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;32,2&gt;</text>
+<text x="619.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=16</text>
+<rect x="672.0" y="156.0" width="62.0" height="140.0" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="703.0" y="148.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">1.000x</text>
+<text x="703.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;32,2&gt;</text>
+<text x="703.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=64</text>
+<rect x="756.0" y="165.24" width="62.0" height="130.76" rx="2" fill="#8c959f" stroke="none" stroke-width="1.5"/>
+<text x="787.0" y="157.24" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">0.967x</text>
+<text x="787.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;8,2&gt;</text>
+<text x="787.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=16</text>
+<rect x="840.0" y="156.84" width="62.0" height="139.16" rx="2" fill="#8c959f" stroke="none" stroke-width="1.5"/>
+<text x="871.0" y="148.84" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">0.997x</text>
+<text x="871.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;8,2&gt;</text>
+<text x="871.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=64</text>
+<rect x="924.0" y="169.44" width="62.0" height="126.55999999999999" rx="2" fill="#9a6700" stroke="none" stroke-width="1.5"/>
+<text x="955.0" y="161.44" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">0.952x</text>
+<text x="955.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;16,4&gt;</text>
+<text x="955.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=16</text>
+<rect x="1008.0" y="156.0" width="62.0" height="140.0" rx="2" fill="#9a6700" stroke="none" stroke-width="1.5"/>
+<text x="1039.0" y="148.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">1.000x</text>
+<text x="1039.0" y="310.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#1f2328" text-anchor="middle">&lt;16,4&gt;</text>
+<text x="1039.0" y="322.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="middle">T=64</text>
+<text x="84" y="352" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Tidak satu pun tile mencapai paritas: yang terbaik 1.000x, terburuk 0.708x.</text>
+<text x="84" y="370" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Root cause: tile2 &lt;16,2&gt; terbatas occupancy — 127 register × 256 thread = 32512 dari 65536 register per SM,</text>
+<text x="84" y="386" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">tepat 2 blok/SM. Memaksa 3 blok (__launch_bounds__(256,3)) → 80 register (spill) dan T=16 946,6 µs alih-alih 788,3.</text>
+<text x="84" y="402" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">Jalur default tetap bit-identik: ternary_ab_test 180/180. Gate numerik lulus (cos 1.00000000), jadi flag tetap ada.</text>
+<rect x="24" y="424" width="600" height="430" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="40" y="450" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="700" fill="#1f2328" text-anchor="start">B. M2: batch verifikasi T=17 lossless dan latensinya</text>
+<text x="40" y="470" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Baris 0..16 batch T=17, baris yang sama dari batch T=5, dan 17 run satu-baris</text>
+<text x="40" y="486" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">pada posisi yang sama: byte-identical di ctx 512/4096/32768/65536 (iso3).</text>
+<text x="48" y="512" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="700" fill="#57606a" text-anchor="start">ctx</text>
+<text x="140" y="512" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="700" fill="#57606a" text-anchor="start">T=1 µs</text>
+<text x="248" y="512" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="700" fill="#57606a" text-anchor="start">T=5 µs</text>
+<text x="356" y="512" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="700" fill="#57606a" text-anchor="start">T=17 µs</text>
+<text x="462" y="512" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="700" fill="#57606a" text-anchor="start">µs/baris  T=1 / T=5 / T=17</text>
+<line x1="48" y1="518" x2="600" y2="518" stroke="#d0d7de" stroke-width="0.8"/>
+<text x="48" y="542" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">512</text>
+<text x="140" y="542" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">57.8</text>
+<text x="248" y="542" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">131.3</text>
+<text x="356" y="542" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">438.5</text>
+<text x="462" y="542" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1a7f37" text-anchor="start">58 / 26 / 26</text>
+<text x="48" y="566" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">4096</text>
+<text x="140" y="566" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">450.7</text>
+<text x="248" y="566" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">1.289.2</text>
+<text x="356" y="566" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">3.820.6</text>
+<text x="462" y="566" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1a7f37" text-anchor="start">451 / 258 / 225</text>
+<text x="48" y="590" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">32768</text>
+<text x="140" y="590" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">1.324.8</text>
+<text x="248" y="590" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">3.625.3</text>
+<text x="356" y="590" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">7.302.2</text>
+<text x="462" y="590" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1a7f37" text-anchor="start">1325 / 725 / 430</text>
+<text x="48" y="614" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">65536</text>
+<text x="140" y="614" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">2.613.7</text>
+<text x="248" y="614" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">7.319.7</text>
+<text x="356" y="614" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">14.719.4</text>
+<text x="462" y="614" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1a7f37" text-anchor="start">2614 / 1464 / 866</text>
+<text x="40" y="640" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Batch 17 baris menghemat 41% biaya per baris dibanding batch 5 baris (865,8 vs 1463,9 µs</text>
+<text x="40" y="656" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">pada 64K): itulah plafon untuk drafter DFlash B=16.</text>
+<text x="40" y="676" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Buffer: partial 40,05 MiB (17 × 24 × 100 × 258 × 4 B), rollback 51,3 MiB — keduanya</text>
+<text x="40" y="692" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">dipilih dinamis oleh anggaran (17 → 8 → 5), dan pilihan itu tercetak di JSON ringkasan.</text>
+<text x="40" y="712" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">Pilihan engine: ctx 4K/32K/64K/128K semua verify_t 17 (vram 6574/7002/7352 MiB, cap 7373);</text>
+<text x="40" y="728" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">anggaran 7500 MiB turun ke 5 (probe: 17 → 7531,5, 8 → 7504,3, 5 → 7474,0).</text>
+<text x="40" y="748" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">rollback: keep = 1,2,3,4,5,8,12,16,17 byte-identical (dn_rollback_test 9/9).</text>
+<rect x="640" y="424" width="536" height="430" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="656" y="450" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="700" fill="#1f2328" text-anchor="start">C. M3: cascaded Suffix-PLD (1..16 draft) vs r3 MTP, ctx 4096</text>
+<text x="656" y="470" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">decode tok/s, greedy, n=64; garis putus-putus = acuan r3 MTP</text>
+<line x1="740.0" y1="676.25" x2="1140.0" y2="676.25" stroke="#d0d7de" stroke-width="0.8"/>
+<text x="732.0" y="680.25" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="end">5</text>
+<line x1="740.0" y1="652.5" x2="1140.0" y2="652.5" stroke="#d0d7de" stroke-width="0.8"/>
+<text x="732.0" y="656.5" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="end">10</text>
+<line x1="740.0" y1="628.75" x2="1140.0" y2="628.75" stroke="#d0d7de" stroke-width="0.8"/>
+<text x="732.0" y="632.75" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="end">15</text>
+<line x1="740.0" y1="605.0" x2="1140.0" y2="605.0" stroke="#d0d7de" stroke-width="0.8"/>
+<text x="732.0" y="609.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="9" font-weight="400" fill="#57606a" text-anchor="end">20</text>
+<line x1="740.0" y1="700.0" x2="1140.0" y2="700.0" stroke="#57606a" stroke-width="1.0"/>
+<line x1="740.0" y1="586.0" x2="740.0" y2="700.0" stroke="#57606a" stroke-width="1.0"/>
+<line x1="740.0" y1="608.42" x2="840.0" y2="610.6525" stroke="#1a7f37" stroke-width="2.2"/>
+<line x1="840.0" y1="610.6525" x2="940.0" y2="613.835" stroke="#1a7f37" stroke-width="2.2"/>
+<line x1="940.0" y1="613.835" x2="1040.0" y2="615.2125" stroke="#1a7f37" stroke-width="2.2"/>
+<line x1="1040.0" y1="615.2125" x2="1140.0" y2="614.9275" stroke="#1a7f37" stroke-width="2.2"/>
+<line x1="740.0" y1="607.8975" x2="1140.0" y2="607.8975" stroke="#1a7f37" stroke-width="0.9" stroke-dasharray="3,3"/>
+<rect x="737.0" y="605.42" width="6" height="6" rx="3" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<rect x="837.0" y="607.6525" width="6" height="6" rx="3" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<rect x="937.0" y="610.835" width="6" height="6" rx="3" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<rect x="1037.0" y="612.2125" width="6" height="6" rx="3" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<rect x="1137.0" y="611.9275" width="6" height="6" rx="3" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<line x1="740.0" y1="594.55" x2="840.0" y2="593.9325" stroke="#0969da" stroke-width="2.2"/>
+<line x1="840.0" y1="593.9325" x2="940.0" y2="593.98" stroke="#0969da" stroke-width="2.2"/>
+<line x1="940.0" y1="593.98" x2="1040.0" y2="594.7875" stroke="#0969da" stroke-width="2.2"/>
+<line x1="1040.0" y1="594.7875" x2="1140.0" y2="593.79" stroke="#0969da" stroke-width="2.2"/>
+<line x1="740.0" y1="594.2175" x2="1140.0" y2="594.2175" stroke="#0969da" stroke-width="0.9" stroke-dasharray="3,3"/>
+<rect x="737.0" y="591.55" width="6" height="6" rx="3" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<rect x="837.0" y="590.9325" width="6" height="6" rx="3" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<rect x="937.0" y="590.98" width="6" height="6" rx="3" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<rect x="1037.0" y="591.7875" width="6" height="6" rx="3" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<rect x="1137.0" y="590.79" width="6" height="6" rx="3" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<line x1="740.0" y1="602.8625" x2="840.0" y2="602.815" stroke="#8250df" stroke-width="2.2"/>
+<line x1="840.0" y1="602.815" x2="940.0" y2="602.7675" stroke="#8250df" stroke-width="2.2"/>
+<line x1="940.0" y1="602.7675" x2="1040.0" y2="603.005" stroke="#8250df" stroke-width="2.2"/>
+<line x1="1040.0" y1="603.005" x2="1140.0" y2="602.7675" stroke="#8250df" stroke-width="2.2"/>
+<line x1="740.0" y1="602.34" x2="1140.0" y2="602.34" stroke="#8250df" stroke-width="0.9" stroke-dasharray="3,3"/>
+<rect x="737.0" y="599.8625" width="6" height="6" rx="3" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<rect x="837.0" y="599.815" width="6" height="6" rx="3" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<rect x="937.0" y="599.7675" width="6" height="6" rx="3" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<rect x="1037.0" y="600.005" width="6" height="6" rx="3" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<rect x="1137.0" y="599.7675" width="6" height="6" rx="3" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<line x1="740.0" y1="606.14" x2="840.0" y2="610.415" stroke="#cf222e" stroke-width="2.2"/>
+<line x1="840.0" y1="610.415" x2="940.0" y2="624.855" stroke="#cf222e" stroke-width="2.2"/>
+<line x1="940.0" y1="624.855" x2="1040.0" y2="674.54" stroke="#cf222e" stroke-width="2.2"/>
+<line x1="1040.0" y1="674.54" x2="1140.0" y2="684.3725" stroke="#cf222e" stroke-width="2.2"/>
+<line x1="740.0" y1="604.0975" x2="1140.0" y2="604.0975" stroke="#cf222e" stroke-width="0.9" stroke-dasharray="3,3"/>
+<rect x="737.0" y="603.14" width="6" height="6" rx="3" fill="#cf222e" stroke="none" stroke-width="1.5"/>
+<rect x="837.0" y="607.415" width="6" height="6" rx="3" fill="#cf222e" stroke="none" stroke-width="1.5"/>
+<rect x="937.0" y="621.855" width="6" height="6" rx="3" fill="#cf222e" stroke="none" stroke-width="1.5"/>
+<rect x="1037.0" y="671.54" width="6" height="6" rx="3" fill="#cf222e" stroke="none" stroke-width="1.5"/>
+<rect x="1137.0" y="681.3725" width="6" height="6" rx="3" fill="#cf222e" stroke="none" stroke-width="1.5"/>
+<text x="740.0" y="718.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">2</text>
+<text x="840.0" y="718.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">4</text>
+<text x="940.0" y="718.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">6</text>
+<text x="1040.0" y="718.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">8</text>
+<text x="1140.0" y="718.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">16</text>
+<text x="940.0" y="732.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">pld-max (draft per siklus)</text>
+<rect x="660" y="497" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="678" y="506" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">refactoring  19,28 → 17,91</text>
+<text x="876" y="506" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="start">acuan 19,39</text>
+<rect x="660" y="515" width="10" height="10" rx="2" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<text x="678" y="524" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">coding C++  22,20 → 22,36</text>
+<text x="876" y="524" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="start">acuan 22,27</text>
+<rect x="660" y="533" width="10" height="10" rx="2" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<text x="678" y="542" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">chat EN  20,45 → 20,47</text>
+<text x="876" y="542" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="start">acuan 20,56</text>
+<rect x="660" y="551" width="10" height="10" rx="2" fill="#cf222e" stroke="none" stroke-width="1.5"/>
+<text x="678" y="560" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="start">chat ID  19,76 → 3,29</text>
+<text x="876" y="560" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="start">acuan 20,19</text>
+<text x="656" y="756" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Regresi parah hanya pada chat ID: satu-satunya workload yang sering match,</text>
+<text x="656" y="772" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">dan daftar draft panjangnya sebagian besar ditolak (5,36 tok/s di pld-max 8).</text>
+<text x="656" y="788" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Default pld_max tetap 4; knob sampai 16. Langkah PLD 0,39–0,63 µs (anggaran 200),</text>
+<text x="656" y="804" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">0 MiB VRAM. Cascade == r3 MTP (ids byte-identical di 4 workload).</text>
+<rect x="24" y="866" width="600" height="330" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="40" y="892" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="700" fill="#1f2328" text-anchor="start">D. M4: kernel Q2_K GPU + dispatch arsitektur</text>
+<text x="40" y="912" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">G int8 MAC/s pada T=64, bentuk ffn_up 5120×17408</text>
+<rect x="90" y="956.75" width="70" height="89.25" rx="2" fill="#0969da" stroke="none" stroke-width="1.5"/>
+<text x="125" y="948.75" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">1071</text>
+<text x="125" y="1060.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">Q2_K (baru)</text>
+<rect x="240" y="971.6666666666666" width="70" height="74.33333333333333" rx="2" fill="#8c959f" stroke="none" stroke-width="1.5"/>
+<text x="275" y="963.6666666666666" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">892</text>
+<text x="275" y="1060.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">Q3_K</text>
+<rect x="390" y="955.0833333333334" width="70" height="90.91666666666667" rx="2" fill="#8250df" stroke="none" stroke-width="1.5"/>
+<text x="425" y="947.0833333333334" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">1091</text>
+<text x="425" y="1060.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#1f2328" text-anchor="middle">Q4_K</text>
+<line x1="84" y1="1046.0" x2="540" y2="1046.0" stroke="#57606a" stroke-width="1.0"/>
+<text x="84" y="1082.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">98% dari laju MAC Q4_K, dan 1,72x byte bobot per detik pada 2,62 bit/bobot.</text>
+<text x="84" y="1100.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Paritas vs dequantizer libggml: rel_rms 8,2e-08 .. 8,4e-08 (T=1/3/16/64).</text>
+<text x="84" y="1118.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Dua kesalahan layout sebelum benar: d/dmin di offset 80/82 (bukan 0/2), payload</text>
+<text x="84" y="1134.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">hanya 4-byte aligned (blok 84 byte → tidak boleh uint4), nibble tinggi byte skala</text>
+<text x="84" y="1150.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">digeser logis, dan dua paruh 16 nilai butuh koreksi minimum masing-masing.</text>
+<text x="84" y="1170.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1a7f37" text-anchor="start">arch_compile_check: 28/28 pasangan (sm_61, sm_75, sm_86, sm_89) × 7 kernel compile.</text>
+<text x="84" y="1188.0" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">Cabang __CUDA_ARCH__ nyata: 4 blok/SM minimum hanya untuk sm_90+; build sm_61 tak berubah.</text>
+<rect x="640" y="866" width="536" height="330" rx="6" fill="#f6f8fa" stroke="none" stroke-width="1.5"/>
+<text x="656" y="892" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="15" font-weight="700" fill="#1f2328" text-anchor="start">E. Gate yang pernah dijalankan di branch ini</text>
+<rect x="656" y="904" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="914" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">ternary_ab_test</text>
+<text x="876" y="914" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">180/180 bit-identical</text>
+<rect x="656" y="930" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="940" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">ptq1_fast_gate</text>
+<text x="876" y="940" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">42/42, cos 1.00000000</text>
+<rect x="656" y="956" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="966" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">verify_t17_test</text>
+<text x="876" y="966" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">32/32 lossless T=17</text>
+<rect x="656" y="982" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="992" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">dn_rollback_test</text>
+<text x="876" y="992" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">9/9 keep 1..17</text>
+<rect x="656" y="1008" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="1018" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">q2_k_parity</text>
+<text x="876" y="1018" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">4/4 rel 8.4e-08</text>
+<rect x="656" y="1034" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="1044" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">attn_long_test</text>
+<text x="876" y="1044" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">PASS, reuse 98,27 ms vs 2179,82 ms</text>
+<rect x="656" y="1060" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="1070" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">ternary_test / dn_rec_ab_test</text>
+<text x="876" y="1070" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">PASS / PASS</text>
+<rect x="656" y="1086" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="1096" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">SASS gate</text>
+<text x="876" y="1096" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">IDP.4A x6205, half 0</text>
+<rect x="656" y="1112" width="10" height="10" rx="2" fill="#1a7f37" stroke="none" stroke-width="1.5"/>
+<text x="676" y="1122" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">verify_m5.sh (CPU)</text>
+<text x="876" y="1122" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">6/6, trainer selftest PASS</text>
+<rect x="656" y="1138" width="10" height="10" rx="2" fill="#cf222e" stroke="none" stroke-width="1.5"/>
+<text x="676" y="1148" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">Target prefill 128K &lt; 45 mnt</text>
+<text x="876" y="1148" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#cf222e" text-anchor="start">tidak tercapai (~60,4 mnt)</text>
+<rect x="656" y="1164" width="10" height="10" rx="2" fill="#cf222e" stroke="none" stroke-width="1.5"/>
+<text x="676" y="1174" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1f2328" text-anchor="start">Target greedy lossless MTP</text>
+<text x="876" y="1174" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#cf222e" text-anchor="start">belum: divergensi non-MTP vs MTP</text>
+<text x="24" y="1216" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Catatan jujur untuk dua target merah: (1) prefill 128K tetap ~60,4 menit — bagian GEMM (~2195 s) sudah di floor formulasi ini</text>
+<text x="24" y="1234" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">setelah 11 percobaan terdokumentasi (10 di M3-ATTEMPTS.md cabetang sebelumnya, satu di M1 branch ini); (2) lossless MTP belum —</text>
+<text x="24" y="1252" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">near-tie argmax antara baris verifikasi dan decode satu-token, bukan efek batch 17 baris, dan sudah ada sebelum branch ini.</text>
+<text x="24" y="1272" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#1f2328" text-anchor="start">Yang berhasil dan bertahan: jalur default bit-identik/greedy parity pada semua tes, verifikasi T=17 lossless dengan buffer dinamis,</text>
+<text x="24" y="1288" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="11" font-weight="400" fill="#57606a" text-anchor="start">kernel Q2_K GPU, compile check 4 arsitektur, dan pipeline Drafter v2 yang sinkron dengan kontrak dan bisa direproduksi di CPU.</text>
+<text x="24" y="1306" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="start">Sumber angka: bench/results/bonsai_overnight_v2/M1-FAST-PREFILL.md, M2-VERIFY-T17.md, M3-SUFFIX-PLD-CASCADE.md,</text>
+<text x="24" y="1320" font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, DejaVu Sans, sans-serif" font-size="10" font-weight="400" fill="#57606a" text-anchor="start">M4-Q2K-AND-ARCH-DISPATCH.md, M5-DRAFTER-V2-PIPELINE.md.</text>
+</svg>

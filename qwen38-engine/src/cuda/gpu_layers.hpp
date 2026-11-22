@@ -23,6 +23,10 @@ struct GpuConfig {
     bool stream_prefill = false;
     // DeltaNet rollback (MTP verification): largest batch whose DeltaNet state can be rolled back (0 = no buffers).
     int roll_t = 0;
+    // Largest verification batch the attention partial buffer and the rollback buffers are sized for (1 target row
+    // plus the accepted drafts). 17 = a Drafter v2 batch of 16 drafts + 1. The buffer grows with it, so the engine
+    // picks the largest value whose whole plan still fits vram_budget_mib and falls back to 8 or 5 otherwise.
+    int verify_t = 5;
     // Replay the whole layer stack as a CUDA graph for batches of 1..4 tokens (decode and MTP verification).
     bool use_graph = false;
     // Streamed prefill: register the CPU-layer weights of the mmap as pinned memory and overlap upload with compute.
@@ -39,6 +43,8 @@ struct GpuConfig {
     // MTP draft head (blk.64) on the GPU: its decoder layer, nextn.eh_proj and shared_head_norm live in the arena, its KV in
     // the format of the other attention layers. Needs head = true (the draft logits use the GPU LM head).
     bool mtp = false;
+    // Index holding the blk.64 tensors: null or the main index, or an --mtp-gguf sidecar mmapped separately.
+    const GgufIndex * mtp_ix = nullptr;
 };
 
 // "all", "none", or a comma list of ggml type ids or names (q4_k, q5_k, q6_k, q3_k, iq4_nl, iq3_s, iq4_xs).
@@ -93,6 +99,9 @@ public:
     // (optional, [T][5120]) and the logits of the last n_out rows (n_out <= 8) to logits ([n_out][n_vocab], host).
     void head(int T, int n_out, float * logits, float * h_rows);
     bool has_head() const;
+    // GPU LM head on already-normed host rows h_host [n][5120] (n <= 8): the CPU MTP block uses it for its draft logits,
+    // so a CPU draft step does not read the 1 GiB LM head from DDR4.
+    void head_host(const float * h_host, int n, float * logits);
     // MTP block on the GPU (cfg.mtp). concat_host [T][10240] = [rmsnorm(emb, enorm) | rmsnorm(h, hnorm)] (built on the host).
     // Fills the MTP KV at positions pos0 .. pos0+T-1; h_out (optional) receives shared_head_norm of the last row and logits
     // (optional) its logits through the GPU LM head.

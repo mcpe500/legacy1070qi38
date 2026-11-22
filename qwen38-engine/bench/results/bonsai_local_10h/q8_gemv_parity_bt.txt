@@ -1,0 +1,5 @@
+T=5 out=48 in=5120
+alpha vs ref alpha-0      cos=1.000000 max_abs=8.893e-04
+beta_sig vs ref beta_sig  cos=1.000000 max_abs=9.948e-05
+GPU vs host emulation     alpha max_abs=1.907e-06  beta max_abs=4.768e-07
+result: PASS

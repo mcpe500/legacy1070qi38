@@ -1,0 +1,69 @@
+PASS server with --mtp-gguf and --state-save starts : 38.6 s
+PASS /v1/stats: MTP available, state_save configured, model file + sidecar : Ternary-Bonsai-2-27B-PTQ1_0.gguf + r3_mtp_blk64_q4_k_m.gguf (general.name Hf), ctx 8192
+PASS turn 1 answers (44 tokens)
+PASS turn 1 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 36 pld_hits 0 accept 86.1%
+PASS turn 1 greedy parity: MTP+PLD+cache text == plain greedy without cache : '```cpp\n#include <vector>\n#include <numeric>\n\nint sumVector(c' | '```cpp\n#include <vector>\n#include <numeric>\n\nint sumVector(c'
+PASS turn 2 SSE: role chunk first, [DONE] last, one final chunk
+PASS turn 2 SSE: live telemetry has tg_tok_s, pld_hits, mtp_fills, accept_pct : 3
+PASS turn 2 answers (22 tokens)
+PASS turn 2 reuses at least the previous prompt : reused 0 (none) of 127, previous prompt 0
+PASS turn 2 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 17 pld_hits 1 accept 71.4%
+PASS turn 3 answers (34 tokens)
+PASS turn 3 reuses at least the previous prompt : reused 150 (prefix) of 172, previous prompt 127
+PASS turn 3 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 28 pld_hits 0 accept 89.3%
+PASS turn 4 SSE: role chunk first, [DONE] last, one final chunk
+PASS turn 4 SSE: live telemetry has tg_tok_s, pld_hits, mtp_fills, accept_pct : 8
+PASS turn 4 answers (41 tokens)
+PASS turn 4 reuses at least the previous prompt : reused 207 (prefix) of 229, previous prompt 172
+PASS turn 4 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 17 pld_hits 1 accept 66.7%
+PASS turn 5 answers (96 tokens)
+PASS turn 5 reuses at least the previous prompt : reused 270 (prefix) of 296, previous prompt 229
+PASS turn 5 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 71 pld_hits 1 accept 89.3%
+PASS turn 5 greedy parity: MTP+PLD+cache text == plain greedy without cache : '```cpp\n#include <cassert>\n#include <vector>\n\nint sumVector(c' | '```cpp\n#include <cassert>\n#include <vector>\n\nint sumVector(c'
+PASS turn 6 SSE: role chunk first, [DONE] last, one final chunk
+PASS turn 6 SSE: live telemetry has tg_tok_s, pld_hits, mtp_fills, accept_pct : 16
+PASS turn 6 answers (96 tokens)
+PASS turn 6 reuses at least the previous prompt : reused 0 (none) of 417, previous prompt 0
+PASS turn 6 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 48 pld_hits 3 accept 66.7%
+PASS turn 7 answers (36 tokens)
+PASS turn 7 reuses at least the previous prompt : reused 512 (prefix) of 539, previous prompt 417
+PASS turn 7 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 26 pld_hits 0 accept 96.2%
+PASS turn 8 SSE: role chunk first, [DONE] last, one final chunk
+PASS turn 8 SSE: live telemetry has tg_tok_s, pld_hits, mtp_fills, accept_pct : 2
+PASS turn 8 answers (15 tokens)
+PASS turn 8 reuses at least the previous prompt : reused 575 (prefix) of 605, previous prompt 539
+PASS turn 8 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 11 pld_hits 0 accept 100.0%
+PASS turn 9 answers (95 tokens)
+PASS turn 9 reuses at least the previous prompt : reused 620 (prefix) of 644, previous prompt 605
+PASS turn 9 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 58 pld_hits 2 accept 83.3%
+PASS turn 10 SSE: role chunk first, [DONE] last, one final chunk
+PASS turn 10 SSE: live telemetry has tg_tok_s, pld_hits, mtp_fills, accept_pct : 2
+PASS turn 10 answers (5 tokens)
+PASS turn 10 reuses at least the previous prompt : reused 739 (prefix) of 767, previous prompt 644
+PASS turn 10 MTP + PLD drafted (mtp_fills + pld_hits > 0) : mtp_fills 8 pld_hits 0 accept 50.0%
+PASS turn 10 greedy parity: MTP+PLD+cache text == plain greedy without cache : 'KESTREL-9' | 'KESTREL-9'
+PASS the conversation remembers turn 1 (project name) : 'KESTREL-9'
+PASS trimmed assistant reply: the prompt checkpoint is reused : reuse checkpoint, reused 793, previous prompt 793
+PASS trimmed assistant reply: checkpoint path == prefix path with the same split (state restore is exact) : reuse prefix, 'Cores tick in unison,\nLogic flows through copper v' | 'Cores tick in unison,\nLogic flows through copper v'
+PASS stop inside a token: content cut right before the stop string : 'tretches endlessly, its w' | stop 'ave'
+PASS stop inside a token: stream identical, stop string never sent : 'tretches endlessly, its w'
+PASS SSE text == non-stream text (MTP + PLD, greedy) : 'The vast, blue expanse of the sea stretches endlessly, its w'
+PASS POST /v1/state/save : 803 tokens, 160.0 MiB, 1.32 s
+PASS SIGTERM: clean shutdown (exit 0) with the state saved on the way out : 0
+PASS restart with --state-load is ready : 40.1 s
+PASS after --state-load: the next turn continues from the loaded state : reused 803 (prefix) of 829, saved 803
+PASS after --state-load: the model remembers the code word : 'ORCHID-77'
+PASS RSS under 14.2 GB : 1124 MiB peak
+PASS peak VRAM over the whole test under the 7373 MiB cap : 6545 MiB
+
+turns:
+{"turn": 1, "mode": "non-stream", "prompt": 61, "reused": 0, "reuse": "none", "gen": 44, "tg_tok_s": 26.66, "pp_tok_s": 50.4, "accept_pct": 86.1, "pld_hits": 0, "mtp_fills": 36, "vram_mib": 6534, "rss_mib": 994, "wall_s": 2.9, "vram_peak_so_far": 6535}
+{"turn": 2, "mode": "stream", "prompt": 127, "reused": 0, "reuse": "none", "gen": 22, "tg_tok_s": 24.75, "pp_tok_s": 60.9, "accept_pct": 71.4, "pld_hits": 1, "mtp_fills": 17, "vram_mib": 6544, "rss_mib": 1005, "wall_s": 3.0, "vram_peak_so_far": 6545}
+{"turn": 3, "mode": "non-stream", "prompt": 172, "reused": 150, "reuse": "prefix", "gen": 34, "tg_tok_s": 28.0, "pp_tok_s": 32.5, "accept_pct": 89.3, "pld_hits": 0, "mtp_fills": 28, "vram_mib": 6544, "rss_mib": 1005, "wall_s": 1.9, "vram_peak_so_far": 6545}
+{"turn": 4, "mode": "stream", "prompt": 229, "reused": 207, "reuse": "prefix", "gen": 41, "tg_tok_s": 20.06, "pp_tok_s": 32.5, "accept_pct": 66.7, "pld_hits": 1, "mtp_fills": 17, "vram_mib": 6544, "rss_mib": 1005, "wall_s": 2.7, "vram_peak_so_far": 6545}
+{"turn": 5, "mode": "non-stream", "prompt": 296, "reused": 270, "reuse": "prefix", "gen": 96, "tg_tok_s": 29.27, "pp_tok_s": 37.9, "accept_pct": 89.3, "pld_hits": 1, "mtp_fills": 71, "vram_mib": 6544, "rss_mib": 1005, "wall_s": 4.0, "vram_peak_so_far": 6545}
+{"turn": 6, "mode": "stream", "prompt": 417, "reused": 0, "reuse": "none", "gen": 96, "tg_tok_s": 20.89, "pp_tok_s": 63.6, "accept_pct": 66.7, "pld_hits": 3, "mtp_fills": 48, "vram_mib": 6544, "rss_mib": 1024, "wall_s": 11.2, "vram_peak_so_far": 6545}
+{"turn": 7, "mode": "non-stream", "prompt": 539, "reused": 512, "reuse": "prefix", "gen": 36, "tg_tok_s": 29.22, "pp_tok_s": 39.0, "accept_pct": 96.2, "pld_hits": 0, "mtp_fills": 26, "vram_mib": 6544, "rss_mib": 1024, "wall_s": 1.9, "vram_peak_so_far": 6545}
+{"turn": 8, "mode": "stream", "prompt": 605, "reused": 575, "reuse": "prefix", "gen": 15, "tg_tok_s": 31.41, "pp_tok_s": 42.9, "accept_pct": 100.0, "pld_hits": 0, "mtp_fills": 11, "vram_mib": 6544, "rss_mib": 1024, "wall_s": 1.2, "vram_peak_so_far": 6545}
+{"turn": 9, "mode": "non-stream", "prompt": 644, "reused": 620, "reuse": "prefix", "gen": 95, "tg_tok_s": 24.77, "pp_tok_s": 35.0, "accept_pct": 83.3, "pld_hits": 2, "mtp_fills": 58, "vram_mib": 6544, "rss_mib": 1024, "wall_s": 4.5, "vram_peak_so_far": 6545}
+{"turn": 10, "mode": "stream", "prompt": 767, "reused": 739, "reuse": "prefix", "gen": 5, "tg_tok_s": 16.62, "pp_tok_s": 40.2, "accept_pct": 50.0, "pld_hits": 0, "mtp_fills": 8, "vram_mib": 6544, "rss_mib": 1024, "wall_s": 1.0, "vram_peak_so_far": 6545}

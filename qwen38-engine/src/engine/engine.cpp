@@ -81,13 +81,27 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         throw std::runtime_error("ctx_max must be in 16 .. " + std::to_string(kMaxCtxTernary));
     qmat_init();
     ix.open(cfg_.gguf);
+    if (!cfg_.mtp_gguf.empty()) {
+        // MTP sidecar: a GGUF holding only blk.64.* (written by inject_mtp_gguf.py --mtp-only-out). It is mmapped on its
+        // own, so the 5.4 GiB main file is never duplicated; its blk.64 replaces any blk.64 of the main file.
+        mtp_ix.open(cfg_.mtp_gguf);
+        if (!mtp_ix.tensors.count("blk.64.nextn.eh_proj.weight"))
+            throw std::runtime_error("--mtp-gguf: " + cfg_.mtp_gguf + " has no blk.64.nextn.eh_proj.weight");
+        for (const auto & kv : mtp_ix.tensors)
+            if (kv.first.compare(0, 7, "blk.64.") != 0)
+                throw std::runtime_error("--mtp-gguf: unexpected tensor " + kv.first + " (the sidecar must hold blk.64.* only)");
+        mtp_src = &mtp_ix;
+        size_t nb = 0;
+        for (const auto & kv : mtp_ix.tensors) nb += kv.second.nbytes;
+        std::fprintf(stderr, "mtp: sidecar %s, %zu tensors, %.1f MiB\n", cfg_.mtp_gguf.c_str(), mtp_ix.tensors.size(), nb / 1048576.0);
+    }
 
     // The engine is locked to the qwen35 architecture: 65 blocks on Qwen3.8-27B (64 layers + the MTP head), 64 on
     // Ternary Bonsai 2 27B (no MTP block). A missing blk.64 disables the draft head automatically; --pld is unaffected.
     const uint64_t nblocks = u64(ix, "qwen35.block_count");
     if (nblocks != 65 && nblocks != 64) throw std::runtime_error("gguf: qwen35.block_count = " + std::to_string(nblocks) + ", engine supports 64 (Bonsai, no MTP) or 65 (Qwen)");
-    if (nblocks == 64 && cfg_.mtp_steps > 0)
-        std::fprintf(stderr, "mtp: blk.64 absent (Ternary Bonsai), draft head disabled; --pld stays available\n");
+    if (nblocks == 64 && cfg_.mtp_steps > 0 && cfg_.mtp_gguf.empty())
+        std::fprintf(stderr, "mtp: blk.64 absent (Ternary Bonsai), draft head disabled (PLD runs on the draft path too: add --mtp-gguf)\n");
     expect(ix, "qwen35.embedding_length", kHidden);
     expect(ix, "qwen35.feed_forward_length", kFFN);
     expect(ix, "qwen35.attention.head_count", kNH);
@@ -178,8 +192,9 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     }
 
     // MTP head (block 64): a full attention + FFN block plus the nextn projection. Optional: absent => no speculative decoding.
-    if (cfg_.mtp_steps > 0 && ix.tensors.count("blk.64.nextn.eh_proj.weight")) {
+    if (cfg_.mtp_steps > 0 && mtp_src->tensors.count("blk.64.nextn.eh_proj.weight")) {
         const std::string b = "blk.64.";
+        const GgufIndex & ix = *mtp_src;   // shadows the main index for the draft block
         LayerW & L = mtp_L_;
         L.is_attn = true;
         L.attn_norm = f32p(ix, b + "attn_norm.weight", kHidden);
@@ -218,8 +233,8 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     // ---- GPU layer count and prefill streaming, checked against the VRAM budget before anything is allocated.
     // --gpu-layers auto (-1) takes the largest contiguous prefix 0 .. n-1 whose plan fits. Prefill streaming needs a
     // staging buffer plus one FP32 KV layer (ctx_max * 8 KiB: 1 GiB at 128K); when it does not fit, it is turned off.
-    const bool roll = cfg_.mtp_steps > 0 && mtp_ok_;
-    auto gpu_config = [&](int n, bool stream, bool head, bool mtp = false) {
+    bool roll = cfg_.mtp_steps > 0 && mtp_ok_;
+    auto gpu_config = [&](int n, bool stream, bool head, bool mtp = false, int verify_t = kRollT) {
         GpuConfig gc;
         gc.n_layers = n;
         gc.ctx_max = cfg_.ctx_max;
@@ -227,12 +242,14 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         gc.kv_iso3 = cfg_.kv_iso3;
         gc.dp4a_mask = cfg_.dp4a_mask;
         gc.stream_prefill = stream;
-        gc.roll_t = roll ? kRollT : 0;
+        gc.roll_t = roll ? (verify_t > kRollT ? verify_t : kRollT) : 0;
+        gc.verify_t = verify_t;
         gc.use_graph = cfg_.cuda_graph;
         gc.pin_stream = cfg_.pin_stream;
         gc.vram_budget_mib = cfg_.vram_budget_mib;
         gc.head = head;
         gc.mtp = mtp;
+        gc.mtp_ix = mtp_src;
         if (ternary_mode_) {  // rotated basis: the GPU layers need the sign vectors and the grouped-V flag
             gc.signs_5120 = signs_5120_;
             gc.signs_6144 = signs_6144_;
@@ -241,10 +258,25 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         }
         return gc;
     };
+    // Verification batch: the requested value first, then the two fallbacks. The partial-attention buffer
+    // (verify_t x 100 slices x 24 heads x 258 floats = 42.1 MiB at 17) and the DeltaNet rollback buffers grow
+    // with it, so each candidate is checked against the whole plan. The last candidate is kRollT, which is what
+    // the plan below was validated with, so one of the three always fits. Without MTP there is no verification
+    // batch, so the buffers stay at kRollT and the plan costs the least.
+    verify_t_ = kRollT;
+    if (roll) {
+        for (int cand : {cfg_.verify_t, kRollTMid, kRollT}) {
+            if (cand < 1) continue;
+            if (GpuLayers::projected_mib(ix, gpu_config(0, false, false, false, cand)) <= cfg_.vram_budget_mib) { verify_t_ = cand; break; }
+        }
+    }
+    int verify_t = verify_t_;
+    roll_t_ = roll ? (verify_t > kRollT ? verify_t : kRollT) : 0;
+    auto gcfg = [&](int n, bool stream, bool head, bool mtp = false) { return gpu_config(n, stream, head, mtp, verify_t); };
     bool stream_on = false;
     if (cfg_.gpu_layers != 0) {
         const bool want_stream = cfg_.stream_min_t > 0;
-        auto fits = [&](int n, bool stream) { return GpuLayers::projected_mib(ix, gpu_config(n, stream, false)) <= cfg_.vram_budget_mib; };
+        auto fits = [&](int n, bool stream) { return GpuLayers::projected_mib(ix, gcfg(n, stream, false)) <= cfg_.vram_budget_mib; };
         if (cfg_.gpu_layers < 0) {
             int pick = 0;
             for (int n = kLayers; n >= 1 && pick == 0; --n) {
@@ -287,16 +319,56 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     // LM head on the GPU: only with every layer there (the stream is already in VRAM), when it fits after the layers.
     // Auto (-1) puts it there if the plan stays under the budget; 1 requires it; 0 keeps it on the CPU.
     if (g0 == kLayers && cfg_.gpu_head != 0) {
-        bool fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true)) <= cfg_.vram_budget_mib;
-        // At long context the iso3 KV leaves no room for the head next to the prefill scratch (about 270 MiB at t_max 512).
-        // Smaller prefill chunks free it: the batched GEMVs tile at most 16 tokens, so prefill speed barely changes.
-        for (int tm : {256, 128, 64}) {
-            if (fit || cfg_.t_max <= tm) break;
-            const int keep = cfg_.t_max;
-            cfg_.t_max = tm;
-            fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true)) <= cfg_.vram_budget_mib;
-            if (fit) std::fprintf(stderr, "LM head: prefill chunk lowered from %d to %d tokens so the head fits in VRAM\n", keep, tm);
-            else cfg_.t_max = keep;
+        auto head_fits = [&]() {
+            bool fit = GpuLayers::projected_mib(ix, gcfg(g0, false, true)) <= cfg_.vram_budget_mib;
+            // At long context the iso3 KV leaves no room for the head next to the prefill scratch (about 270 MiB at t_max 512).
+            // Smaller prefill chunks free it: the batched GEMVs tile at most 16 tokens, so prefill speed barely changes.
+            for (int tm : {256, 128, 64}) {
+                if (fit) break;
+                if (cfg_.t_max <= tm) continue;   // already at or below this chunk size: try the next smaller one
+                const int keep = cfg_.t_max;
+                cfg_.t_max = tm;
+                fit = GpuLayers::projected_mib(ix, gcfg(g0, false, true)) <= cfg_.vram_budget_mib;
+                if (fit) std::fprintf(stderr, "LM head: prefill chunk lowered from %d to %d tokens so the head fits in VRAM\n", keep, tm);
+                else cfg_.t_max = keep;
+            }
+            return fit;
+        };
+        bool fit = head_fits();
+        // Before giving up on the head: the verification batch may be the reason. At 128K the rollback rows plus the
+        // partial buffer (about 90 MiB between verify_t 17 and 5) are what push the head off the GPU, and a CPU head
+        // costs about 0.2 s per token. A 4-draft batch (kRollT) is the standard MTP path and there is no 16-draft
+        // drafter trained yet, so shrinking the buffer to keep the head on the GPU is the right trade.
+        if (!fit && roll) {
+            for (int cand : {verify_t, kRollTMid, kRollT}) {
+                if (cand < 1 || cand >= verify_t) continue;
+                verify_t = cand;
+                verify_t_ = cand;
+                roll_t_ = cand > kRollT ? cand : kRollT;
+                if (head_fits()) { fit = true; break; }
+            }
+            if (fit)
+                std::fprintf(stderr, "verify batch lowered to %d rows so the LM head stays on the GPU\n", verify_t);
+            else {   // restore the largest size, the head goes to the CPU and the MTP block decides below
+                verify_t = kRollTMid;
+                verify_t_ = kRollTMid;
+                roll_t_ = kRollTMid;
+                for (int cand : {kRollT}) if (GpuLayers::projected_mib(ix, gcfg(g0, false, true, false)) <= cfg_.vram_budget_mib) { verify_t = verify_t_ = cand; roll_t_ = cand; break; }
+            }
+        }
+        // The MTP rollback buffers (about 150 MiB) can push the head off the GPU at 128K. A CPU head costs about 0.2 s per
+        // token (1 GiB from DDR4) and an MTP draft cycle needs it too: measured 2.49 tok/s with MTP 2 vs 4.72 without at
+        // 128K. In auto mode (--gpu-mtp auto) the draft head is dropped instead (and with it PLD, which uses the same verify path).
+        if (!fit && roll && cfg_.gpu_mtp < 0) {
+            roll = false;
+            if (head_fits()) {
+                fit = true;
+                mtp_ok_ = false;
+                std::fprintf(stderr, "MTP: disabled at ctx %d, its rollback buffers would push the LM head to the CPU "
+                             "(--gpu-mtp 0 forces the CPU MTP path)\n", cfg_.ctx_max);
+            } else {
+                roll = true;
+            }
         }
         if (!fit && cfg_.gpu_head == 1) throw std::runtime_error("--gpu-head 1: the LM head does not fit the VRAM budget at this context");
         head_on_ = fit;
@@ -307,7 +379,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     // MTP draft head on the GPU: when the GGUF has blk.64, every layer and the LM head are on the GPU, and the block plus
     // its KV fit next to them (about 335 MiB of weights for the Qwen-format head, 0.8 KiB of iso3 KV per position).
     if (mtp_ok_ && head_on_ && cfg_.gpu_mtp != 0) {
-        const bool fit = GpuLayers::projected_mib(ix, gpu_config(g0, false, true, true)) <= cfg_.vram_budget_mib;
+        const bool fit = GpuLayers::projected_mib(ix, gcfg(g0, false, true, true)) <= cfg_.vram_budget_mib;
         if (!fit && cfg_.gpu_mtp == 1) throw std::runtime_error("--gpu-mtp 1: the MTP block does not fit the VRAM budget at this context");
         mtp_gpu_ = fit;
         std::fprintf(stderr, "MTP block: %s\n", fit ? "GPU" : "CPU (does not fit the VRAM budget)");
@@ -324,7 +396,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         const GgufTensor & t = ix.get("output.weight");
         locked_bytes += t.nbytes;
         if (mtp_ok_)
-            for (const auto & kv : ix.tensors)
+            for (const auto & kv : mtp_src->tensors)
                 if (kv.first.compare(0, 7, "blk.64.") == 0) locked_bytes += kv.second.nbytes;
     }
     const double host_fixed = static_cast<double>(arena_bytes_need_) + static_cast<double>(locked_bytes) + kHostMarginBytes;
@@ -365,6 +437,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
 
     if (mtp_ok_) {  // the MTP block (about 350 MiB) is read on every draft step: keep it in RAM (memlock limit 1.94 GiB)
         uint64_t lo = UINT64_MAX, hi = 0;
+        const GgufIndex & ix = *mtp_src;
         for (const auto & kv : ix.tensors) {
             if (kv.first.compare(0, 7, "blk.64.") != 0) continue;
             const uint64_t a = ix.data_start + kv.second.offset;
@@ -395,7 +468,18 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     arena_->freeze();
 
     if (g0 > 0) {
-        const GpuConfig gc = gpu_config(g0, stream_on, head_on_, mtp_gpu_);
+    // The verification batch was picked while the layer count, the LM head and the MTP block were still
+    // undecided, so it can be too large for the plan that is actually built (at 128K the rollback rows plus the
+    // partial buffer push the LM head off the GPU, which costs about 0.2 s per token). Step it down here, with
+    // every flag final: a smaller buffer keeps the head on the GPU, and a run without MTP always keeps kRollT.
+    for (int cand : {verify_t, kRollTMid, kRollT}) {
+        if (cand < 1 || cand > verify_t) continue;
+        if (GpuLayers::projected_mib(ix, gpu_config(g0, stream_on, head_on_, mtp_gpu_, cand)) <= cfg_.vram_budget_mib) { verify_t = cand; break; }
+        verify_t = cand == kRollT ? kRollT : (cand == kRollTMid ? kRollT : kRollTMid);
+    }
+    verify_t_ = verify_t;
+    roll_t_ = roll ? (verify_t > kRollT ? verify_t : kRollT) : 0;
+    const GpuConfig gc = gcfg(g0, stream_on, head_on_, mtp_gpu_);
         gpu_ = std::make_unique<GpuLayers>(ix, gc, eps_);
         for (int il = 0; il < g0; ++il) hint_layer(il, false);  // weights are in VRAM now: drop their file pages
         const double used = vram_used_mib();
@@ -482,6 +566,15 @@ uint64_t Engine::state_fingerprint() const {
         const int64_t v[3] = {static_cast<int64_t>(t.type), static_cast<int64_t>(t.offset), static_cast<int64_t>(t.nbytes)};
         mix(v, sizeof(v));
     }
+    if (mtp_src != &ix) {   // sidecar draft head: its tensor table (sorted by the map) is part of the identity
+        const char tag[] = "mtp-sidecar";
+        mix(tag, sizeof(tag));
+        for (const auto & kv : mtp_src->tensors) {
+            mix(kv.first.data(), kv.first.size());
+            const int64_t v[3] = {static_cast<int64_t>(kv.second.type), static_cast<int64_t>(kv.second.offset), static_cast<int64_t>(kv.second.nbytes)};
+            mix(v, sizeof(v));
+        }
+    }
     const int32_t layout[5] = {cfg_.gpu_layers, cfg_.kv_iso3 ? 1 : 0, mtp_ok_ ? 1 : 0, ternary_mode_ ? 1 : 0, mtp_gpu_ ? 1 : 0};
     mix(layout, sizeof(layout));
     return h;
@@ -529,7 +622,7 @@ void Engine::carve_buffers(Arena & a, int g0, bool roll) {
         } else {
             conv_state_.push_back(cpu_layer ? a.alloc_n<float>(kConvCh * (kConvK - 1)) : nullptr);
             ssm_state_.push_back(cpu_layer ? a.alloc_n<float>(kVHeads * kHeadDim * kHeadDim) : nullptr);
-            const size_t R = kRollT;
+            const size_t R = static_cast<size_t>(roll_t_);
             snap_conv_.push_back(roll && cpu_layer ? a.alloc_n<float>(kConvCh * (kConvK - 1)) : nullptr);
             snap_ssm_.push_back(roll && cpu_layer ? a.alloc_n<float>(kVHeads * kHeadDim * kHeadDim) : nullptr);
             sv_qkv_.push_back(roll && cpu_layer ? a.alloc_n<float>(R * kConvCh) : nullptr);
@@ -732,7 +825,7 @@ void Engine::dn_snapshot(bool on) {
 }
 
 void Engine::dn_rollback(int keep) {
-    if (keep < 1 || keep > kRollT) throw std::runtime_error("dn_rollback: keep out of range");
+    if (keep < 1 || keep > roll_t_) throw std::runtime_error("dn_rollback: keep out of range");
     if (gpu_) gpu_->rollback(keep);
     for (int il = std::max(cfg_.gpu_layers, 0); il < kLayers; ++il) {
         if (layers_[il].is_attn) continue;
@@ -966,7 +1059,9 @@ void Engine::mtp_forward(const int32_t * tokens, const float * h_in, int T, int 
     if (h_out || logits) {
         rmsnorm(x_ + static_cast<int64_t>(T - 1) * kHidden, kHidden, mtp_head_norm_, eps_, hlast_);
         if (h_out) std::memcpy(h_out, hlast_, sizeof(float) * kHidden);
-        if (logits) {
+        if (logits && head_on_ && gpu_) {   // CPU block, GPU LM head: 20 KiB up instead of a 1 GiB DDR4 read
+            gpu_->head_host(hlast_, 1, logits);
+        } else if (logits) {
             if (ternary_mode_) {   // the ternary LM head reads its input in the Hadamard basis
                 std::memcpy(rot5120_, hlast_, sizeof(float) * kHidden);
                 hadamard_rotate(rot5120_, signs_5120_, kHidden, 1);

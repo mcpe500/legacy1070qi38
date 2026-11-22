@@ -628,3 +628,73 @@ Gates:
 - Every run ≤ 7349 MiB VRAM and ≤ 4.75 GB RSS.
 
 GPU runs are isolated with `bench/gpu_isolate.sh`: the other agent session is paused with SIGSTOP and resumed with SIGCONT, and every run refuses to start on a busy GPU.
+
+
+## Branch `exp/bonsai-local-10h-opt-serving` (2026-11-20, issue #55)
+
+This was a 10-hour local marathon on the GTX 1070 Ti: no Colab, no RTX PRO 6000.
+- Full log, including every failed attempt: `bench/results/bonsai_local_10h/EXPERIMENT-LOG.md`.
+- Per-milestone files: `M1-README.md`, `M2-ATTEMPTS.md`, `M3-ATTEMPTS.md`, `M4-README.md`.
+- Figure: `docs/figures/55_bonsai_local_opt_serving.svg`.
+- The branch includes the commit of the open PR #54 (`926e022`: Colab notebook, `--mtp-only-out`, resume).
+
+| Item | PR #53 (main) | this branch |
+|---|---|---|
+| MTP head for Bonsai | Qwen `blk.64` injected into a 5.4 GiB copy | ProCreations r3 head as a 273 MiB sidecar, `--mtp-gguf` (CLI + server), nothing duplicated |
+| PTQ1_0 decode, 509-token prompt, no MTP | 13.30 tok/s | **17.37 tok/s** (GEMV v3, bit-identical 180/180) |
+| PTQ1_0 decode with MTP, 509 tokens | 18.48 (Qwen blk.64, MTP 2) | **26.65** (r3 Q4_K_M, adaptive) |
+| MTP speedup, 4K suites, r3 Q4_K_M adaptive | - | coding 1.34x, chat EN 1.16x, chat ID 1.20x, repetitive 1.41x (m2: 1.46x) |
+| Depth probe 4K / 32K / 64K / 128K | 12.68 / 9.29 / 7.06 / 4.72 | 16.19 / 13.48 / 11.52 / **8.91** (decode attention v2) |
+| MTP at a real 64K context, coding | - | 14.13 tok/s adaptive vs 11.58 without drafts, ids identical |
+| 128K prefill, 130965 tokens | 62.9 min | 60.4 min: target < 50 min **missed**; needle and state round trip PASS |
+| Decode after a real 128K context | 4.54 tok/s | 8.66 tok/s |
+| Q8_0 GEMV T=4 / T=64 | 2126 us / 33.8 ms | 622 us / 9.0 ms (batched, bit-identical) |
+| Roofline T=1, % of measured 222 GB/s | - | Q4_K 88%, IQ4_XS 91%, PTQ1_0 54%, Q3_K 30% (`docs/QUANT_MATH_AND_GPU_DISPATCH.md`) |
+| Server | `--state-load` only | `--state-save` (`POST /v1/state/save`, clean SIGTERM), pinned state checkpoint, prompt checkpoint for multi-turn reuse |
+
+Gates:
+- SASS PASS.
+- `ternary_ab_test` 180/180.
+- `attn_long_test` 52/52.
+- All 138 M1 MTP/PLD runs lossless.
+- Bonsai server stress 57/57.
+- `server_test` 69/69 (`QWEN_MT_DOT=0`).
+- `webui_test`, `stop_filter_test` 36/36.
+- Qwen greedy 48/48 and rollback; Bonsai MTP rollback.
+- `dn_rec_ab_test`, `iso3_gpu_test`.
+
+One VRAM incident: a GPU unit test run next to an idle benchmark server reached 7855 MiB in total. The engine itself always stayed at or below 7349 MiB.
+
+Specs: `docs/QUANT_MATH_AND_GPU_DISPATCH.md`, `docs/DRAFTER_V2_CONTRACT.md` (VRAM rows 32K/64K/128K; T=5 lossless, T=17 needs).
+
+Readings to keep:
+- Recommended setting: r3 Q4_K_M + adaptive drafting.
+- Cascaded PLD + MTP is slower than MTP alone on all 12 suite/head pairs at 512.
+- At 128K the auto mode drops MTP, because its rollback buffers would push the LM head off the GPU.
+
+---
+
+# Marathon v2 (exp/bonsai-overnight-v2-prefill-t17-drafter, issue #57)
+
+Updated: 2026-11-22. Six milestones on the locked GTX 1070 Ti, each committed and pushed at its end. Full log:
+`bench/results/bonsai_overnight_v2/EXPERIMENT-LOG.md`; per-milestone documents `M1-FAST-PREFILL.md`,
+`M2-VERIFY-T17.md`, `M3-SUFFIX-PLD-CASCADE.md`, `M4-Q2K-AND-ARCH-DISPATCH.md`, `M5-DRAFTER-V2-PIPELINE.md`;
+figure `docs/figures/57_bonsai_fastprefill_t17_drafter.svg` (0 errors, 0 warnings).
+
+| Milestone | Result | Evidence |
+|---|---|---|
+| M1 prefill 128K | **target 45 min not met** (stays about 60.4 min); the relaxed-order fast prefill path is a measured loss and is not wired into the engine | `M1-FAST-PREFILL.md`, paired A/B in `bench/quant_roofline_bench.cu --fast` |
+| M2 verify T=17 | **met**: iso3 T=17 / T=5 / 17 single rows byte-identical at 512/4096/32K/64K; rollback keep=1..17 byte-identical; buffer chosen by the VRAM budget (17 → 8 → 5) | `tests/cuda/verify_t17_test.cu`, `tests/cuda/dn_rollback_test.cu` |
+| M3 PLD 16 drafts | **met as capability, no speed win**: up to 16 drafts, cascade lossless vs r3 MTP, 0.39-0.63 µs/step; slower than MTP alone on chat | `tests/` none new; `M3-SUFFIX-PLD-CASCADE.md`, `m3_cascade_ids.txt`, `m3_cascade_speed.txt` |
+| M4 Q2_K + arch | **met for Q2_K**: GPU `__dp4a` kernel at 98% of the Q4_K MAC rate, parity 8.4e-08; 28/28 (arch, kernel) compile pairs for sm_61/75/86/89 | `tests/cuda/q2_k_parity.cu`, `scripts/arch_compile_check.sh` |
+| M5 Drafter v2 pipeline | **met as contract sync**: drafter schedule modes and a CPU gate; no training run (needs the RTX PRO 6000) | `tools/bonsai_mtp_train/verify_m5.sh` |
+| M6 regression + PR | gates re-run, log, figure, this section | `EXPERIMENT-LOG.md` |
+
+Gates on this branch: `ternary_ab_test` 180/180, `ternary_test`, `ptq1_fast_gate` 42/42, `dn_rec_ab_test`,
+`dn_rollback_test` 9/9, `verify_t17_test` 32/32, `q2_k_parity` 4/4, `attn_long_test`,
+`arch_compile_check` 28/28, `verify_m5.sh` 6/6, SASS gate (IDP.4A ×6205, zero half arithmetic).
+Not re-run here: the HTTP server suites, the headless WebUI test, the Qwen greedy set, and a fresh 128K needle
+run; no claim is made about them.
+
+Carried forward as the next task: the MTP vs non-MTP argmax divergence that the cascade benchmark exposed on
+3 of 4 workloads (already present before this branch), which is worth 1.2x-1.3x on its own.

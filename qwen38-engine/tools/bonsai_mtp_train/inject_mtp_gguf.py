@@ -52,7 +52,7 @@ GGUF_MAGIC = b"GGUF"
 T_U8, T_I8, T_U16, T_I16, T_U32, T_I32, T_F32, T_BOOL, T_STR, T_ARR, T_U64, T_I64, T_F64 = range(13)
 SCALAR = {T_U8: "<B", T_I8: "<b", T_U16: "<H", T_I16: "<h", T_U32: "<I", T_I32: "<i", T_F32: "<f", T_BOOL: "<?",
           T_U64: "<Q", T_I64: "<q", T_F64: "<d"}
-GGML_F32, GGML_F16, GGML_Q8_0, GGML_Q4_K, GGML_BF16 = 0, 1, 8, 12, 30
+GGML_F32, GGML_F16, GGML_Q8_0, GGML_Q4_K, GGML_Q6_K, GGML_BF16 = 0, 1, 8, 12, 14, 30
 
 MTP_SHAPES = {   # name -> (ne0 = input, ne1 = output) ; 1-D tensors have ne1 = None
     "blk.64.attn_norm.weight": (5120, None), "blk.64.post_attention_norm.weight": (5120, None),
@@ -147,6 +147,8 @@ def row_bytes(ttype, ne0):
         return ne0 // 32 * 34
     if ttype == GGML_Q4_K:
         return ne0 // 256 * 144
+    if ttype == GGML_Q6_K:
+        return ne0 // 256 * 210
     raise ValueError(f"no row size for type {ttype}")
 
 
@@ -272,7 +274,49 @@ def quantize(name, arr, mode):
 
 
 # ------------------------------------------------------------------------------------------------------------ sources
+# Hugging Face MTP layout (Qwen3.5 `mtp.*`, e.g. ProCreations/Ternary-Bonsai-2-27B-MTP model_mtp.safetensors) -> GGUF names.
+# Same mapping as their training/export_mtp.py and llama.cpp's converter. Qwen3.5 RMSNorm weights are zero-centered
+# (the layer multiplies by 1 + w), the GGUF and qwen38-engine store the effective multiplier, so 1-D tensors get + 1.
+HF_MTP_NAMES = {
+    "mtp.fc.weight": "blk.64.nextn.eh_proj.weight",
+    "mtp.pre_fc_norm_embedding.weight": "blk.64.nextn.enorm.weight",
+    "mtp.pre_fc_norm_hidden.weight": "blk.64.nextn.hnorm.weight",
+    "mtp.norm.weight": "blk.64.nextn.shared_head_norm.weight",
+    "mtp.layers.0.input_layernorm.weight": "blk.64.attn_norm.weight",
+    "mtp.layers.0.post_attention_layernorm.weight": "blk.64.post_attention_norm.weight",
+    "mtp.layers.0.self_attn.q_proj.weight": "blk.64.attn_q.weight",
+    "mtp.layers.0.self_attn.k_proj.weight": "blk.64.attn_k.weight",
+    "mtp.layers.0.self_attn.v_proj.weight": "blk.64.attn_v.weight",
+    "mtp.layers.0.self_attn.o_proj.weight": "blk.64.attn_output.weight",
+    "mtp.layers.0.self_attn.q_norm.weight": "blk.64.attn_q_norm.weight",
+    "mtp.layers.0.self_attn.k_norm.weight": "blk.64.attn_k_norm.weight",
+    "mtp.layers.0.mlp.gate_proj.weight": "blk.64.ffn_gate.weight",
+    "mtp.layers.0.mlp.up_proj.weight": "blk.64.ffn_up.weight",
+    "mtp.layers.0.mlp.down_proj.weight": "blk.64.ffn_down.weight",
+}
+
+
+def from_hf_mtp(sd):
+    """Renames a Hugging Face `mtp.*` state dict to GGUF names and turns zero-centered norms into multipliers."""
+    out = {}
+    for k, v in sd.items():
+        if k not in HF_MTP_NAMES:
+            raise SystemExit(f"unknown Hugging Face MTP tensor {k}")
+        out[HF_MTP_NAMES[k]] = v + 1.0 if v.ndim == 1 else v
+    return out
+
+
 def load_checkpoint(path):
+    """blk.64 weights as float32 numpy arrays with GGUF names. Accepts the GGUF naming of train_bonsai_mtp.py and the
+    Hugging Face `mtp.*` naming (detected from the keys)."""
+    sd = _load_raw(path)
+    if any(k.startswith("mtp.") for k in sd):
+        print(f"{os.path.basename(path)}: Hugging Face MTP layout (mtp.*), renamed to blk.64 and norms + 1")
+        sd = from_hf_mtp(sd)
+    return sd
+
+
+def _load_raw(path):
     if path.endswith(".safetensors"):
         try:   # torch reads FP32 / F16 / BF16; safetensors.numpy has no bfloat16
             from safetensors.torch import load_file   # noqa: E402
@@ -287,17 +331,29 @@ def load_checkpoint(path):
     return {k: v.float().numpy() for k, v in sd.items()}
 
 
-def write_mtp_only(ckpt, quant, out, alignment=32):
-    """A GGUF v3 holding only the blk.64 tensors (quantized as for an injection), usable as --from-gguf donor."""
-    sd = load_checkpoint(ckpt)
-    missing = [n for n in MTP_SHAPES if n not in sd]
-    if missing:
-        raise SystemExit(f"checkpoint lacks {missing}")
+def write_mtp_only(ckpt, quant, out, alignment=32, donor=None):
+    """A GGUF v3 holding only the blk.64 tensors, usable as --from-gguf donor: quantized from a checkpoint, or (donor =
+    path of a qwen35 GGUF with blk.64, e.g. Qwen3.8-27B) copied raw without requantizing."""
     new = []
-    for name, (ne0, ne1) in MTP_SHAPES.items():
-        tt, raw = quantize(name, sd[name], quant)
-        new.append((name, [ne0] if ne1 is None else [ne0, ne1], tt, raw))
-        print(f"  {name:40s} type {tt:2d}  {len(raw) / 2**20:7.2f} MiB")
+    if donor:
+        d = Reader(donor)
+        for name, (ne0, ne1) in MTP_SHAPES.items():
+            dims, tt, raw = d.tensor_bytes(name)
+            want = [ne0] if ne1 is None else [ne0, ne1]
+            if list(dims) != want:
+                raise SystemExit(f"{name}: donor shape {dims}, expected {want}")
+            nbytes = row_bytes(tt, ne0) * (ne1 or 1) if tt in (GGML_F32, GGML_F16, GGML_BF16, GGML_Q8_0, GGML_Q4_K, GGML_Q6_K) else len(raw)
+            new.append((name, want, tt, bytes(raw[:nbytes])))
+        ckpt, quant = donor, "raw copy"
+    else:
+        sd = load_checkpoint(ckpt)
+        missing = [n for n in MTP_SHAPES if n not in sd]
+        if missing:
+            raise SystemExit(f"checkpoint lacks {missing}")
+        for name, (ne0, ne1) in MTP_SHAPES.items():
+            tt, raw = quantize(name, sd[name], quant)
+            new.append((name, [ne0] if ne1 is None else [ne0, ne1], tt, raw))
+            print(f"  {name:40s} type {tt:2d}  {len(raw) / 2**20:7.2f} MiB")
     kv = [("general.architecture", T_STR, w_str("qwen35")), ("general.alignment", T_U32, struct.pack("<I", alignment)),
           ("general.name", T_STR, w_str("Ternary Bonsai 2 27B MTP head (blk.64)")),
           ("bonsai.mtp.source", T_STR, w_str(f"{os.path.basename(ckpt)} quantized {quant}"))]
@@ -337,15 +393,16 @@ def main():
     src.add_argument("--from-gguf")
     ap.add_argument("--quant", default="q4_k_m", choices=["q4_k_m", "q8_0"])
     ap.add_argument("--in-place", action="store_true", help="replace --base with the result (after it is complete)")
-    ap.add_argument("--mtp-only-out", help="write only the quantized blk.64 tensors to this GGUF (needs --from-checkpoint, no --base)")
+    ap.add_argument("--mtp-only-out", help="write only the blk.64 tensors to this GGUF: quantized from --from-checkpoint, "
+                                           "or copied raw from --from-gguf (no --base)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
     if a.mtp_only_out:
-        if not a.from_checkpoint:
-            ap.error("--mtp-only-out needs --from-checkpoint")
-        return write_mtp_only(a.from_checkpoint, a.quant, a.mtp_only_out)
+        if not (a.from_checkpoint or a.from_gguf):
+            ap.error("--mtp-only-out needs --from-checkpoint or --from-gguf")
+        return write_mtp_only(a.from_checkpoint, a.quant, a.mtp_only_out, donor=a.from_gguf)
     if not a.base or not (a.from_checkpoint or a.from_gguf):
         ap.error("--base and one of --from-checkpoint / --from-gguf are required")
 

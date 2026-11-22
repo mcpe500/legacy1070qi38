@@ -19,6 +19,8 @@
 
 struct EngineConfig {
     std::string gguf;
+    std::string mtp_gguf;        // optional MTP sidecar GGUF (blk.64.* only, --mtp-gguf): overrides/supplies the draft head
+                                 // without rewriting the main file; its tensors are mmapped from the sidecar
     int ctx_max = 4096;          // KV cache positions (hard cap 8192 on the Qwen path; 131072 on the Bonsai ternary
                                  // path with iso3 KV and the tiled attention kernel above 8192)
     int t_max = 512;             // largest batch of tokens in one forward call
@@ -45,6 +47,10 @@ struct EngineConfig {
     bool mtp_gpu_prefill = true; // MTP KV of large prefill batches computed on the GPU
     bool cuda_graph = true;      // CUDA graph replay of the GPU layers for batches of 1..4 tokens
     int mtp_steps = 2;           // 0 .. 3 draft tokens per cycle from the MTP head (blk.64); 0 = plain greedy decoding
+    // Largest verification batch the GPU buffers are sized for (1 target row plus the accepted drafts). 17 = a
+    // Drafter v2 batch of 16 drafts + 1. The attention partial buffer and the DeltaNet rollback buffers grow with it,
+    // so the engine keeps the largest value whose whole plan still fits vram_budget_mib and falls back to 8 or 5.
+    int verify_t = 17;
 };
 
 class GpuLayers;
@@ -108,8 +114,21 @@ public:
     // DeltaNet state snapshot and rollback (GPU and CPU layers). With the snapshot on, a forward() of at most kRollT tokens keeps
     // the state from before the call; dn_rollback(keep) leaves the state as if only the first `keep` tokens had been processed.
     static constexpr int kRollT = 5;   // verification batch of up to 4 drafts + 1
+    // Middle fallback of the verification batch: the batch the attention split-K path covered before the T=17
+    // extension (src/cuda/ops.cu kSplitTMax). Kept here so the engine can name the fallback without including the
+    // CUDA header.
+    static constexpr int kRollTMid = 8;
+    // Verification batch the buffers were actually sized for: cfg.verify_t when the whole plan fits
+    // vram_budget_mib, else kRollTMid or kRollT (kRollT when MTP is off). Set once in the constructor.
+    int verify_t_ = kRollT;
+    // Largest batch the rollback buffers (GPU and CPU layers) are sized for: verify_t_ with MTP on, 0 with it off.
+    int roll_t_ = kRollT;
     void dn_snapshot(bool on);
     void dn_rollback(int keep);
+    // Verification batch the buffers were actually sized for (cfg.verify_t when it fits the VRAM budget, else
+    // kRollTMid or kRollT, and kRollT when MTP is off), reported by the CLI summary so a fallback is visible.
+    int roll_t() const { return roll_t_; }
+    int verify_t() const { return verify_t_; }
 
     // Zeroes the recurrent state and the position counter; the KV cache is overwritten as positions advance.
     void reset();
@@ -118,6 +137,8 @@ public:
     std::function<void(int il, const float * x, int T)> tap;
 
     GgufIndex ix;
+    GgufIndex mtp_ix;                     // --mtp-gguf sidecar (empty when unused)
+    const GgufIndex * mtp_src = &ix;      // where the blk.64 tensors come from: ix, or mtp_ix with a sidecar
     Tokenizer tok;
     int64_t n_vocab = 0;
     int n_resident_layers = 0;

@@ -44,6 +44,13 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
                          float * part = nullptr, bool long_kernels = false);
 // Scratch for the split-K decode attention (ctx_max > 8192, T <= 8): floats `part` must hold. Without it the tiled kernel runs.
 size_t op_attention_part_floats();
+// Largest batch the partial-attention buffer (op_attention_part_floats) is sized for, and the setter the engine
+// calls with the verification batch that fits its VRAM budget (5, 8 or 17). The split-K attention keeps its slice
+// count independent of T up to this value, so a verification row stays lossless against the single-token decode.
+void op_attention_set_verify_t(int verify_t);
+int op_attention_verify_t();
 // Prefill (ctx_max > 8192, T > 8) uses the query-tiled K/V-reuse kernel (one block per KV group and 8 query tokens).
 // Tests and benchmarks can switch back to the per-(token, head) tiled reference kernel with this flag.
 void op_attention_set_tiled_ref(bool on);
+// Decode attention (T <= 8, long-context path, iso3): true = the v2 slice kernel (default), false = the split-K kernel.
+void op_attention_set_dec2(bool on);

@@ -1,0 +1,58 @@
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 2084 MiB (budget 14541)
+--- kv=f32  verify_t=17 (split-K covers T<=17, part buffer 40.2 MiB) ---
+[PASS] kv=f32  n=   512 lossless: T=17 vs T=5 0.0e+00, rows 0..7 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=f32  n=   512 T=17 vs double ref: max_abs 7.954e-07 rms 5.297e-02 rel 1.502e-05
+[PASS] kv=f32  n=  4096 lossless: T=17 vs T=5 0.0e+00, rows 0..7 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=f32  n=  4096 T=17 vs double ref: max_abs 5.930e-07 rms 3.011e-02 rel 1.970e-05
+[PASS] kv=f32  n= 32768 lossless: T=17 vs T=5 3.4e-08, rows 0..7 vs single rows 47062 differing floats (max drift 4.098e-08), rows 8..16 (prefill kernel) drift see log 
+[PASS] kv=f32  n= 32768 T=17 vs double ref: max_abs 1.363e-07 rms 2.685e-02 rel 5.075e-06
+[PASS] kv=f32  n= 65536 lossless: T=17 vs T=5 2.2e-08, rows 0..7 vs single rows 47634 differing floats (max drift 2.375e-08), rows 8..16 (prefill kernel) drift see log 
+[PASS] kv=f32  n= 65536 T=17 vs double ref: max_abs 1.363e-07 rms 2.662e-02 rel 5.120e-06
+  ctx verify T=1 verify T=5 verify T=17
+  512      57.8us     131.3us     438.5us  per row 57.8 / 26.3 / 25.8 us
+ 4096     450.7us    1289.2us    3820.6us  per row 450.7 / 257.8 / 224.7 us
+32768    1324.8us    3625.3us    7302.2us  per row 1324.8 / 725.1 / 429.5 us
+65536    2613.7us    7319.7us   14719.4us  per row 2613.7 / 1463.9 / 865.8 us
+--- kv=f32  verify_t=8 (split-K covers T<=8, part buffer 18.9 MiB) ---
+[PASS] kv=f32  n=   512 lossless: T=17 vs T=5 0.0e+00, rows 0..7 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=f32  n=   512 T=17 vs double ref: max_abs 7.954e-07 rms 5.297e-02 rel 1.502e-05
+[PASS] kv=f32  n=  4096 lossless: T=17 vs T=5 0.0e+00, rows 0..7 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=f32  n=  4096 T=17 vs double ref: max_abs 5.930e-07 rms 3.011e-02 rel 1.970e-05
+[PASS] kv=f32  n= 32768 lossless: T=17 vs T=5 0.0e+00, rows 0..7 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=f32  n= 32768 T=17 vs double ref: max_abs 2.228e-07 rms 2.685e-02 rel 8.298e-06
+[PASS] kv=f32  n= 65536 lossless: T=17 vs T=5 0.0e+00, rows 0..7 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=f32  n= 65536 T=17 vs double ref: max_abs 1.925e-07 rms 2.662e-02 rel 7.233e-06
+  ctx verify T=1 verify T=5 verify T=17
+  512      63.5us     152.3us     506.4us  per row 63.5 / 30.5 / 29.8 us
+ 4096     493.0us    1518.8us    4267.2us  per row 493.0 / 303.8 / 251.0 us
+32768    1334.2us    3761.4us    7373.1us  per row 1334.2 / 752.3 / 433.7 us
+65536    2617.7us    7352.7us   14747.5us  per row 2617.7 / 1470.5 / 867.5 us
+--- kv=iso3 verify_t=17 (split-K covers T<=17, part buffer 40.2 MiB) ---
+[PASS] kv=iso3 n=   512 lossless: T=17 vs T=5 0.0e+00, rows 0..16 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=iso3 n=   512 T=17 vs double ref: max_abs 1.064e-06 rms 5.262e-02 rel 2.023e-05
+[PASS] kv=iso3 n=  4096 lossless: T=17 vs T=5 0.0e+00, rows 0..16 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=iso3 n=  4096 T=17 vs double ref: max_abs 3.442e-07 rms 3.022e-02 rel 1.139e-05
+[PASS] kv=iso3 n= 32768 lossless: T=17 vs T=5 0.0e+00, rows 0..16 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=iso3 n= 32768 T=17 vs double ref: max_abs 2.061e-07 rms 2.703e-02 rel 7.626e-06
+[PASS] kv=iso3 n= 65536 lossless: T=17 vs T=5 0.0e+00, rows 0..16 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=iso3 n= 65536 T=17 vs double ref: max_abs 2.061e-07 rms 2.679e-02 rel 7.692e-06
+  ctx verify T=1 verify T=5 verify T=17
+  512     245.4us     638.6us    1655.7us  per row 245.4 / 127.7 / 97.4 us
+ 4096    2456.6us    5404.3us   14481.8us  per row 2456.6 / 1080.9 / 851.9 us
+32768    1005.7us    4411.6us   14564.4us  per row 1005.7 / 882.3 / 856.7 us
+65536    1827.9us    8090.0us   27049.2us  per row 1827.9 / 1618.0 / 1591.1 us
+--- kv=iso3 verify_t=8 (split-K covers T<=8, part buffer 18.9 MiB) ---
+[PASS] kv=iso3 n=   512 lossless: T=17 vs T=5 0.0e+00, rows 0..16 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=iso3 n=   512 T=17 vs double ref: max_abs 1.064e-06 rms 5.262e-02 rel 2.023e-05
+[PASS] kv=iso3 n=  4096 lossless: T=17 vs T=5 0.0e+00, rows 0..16 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=iso3 n=  4096 T=17 vs double ref: max_abs 3.442e-07 rms 3.022e-02 rel 1.139e-05
+[PASS] kv=iso3 n= 32768 lossless: T=17 vs T=5 0.0e+00, rows 0..16 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=iso3 n= 32768 T=17 vs double ref: max_abs 2.997e-07 rms 2.703e-02 rel 1.109e-05
+[PASS] kv=iso3 n= 65536 lossless: T=17 vs T=5 0.0e+00, rows 0..16 vs single rows 0 differing floats (max drift 0.000e+00)
+[PASS] kv=iso3 n= 65536 T=17 vs double ref: max_abs 2.997e-07 rms 2.679e-02 rel 1.119e-05
+  ctx verify T=1 verify T=5 verify T=17
+  512     282.8us     739.3us    1914.9us  per row 282.8 / 147.9 / 112.6 us
+ 4096    2680.0us    5877.3us   14655.0us  per row 2680.0 / 1175.5 / 862.1 us
+32768    1004.7us    4411.0us    8380.3us  per row 1004.7 / 882.2 / 493.0 us
+65536    1825.4us    8092.3us   16346.3us  per row 1825.4 / 1618.5 / 961.5 us
+verify_t17_test: 32 cases, 0 fail | worst identity drift 4.1e-08 | worst rel vs FP64 2.023e-05 -> PASS

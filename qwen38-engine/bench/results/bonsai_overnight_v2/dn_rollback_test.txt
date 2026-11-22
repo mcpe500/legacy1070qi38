@@ -1,0 +1,12 @@
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 2052 MiB (budget 14541)
+[PASS] rollback keep=17 reproduces the full 17-row batch state (byte-identical)
+[PASS] rollback keep= 1 of 17: state byte-identical, outputs byte-identical
+[PASS] rollback keep= 2 of 17: state byte-identical, outputs byte-identical
+[PASS] rollback keep= 3 of 17: state byte-identical, outputs byte-identical
+[PASS] rollback keep= 4 of 17: state byte-identical, outputs byte-identical
+[PASS] rollback keep= 5 of 17: state byte-identical, outputs byte-identical
+[PASS] rollback keep= 8 of 17: state byte-identical, outputs byte-identical
+[PASS] rollback keep=12 of 17: state byte-identical, outputs byte-identical
+[PASS] rollback keep=16 of 17: state byte-identical, outputs byte-identical
+[PASS] rollback keep=17 of 17: state byte-identical, outputs byte-identical
+dn_rollback_test: 9 cases, 0 fail -> PASS (verify batch 17, rollback bound enforced by the caller)

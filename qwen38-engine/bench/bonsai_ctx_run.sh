@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One engine run with peak-VRAM sampling (nvidia-smi) for the Bonsai long-context sweeps.
 # Usage: bench/bonsai_ctx_run.sh <tag> <engine args...>
-# Env: OUT_DIR (default bench/results/bonsai128k_v2), SAMPLE_MS (default 50), VRAM_CAP_MIB (default 7373).
+# Env: OUT_DIR (default bench/results/bonsai128k_v2), SAMPLE_MS (default 50), VRAM_CAP_MIB (default 7373),
+#      ENGINE_BIN (default build/qwen38-engine: a frozen copy keeps a long queue on one build).
 # Writes <tag>.txt (stdout), <tag>.err (stderr), <tag>.vram.csv and appends a JSON line with the peak VRAM, the max RSS,
 # and cap_ok to <tag>.txt. Refuses to start while another compute process holds the GPU (bench/gpu_isolate.sh check).
 set -u
@@ -17,7 +18,7 @@ fi
 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms "${SAMPLE_MS:-50}" > "$OUT/$tag.vram.csv" &
 smi=$!
 start=$(date +%s)
-/usr/bin/time -v taskset -c 0-3 "$ROOT/build/qwen38-engine" "$@" > "$OUT/$tag.txt" 2> "$OUT/$tag.err"
+/usr/bin/time -v taskset -c 0-3 "${ENGINE_BIN:-$ROOT/build/qwen38-engine}" "$@" > "$OUT/$tag.txt" 2> "$OUT/$tag.err"
 rc=$?
 wall=$(( $(date +%s) - start ))
 kill "$smi" 2> /dev/null; wait "$smi" 2> /dev/null

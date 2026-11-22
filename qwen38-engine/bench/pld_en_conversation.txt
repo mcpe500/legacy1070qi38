@@ -1,0 +1,10 @@
+I run a 27B model on a GTX 1070 Ti with 8 GB of VRAM and 16 GB of system RAM. What chunk size should I use for prefill?
+Start with 64 tokens per chunk. The GEMM tiles at 16 rows, so the batched kernels amortize their weight reads over four tiles, and the attention reuse kernel is measured at 98 ms per 131072 positions.
+And what about the KV cache type?
+Use the 3-bit iso3 cache. It costs 400 bytes per position per layer instead of 2048, which is what lets a 131072-position context fit next to a 5395 MiB of weights.
+How many tokens per second does that leave me for decoding?
+About 8.7 tok/s after the real 128K context, and about 17 tok/s at 512 tokens. The MTP draft head lifts the short-context number to about 27 tok/s.
+What if I need the 128K context and the draft head at the same time?
+Not on this card with the LM head on the GPU: 24 MiB of headroom at 128K. You can move the head to the CPU, which costs about 2.4 tok/s, or cap the context near 110K.
+Thanks.
+About 8
