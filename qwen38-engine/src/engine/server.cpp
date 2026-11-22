@@ -190,7 +190,8 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
                     {"tg_tok_s", live_tg}, {"ttft_ms", st.ttft_s * 1000.0}, {"mtp_steps", st.mtp_steps},
                     {"draft_n", st.draft_n}, {"draft_accepted", st.draft_acc},
                     {"accept_pct", st.draft_n > 0 ? 100.0 * st.draft_acc / st.draft_n : 0.0},
-                    {"pld_hits", st.pld_hits}, {"pld_candidates", st.pld_candidates}, {"mtp_fills", st.mtp_fills}, {"cycles", st.cycles}};
+                    {"pld_hits", st.pld_hits}, {"pld_candidates", st.pld_candidates}, {"mtp_fills", st.mtp_fills}, {"cycles", st.cycles},
+                    {"reanchor_us", st.draft_acc > 0 ? 1e6 * st.t_reanchor / st.draft_acc : 0.0}};
     };
 
     svr.Get("/", [](const httplib::Request &, httplib::Response & res) {
@@ -417,7 +418,8 @@ int run_server(Engine & eng, Generator & gen, const EngineConfig & cfg, const Se
                         extra.update(json{{"vram_mib", eng.vram_used_mib()}, {"rss_mib", static_cast<double>(status_kb("VmRSS:")) / 1024.0},
                                           {"draft_n", st.draft_n}, {"draft_accepted", st.draft_acc},
                                           {"accept_pct", st.draft_n > 0 ? 100.0 * st.draft_acc / st.draft_n : 0.0},
-                                          {"pld_hits", st.pld_hits}, {"mtp_fills", st.mtp_fills}, {"cycles", st.cycles}});
+                                          {"pld_hits", st.pld_hits}, {"mtp_fills", st.mtp_fills}, {"cycles", st.cycles},
+                                          {"reanchor_us", st.draft_acc > 0 ? 1e6 * st.t_reanchor / st.draft_acc : 0.0}});
                         ex = &extra;
                     }
                     const std::string out = sf.push(pending.substr(0, n));

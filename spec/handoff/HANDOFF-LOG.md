@@ -444,3 +444,23 @@ Daftar open questions yang belum terjawab (update saat resolved):
 [Post-bootstrap] [UPDATE] PR #51 diperbarui dengan tabel kuantisasi, matriks konteks 512/4K/16K/32K/64K/128K, dan tabel intelligence
   → Lihat spec/specs/assets/qwen38-engine-128k-context.svg, spec/research/CLAIMS.md C-73..C-88
 ```
+
+### Issue #59 — Root cause dan perbaikan divergensi MTP vs non-MTP
+
+```
+[2026-11-22] [Post-bootstrap] [FINDING] Root cause divergensi MTP vs non-MTP (issue #59, dari #57 M3):
+  hvn[k] yang dipakai catch-up MTP siklus berikutnya berasal dari batched forward_ex(T=k+1),
+  bukan dari T=1 sequential decode. FP32 non-asosiativitas pada kernel GPU DeltaNet dan attention
+  menghasilkan hidden state yang berbeda dari jalur T=1; perbedaan kecil ini bisa membalik argmax
+  near-tie → token pertama yang di-generate oleh MTP catch-up berbeda dari non-MTP.
+  → Lihat issue #59, spec/research/CLAIMS.md C-105, branch fix/mtp-hidden-state-reanchor
+```
+
+```
+[2026-11-22] [Post-bootstrap] [UPDATE] Perbaikan re-anchor diimplementasi di generator.cpp:
+  setelah dn_rollback, jika k>0 dan MTP aktif, jalankan satu forward_ex(T=1) extra pada posisi
+  pos_new+k. Ini menimpa hvn[k] dan KV entries posisi tersebut dengan nilai T=1-konsisten.
+  Stat baru: t_reanchor di GenStats, reanchor_us di JSON x_stats.
+  Verifikasi numerik (cosine similarity, md5 ids pada 4 workload) butuh GTX 1070 Ti.
+  → CLAIMS C-105 (status ❌ sampai diukur di mesin target)
+```
