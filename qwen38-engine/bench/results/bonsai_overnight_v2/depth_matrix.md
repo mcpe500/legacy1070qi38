@@ -70,3 +70,23 @@ Per token at 131072 (112 ms measured, 8.92 tok/s), estimated from the kernel mea
   iso3 dequantization (quaternion rotation + codebook) on 50-byte strided blocks; the v2 kernel already moved
   the rotation out of the loop and gained 2.48x, so the next step needs profiling (nsys) of where the
   remaining 3.5 ms per layer goes.
+
+## Follow-up (2026-11-22): real generation at ~95K from a saved state — MTP loses 2x
+
+The depth probe drives single-token forwards only, so the "dengan r3 MTP" column above could not show the draft
+cost. A real check: prefill the 94836-token prompt once (`bench/pld_prompt100k.txt`, 99.1 min at 15.9 tok/s — the
+prefill chunk is 128 at this context, not the 256 of the 112K probe row), save the state, then decode 64 tokens
+twice from the same state (`-p "and" -n 64 --temp 0 --seed 42`, 64 layers GPU, LM head GPU, verify batch 8):
+
+| run | decode | notes |
+|---|---|---|
+| `--gen-mtp-steps 0` | **10.31 tok/s** | `depth/state100k_mtp0.log` |
+| default (2 drafts) | **5.27 tok/s** | `depth/state100k_mtp2.log`, `draft_n_accepted 27 / draft_n 27`, ids identical to the no-MTP run (lossless) |
+
+100 % acceptance and still half the speed: at this context the MTP block sits on the CPU (`MTP block: CPU` in the
+plan), so every one of the 13 draft cycles pays a CPU nextn + LM-head pass per draft token, while the GPU verify
+batch saves only a fraction of the 43 ms GEMV + 57 ms KV-attention per token. The draft benefit that PR #56 measured
+at 64K (14.13 vs 11.58) came with the MTP block still on the GPU; past ~96K the VRAM budget pushes it to the CPU and
+the trade flips negative. **At 100K+, run without MTP** (same recommendation as the 128K row, now measured, not
+extrapolated). To make MTP win at this depth, the draft head must come back to the GPU (smaller head or smaller
+verify batch) or the KV kernel must get faster (the lever below).

@@ -1,0 +1,20 @@
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 1496 MiB (budget 14541)
+ternary: Hadamard basis (block 1024, explicit signs), gdn_v_grouped=1
+gpu-layers auto: 64 layers fit 7373 MiB at ctx 114688 (prefill streaming off)
+LM head: prefill chunk lowered from 512 to 128 tokens so the head fits in VRAM
+verify batch lowered to 8 rows so the LM head stays on the GPU
+LM head: GPU
+MTP block: CPU (does not fit the VRAM budget)
+VRAM plan: arena 7233.4 MiB, projected process total 7371.6 MiB (budget 7373)
+loaded in 38.07 s; CPU arena 996.7 MiB; CPU resident layers 0 (0.00 GiB), streamed 0.00 GiB
+GPU: layers 0..63, KV iso3, arena 7236.8 MiB (weights 5395.4 MiB, KV 1400.0 MiB), device memory in use 7348.2 MiB
+state-load: 94836 tokens, 2048.2 MiB in 2.60 s from /tmp/opencode/state100k.bin
+prompt tokens: 94837
+
+prompt: and
+generated:  a long path of snow again. The man takes the shovel and puts it on the floor and shovels again. the man
+0
+then puts the shovel on the floor and walks away.
+then puts the shovel on the floor and walks away.
+then puts the shovel on the floor and walks away.
+{"prompt_tokens":94837,"generated_tokens":64,"ids":[264,1248,1752,314,11456,1495,13,561,855,4829,279,88821,321,9240,424,383,279,6220,321,542,833,1943,1495,13,279,855,198,15,198,3282,9240,279,88821,383,279,6220,321,21780,3023,13,198,3282,9240,279,88821,383,279,6220,321,21780,3023,13,198,3282,9240,279,88821,383,279,6220,321,21780,3023,13],"text":" a long path of snow again. The man takes the shovel and puts it on the floor and shovels again. the man\n0\nthen puts the shovel on the floor and walks away.\nthen puts the shovel on the floor and walks away.\nthen puts the shovel on the floor and walks away.","load_s":38.07,"prefill_s":0.12,"prefill_tok_s":8.303,"decode_s":6.21,"decode_tok_s":10.3103,"heap_allocs_in_decode_forward":0,"peak_rss_kb":1661708,"rss_anon_kb":903612,"rss_file_kb":737024,"swap_used_kb_before":754648,"swap_used_kb_after":754648,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":7236.8,"gpu_weights_mib":5395.4,"gpu_kv_mib":1400.0,"vram_used_mib":7358.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":5.938,"decode_cpu_layers_s":0.000,"decode_head_s":0.210,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.000,"prefill_main_s":0.120,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"verify_t":8,"verify_t_requested":17,"roll_t":8,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"pld_step_us":0.00,"ttft_s":0.121,"finish":"length","temperature":0.000,"ctx":114688,"reused_tokens":94836,"state_load_s":2.599}
