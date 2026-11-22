@@ -234,8 +234,52 @@ def run(cmd, cwd=None, input=None, timeout=300, env=None, check=True):
     return r
 
 
+# Signals in gh stderr/stdout that indicate a retriable GitHub API error.
+_RATE_LIMIT_PHRASES = (
+    "rate limit",
+    "secondary rate",
+    "you have exceeded",
+    "api rate limit",
+)
+_SERVER_ERROR_PHRASES = (
+    "500 internal server",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway timeout",
+)
+_GH_MAX_RETRIES = 3
+_GH_RETRY_BASE_DELAY = 60   # seconds; doubled on each retry
+
+
+def _gh_retriable(err_text):
+    """Return (is_rate_limit, is_server_error) for a failed gh call's output."""
+    lower = err_text.lower()
+    return (
+        any(p in lower for p in _RATE_LIMIT_PHRASES),
+        any(p in lower for p in _SERVER_ERROR_PHRASES),
+    )
+
+
 def gh(*args, input=None, check=True):
-    return run(["gh", *args], input=input, check=check, timeout=120).stdout
+    """Call `gh` CLI.  Retries up to _GH_MAX_RETRIES times on rate-limit or 5xx errors."""
+    delay = _GH_RETRY_BASE_DELAY
+    for attempt in range(_GH_MAX_RETRIES + 1):
+        r = run(["gh", *args], input=input, check=False, timeout=120)
+        if r.returncode == 0:
+            return r.stdout
+        err_text = (r.stderr or r.stdout or "").strip()
+        is_rate, is_server = _gh_retriable(err_text)
+        retriable = (is_rate or is_server) and attempt < _GH_MAX_RETRIES
+        if retriable:
+            reason = "rate limit" if is_rate else "server error"
+            log(f"gh retry {attempt + 1}/{_GH_MAX_RETRIES} setelah {delay}s ({reason}): {err_text[:120]}")
+            time.sleep(delay)
+            delay *= 2
+            continue
+        if not check:
+            return r.stdout
+        raise RuntimeError(f"gh {args[0] if args else ''} gagal (kode {r.returncode}): {err_text[:300]}")
+    raise RuntimeError(f"gh {args[0] if args else ''} gagal setelah {_GH_MAX_RETRIES} percobaan ulang")
 
 
 def gh_lines(path, params):

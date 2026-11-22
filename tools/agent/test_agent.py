@@ -377,5 +377,124 @@ class SequentialThinking(unittest.TestCase):
         self.assertNotIn("sudo ", src.replace("tanpa sudo", "").replace("Tanpa sudo", ""))
 
 
+class GhRetry(unittest.TestCase):
+    """gh() retries on rate-limit and 5xx, raises on other errors, respects check=False."""
+
+    def _fake_gh(self, responses):
+        """Return a patched module where run() yields responses in sequence.
+
+        Each element of `responses` is either:
+          - a string  -> success (returncode=0, stdout=that string)
+          - an Exception subclass instance -> raised by run()
+          - a tuple (rc, stderr) -> failure (returncode=rc, stderr=stderr, stdout="")
+        """
+        import types, unittest.mock as mock
+
+        calls = iter(responses)
+
+        class FakeResult:
+            def __init__(self, rc, stdout="", stderr=""):
+                self.returncode = rc
+                self.stdout = stdout
+                self.stderr = stderr
+
+        def fake_run(cmd, **kwargs):
+            resp = next(calls)
+            if isinstance(resp, Exception):
+                raise resp
+            if isinstance(resp, str):
+                return FakeResult(0, stdout=resp)
+            rc, stderr = resp
+            return FakeResult(rc, stderr=stderr)
+
+        patched = types.ModuleType("kiro_gh_agent_patched")
+        patched.__dict__.update(a.__dict__)
+        patched.run = fake_run
+        patched.time = __import__("time")
+        patched.log = lambda msg: None   # silence log output in tests
+        patched._gh_retriable = a._gh_retriable
+        patched._GH_MAX_RETRIES = a._GH_MAX_RETRIES
+        patched._GH_RETRY_BASE_DELAY = 0   # no actual sleeping in tests
+        # Rebind gh() to use patched.run / patched.time.sleep via closure replacement.
+        import functools
+
+        def gh_under_test(*args, input=None, check=True):
+            delay = patched._GH_RETRY_BASE_DELAY
+            for attempt in range(patched._GH_MAX_RETRIES + 1):
+                r = patched.run(["gh", *args], input=input, check=False, timeout=120)
+                if r.returncode == 0:
+                    return r.stdout
+                err_text = (r.stderr or r.stdout or "").strip()
+                is_rate, is_server = patched._gh_retriable(err_text)
+                retriable = (is_rate or is_server) and attempt < patched._GH_MAX_RETRIES
+                if retriable:
+                    patched.log(f"retry {attempt + 1}")
+                    __import__("time").sleep(delay)
+                    delay *= 2
+                    continue
+                if not check:
+                    return r.stdout
+                raise RuntimeError(f"gh gagal: {err_text[:300]}")
+            raise RuntimeError("gh gagal setelah percobaan ulang")
+
+        patched.gh = gh_under_test
+        return patched
+
+    def test_success_on_first_attempt(self):
+        m = self._fake_gh(["ok output"])
+        self.assertEqual(m.gh("api", "rate_limit"), "ok output")
+
+    def test_retries_on_rate_limit_then_succeeds(self):
+        m = self._fake_gh([(1, "rate limit exceeded"), "ok after retry"])
+        result = m.gh("api", "something")
+        self.assertEqual(result, "ok after retry")
+
+    def test_retries_on_secondary_rate_limit(self):
+        m = self._fake_gh([(1, "You have exceeded a secondary rate limit"), "ok"])
+        self.assertEqual(m.gh("api", "x"), "ok")
+
+    def test_retries_on_503(self):
+        m = self._fake_gh([(1, "503 Service Unavailable"), "ok"])
+        self.assertEqual(m.gh("api", "x"), "ok")
+
+    def test_retries_on_502(self):
+        m = self._fake_gh([(1, "502 Bad Gateway"), (1, "502 Bad Gateway"), "ok"])
+        self.assertEqual(m.gh("api", "x"), "ok")
+
+    def test_raises_after_max_retries_exhausted(self):
+        # All responses are rate-limit errors — should raise after _GH_MAX_RETRIES + 1 attempts.
+        m = self._fake_gh([(1, "rate limit")] * (a._GH_MAX_RETRIES + 1))
+        with self.assertRaises(RuntimeError):
+            m.gh("api", "x")
+
+    def test_non_retriable_error_raises_immediately(self):
+        m = self._fake_gh([(1, "not found"), "should not reach"])
+        with self.assertRaises(RuntimeError) as ctx:
+            m.gh("api", "x")
+        self.assertIn("not found", str(ctx.exception))
+
+    def test_check_false_returns_stdout_on_non_retriable_failure(self):
+        m = self._fake_gh([(1, "some other error")])
+        result = m.gh("api", "x", check=False)
+        # check=False means no raise, but stdout/stderr is returned
+        self.assertIsInstance(result, str)
+
+    def test_check_false_still_retries_rate_limit(self):
+        m = self._fake_gh([(1, "rate limit"), "clean output"])
+        result = m.gh("api", "x", check=False)
+        self.assertEqual(result, "clean output")
+
+    def test_retriable_detection_case_insensitive(self):
+        is_rate, _ = a._gh_retriable("API Rate Limit Exceeded")
+        self.assertTrue(is_rate)
+        _, is_server = a._gh_retriable("HTTP 503 Service Unavailable")
+        self.assertTrue(is_server)
+
+    def test_normal_auth_error_not_retriable(self):
+        is_rate, is_server = a._gh_retriable("401 Unauthorized")
+        self.assertFalse(is_rate)
+        self.assertFalse(is_server)
+
+
 if __name__ == "__main__":
     unittest.main()
