@@ -7,7 +7,8 @@
   4. every CLI call of a script in this folder (a list literal that contains ".../<script>.py") uses only options that the
      script's argparse knows (from `python3 <script> --help`), and constant values of options with choices are allowed;
      lists assigned to INIT_ARGS are checked against train_bonsai_mtp.py;
-  5. the four scripts compile (py_compile) and their --help exits with code 0.
+  5. the four scripts compile (py_compile) and their --help exits with code 0;
+  6. negative control: a deliberately broken copy (an unknown flag, an undefined name) must be detected.
 Exit code 0 only when everything passes.  Usage: python3 check_colab_notebook.py [NOTEBOOK]"""
 import ast
 import builtins
@@ -65,8 +66,8 @@ def defined_names(tree):
     return names
 
 
-def main():
-    nb_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "train_bonsai_mtp_colab.ipynb")
+def check(nb_path):
+    """Static check of one notebook file. Returns 0 only when everything passes."""
     fails = []
     raw = open(nb_path, encoding="utf-8").read()
     try:
@@ -166,6 +167,33 @@ def main():
         print(f"  - {f}")
     print("check_colab_notebook:", "PASS" if not fails else f"FAIL ({len(fails)} problems)")
     return 0 if not fails else 1
+
+
+def main():
+    nb_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "train_bonsai_mtp_colab.ipynb")
+    rc = check(nb_path)
+    # negative control: a deliberately broken copy (a flag no script knows, an undefined name) must be detected,
+    # so the checker itself cannot pass while blind
+    import tempfile
+    broken = {"nbformat": 4, "nbformat_minor": 5, "metadata": {}, "cells": [
+        {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": [
+            "PY = 'python'\n",
+            "TOOLS = '/t'\n",
+            "run([PY, f\"{TOOLS}/train_bonsai_mtp.py\", \"--selftest\", \"--not-a-real-flag\"], \"x\")\n",
+            "SUM = UNDEFINED_ABC + 1\n"]},
+    ]}
+    fd, tmp = tempfile.mkstemp(prefix="broken_", suffix=".ipynb")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(broken, f)
+    try:
+        neg_rc = check(tmp)
+    finally:
+        os.remove(tmp)
+    if neg_rc == 0:
+        print("[FAIL] negative control: the broken copy passed (the checker is blind)")
+        return 1
+    print("[PASS] negative control: broken copy detected (unknown flag + undefined name)")
+    return rc
 
 
 if __name__ == "__main__":

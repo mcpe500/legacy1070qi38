@@ -17,28 +17,47 @@ INTRO = f"""# Ternary Bonsai 2 27B: train the MTP draft head (blk.64) on Colab
 
 This notebook trains a multi-token-prediction head (`blk.64`, one decoder layer + `nextn` projection, 424.7M parameters) for
 **Ternary Bonsai 2 27B** by live online distillation, so that `qwen38-engine` can draft with it. The output is a small GGUF
-with only the `blk.64` tensors (Q4_K_M about 273 MiB, Q8_0 about 450 MiB), which you inject into your Bonsai GGUF at home.
+with only the `blk.64` tensors (Q4_K_M about 273 MiB, Q8_0 about 450 MiB), which you use at home as a `--mtp-gguf` sidecar
+or inject into your Bonsai GGUF (cell 6 prints both).
 
 **Runtime:** *Runtime → Change runtime type →* a GPU with at least 80 GB (RTX PRO 6000 96 GB). The teacher alone is 50.1 GiB in BF16.
+
+**Speed, measured on a real RTX PRO 6000 run (steps 0-40, warm start from `qwen_blk64`):**
+
+- **Install `causal-conv1d` (cell 2, on by default).** Without it the teacher conv falls back to the PyTorch reference
+  and one step takes **71-76 s**; the first checkpoint (`SAVE_EVERY = 250`) would arrive only after 5+ hours. With the
+  fused kernels the same step is several times faster. The training log prints which kernels are active
+  (`accelerator: causal-conv1d: ACTIVE / FALLBACK`), and `--save-every-min 20` saves every 20 minutes of wall clock
+  regardless of the step count, so a slow run never loses more than 20 minutes.
+- **`ONPOLICY_FRAC = 0.0` by default.** The on-policy path runs a teacher `generate()` per batch, which is the second
+  big cost. 0.0 gives roughly 3-5x the throughput of the old default (0.25); raise it to 0.1-0.25 later for a polish
+  run once `causal-conv1d` is active.
+- **Warm start converges fast:** with `qwen_blk64` the step-1 top-1 agreement went from 75.1 % to 83.5 % and all four
+  unroll steps improved, within 30-40 steps (about one hour). `STEPS = 2000` is a solid first target; the plateau of
+  `top1_agree` in `train_log.jsonl` tells you when to stop, not the step count.
+- **Warm-start options (cell 3):** `qwen_blk64` (Qwen3.8-27B's own head, needs the 16.6 GB GGUF once) or
+  `procreations_r3` (only an 850 MB `model_mtp.safetensors` download: the head ProCreations trained for Bonsai, the
+  same one the engine uses as the `r3_mtp_blk64_q4_k_m.gguf` sidecar — the closest starting point for a Bonsai MTP).
 
 | Cell | What it does | Where data goes |
 |---|---|---|
 | 1 | preflight (GPU, RAM, free disk on `/content` ≥ 70 GB), mount Google Drive, helpers | `DRIVE_OUT/logs/` |
-| 2 | clone / pull `mcpe500/legacy1070qi38`, install Python packages, script self-tests | `/content/legacy1070qi38` |
-| 3 | download the Bonsai GGUF (PTQ1_0 or Q2_0), optional warm start from Qwen3.8-27B's own `blk.64` | `/content/models/` (local SSD), init on Drive |
+| 2 | clone / pull `mcpe500/legacy1070qi38`, install Python packages incl. `causal-conv1d`, script self-tests | `/content/legacy1070qi38` |
+| 3 | download the Bonsai GGUF (PTQ1_0 or Q2_0), warm start from `qwen_blk64` / `procreations_r3` / Drive / random | `/content/models/` (local SSD), init on Drive |
 | 4 | GGUF → Hugging Face BF16 teacher (`convert_gguf_to_hf_bf16.py`, about 35 min) | `/content/models/bonsai-hf-bf16` (local SSD, not Drive) |
 | 5 | streamed multilingual corpus (`prepare_corpus.py`), then training (`train_bonsai_mtp.py`) | corpus and checkpoints on Drive |
 | 6 | export the final `blk.64` (safetensors + GGUF Q4_K_M / Q8_0) and print the commands for your PC | `DRIVE_OUT/final/` |
 
 **After a disconnect:** run cells 1 to 5 again. The Bonsai GGUF is downloaded again and the teacher converted again (local disk
 is wiped). The corpus, the warm-start file and the training state are on Drive, so training resumes from the last saved step
-(`--resume-from auto`).
+(`--resume-from auto`; the corpus is not re-streamed, and gated sources that failed without a token are not retried without one).
 
 **Drive space:** about 5 GB for the training state (`train_state.pt` 1.7 GB + the newest `--keep-last` checkpoints of 1.7 GB each),
-1.7 GB for the warm-start file, 1 to 3 GB for the corpus, under 1 GB for the final export.
+1.7 GB for the warm-start file (or 850 MB for `procreations_r3`), 1 to 3 GB for the corpus, under 1 GB for the final export.
 
 Gated datasets (`bigcode/starcoderdata`, `uonlp/CulturaX`) need a Hugging Face token whose account accepted their terms. Put it in
-Colab *Secrets* as `HF_TOKEN` (or in the field of cell 5). Without it those sources are skipped and the mix shifts.
+Colab *Secrets* as `HF_TOKEN` (or in the field of cell 5). Without it those sources are skipped once and then not retried on
+reruns; the `aya` multilingual source is open (CohereLabs/aya_collection) and needs no token.
 """
 
 CELL1 = r'''#@title 1. Preflight: GPU, RAM, disk, Google Drive, helpers
@@ -139,6 +158,7 @@ CELL2 = r'''#@title 2. Repository and Python packages
 REPO_URL = "https://github.com/mcpe500/legacy1070qi38.git"  #@param {type:"string"}
 BRANCH = "main"  #@param {type:"string"}
 INSTALL_FLA = True  #@param {type:"boolean"}
+INSTALL_CAUSAL_CONV1D = True  #@param {type:"boolean"}
 INSTALL_FLASH_ATTN = False  #@param {type:"boolean"}
 TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu128"  #@param {type:"string"}
 RUN_SELFTESTS = True  #@param {type:"boolean"}
@@ -172,13 +192,27 @@ run([PY, "-c", "import transformers; from transformers import Qwen3_5ForCausalLM
     "check_transformers")
 
 # --- optional kernels. flash-linear-attention: Triton kernels for the 48 Gated DeltaNet layers of the teacher (much faster
-# than the PyTorch fallback). flash-attn: only for the 16 full-attention layers; SDPA is used when it is missing.
+# than the PyTorch fallback). causal-conv1d: the fused conv1d of the same layers; without it the step time is 71-76 s
+# instead of seconds (the conv falls back to the PyTorch reference). flash-attn: only for the 16 full-attention layers;
+# SDPA is used when it is missing.
 if INSTALL_FLA:
     try:
         run([PY, "-m", "pip", "install", "-q", "flash-linear-attention"], "pip_fla")
         run([PY, "-c", "import fla; print('flash-linear-attention', getattr(fla, '__version__', '?'))"], "check_fla")
     except RuntimeError as e:
         print(f"WARNING: flash-linear-attention not available, the teacher uses the slower PyTorch path.\n{e}")
+if INSTALL_CAUSAL_CONV1D:
+    # No torch-matched wheel on PyPI (sdist only): build with --no-build-isolation against the installed torch.
+    # When no nvcc / the sm_120 build fails, this prints one warning and training continues on the PyTorch fallback.
+    try:
+        run([PY, "-m", "pip", "install", "-q", "--no-build-isolation", "causal-conv1d>=1.5"], "pip_causal_conv1d")
+        run([PY, "-c", "import causal_conv1d; assert hasattr(causal_conv1d, 'causal_conv1d_fn'); "
+                       "print('causal-conv1d', getattr(causal_conv1d, '__version__', '?'), 'causal_conv1d_fn ok')"],
+            "check_causal_conv1d")
+    except RuntimeError as e:
+        print(f"WARNING: causal-conv1d could not be built for this runtime (sm_120 needs nvcc); the teacher convs "
+              f"use the PyTorch reference and one step takes 71-76 s instead of seconds. Training still works and "
+              f"--save-every-min protects the progress.\n{e}")
 ATTN_IMPL = "sdpa"
 if INSTALL_FLASH_ATTN:
     try:
@@ -201,14 +235,18 @@ print("setup OK")
 
 CELL3 = r'''#@title 3. Download the Bonsai GGUF (and the optional warm-start head) to local disk
 QUANT = "PTQ1_0"  #@param ["PTQ1_0", "Q2_0"]
-INIT_MODE = "qwen_blk64"  #@param ["random", "qwen_blk64", "drive_safetensors"]
+INIT_MODE = "qwen_blk64"  #@param ["qwen_blk64", "procreations_r3", "random", "drive_safetensors"]
 INIT_SAFETENSORS = ""  #@param {type:"string"}
 
 BONSAI_REPO = "prism-ml/Ternary-Bonsai-2-27B-gguf"
 GGUF_NAME = f"Ternary-Bonsai-2-27B-{QUANT}.gguf"
 GGUF_PATH = f"{MODELS}/{GGUF_NAME}"
 QWEN_REPO, QWEN_NAME = "unsloth/Qwen3.8-27B-GGUF", "Qwen3.8-27B-UD-Q4_K_M.gguf"
+# ProCreations/Ternary-Bonsai-2-27B-MTP: the single-layer head already trained for Bonsai (draft_tokens 2), the same
+# weights the engine uses as the r3_mtp_blk64_q4_k_m.gguf sidecar. Only the 850 MB safetensors is downloaded.
+PROC_REPO, PROC_NAME = "ProCreations/Ternary-Bonsai-2-27B-MTP", "model_mtp.safetensors"
 INIT_DRIVE = f"{DRIVE_OUT}/init/mtp_init_qwen_blk64.safetensors"
+INIT_DRIVE_PROC = f"{DRIVE_OUT}/init/model_mtp.safetensors"
 
 DOWNLOAD = r"""
 import os, sys
@@ -250,6 +288,14 @@ if INIT_MODE == "qwen_blk64":
     else:
         print(f"warm start: {INIT_DRIVE} already on Drive")
     INIT_ARGS = ["--init-mtp-safetensors", INIT_DRIVE]
+elif INIT_MODE == "procreations_r3":
+    # The r3 head as trained by ProCreations (mtp.* HF nextn naming); train_bonsai_mtp.py auto-maps the 15 keys to the
+    # blk.64 names and rejects any shape mismatch. 850 MB instead of the 16.6 GB Qwen GGUF, and the closest start for Bonsai.
+    if not os.path.exists(INIT_DRIVE_PROC):
+        run([PY, "-c", DOWNLOAD, PROC_REPO, PROC_NAME, str(os.path.dirname(INIT_DRIVE_PROC))], "download_procreations")
+    else:
+        print(f"warm start: {INIT_DRIVE_PROC} already on Drive")
+    INIT_ARGS = ["--init-mtp-safetensors", INIT_DRIVE_PROC]
 elif INIT_MODE == "drive_safetensors":
     if not os.path.exists(INIT_SAFETENSORS):
         raise RuntimeError(f"INIT_SAFETENSORS = {INIT_SAFETENSORS!r} does not exist")
@@ -288,22 +334,30 @@ CELL5 = r'''#@title 5. Corpus (streamed, on Drive) and training (checkpoints on 
 HF_TOKEN = ""  #@param {type:"string"}
 CORPUS_TOTAL = 200000  #@param {type:"integer"}
 CORPUS_DIR = ""  #@param {type:"string"}
-STEPS = 12000  #@param {type:"integer"}
+SKIP_CORPUS_IF_READY = True  #@param {type:"boolean"}
+STEPS = 2000  #@param {type:"integer"}
 SEQ_LEN = 2048  #@param {type:"integer"}
 BATCH = 2  #@param {type:"integer"}
 GRAD_ACCUM = 8  #@param {type:"integer"}
 LR = 2e-4  #@param {type:"number"}
-WARMUP = 300  #@param {type:"integer"}
+WARMUP = 100  #@param {type:"integer"}
 UNROLL = 4  #@param {type:"integer"}    # unrolled self-rollout steps of the `mtp` drafter, 1..8
 DRAFTER = "mtp"  #@param {type:"string"}    # mtp (single-layer nextn head, --unroll) | df3 (block schedule)
 DF3_BLOCK = 16  #@param {type:"integer"}    # draft block of the `df3` schedule = the 17-row verify batch of the engine
 DF3_LAYERS = 2  #@param {type:"integer"}    # decoder layers of the target DFlash head; the engine loader knows one
 KL_CHUNK = 256  #@param {type:"integer"}
-ONPOLICY_FRAC = 0.25  #@param {type:"number"}
-SAVE_EVERY = 250  #@param {type:"integer"}
+ONPOLICY_FRAC = 0.0  #@param {type:"number"}
+SAVE_EVERY = 25  #@param {type:"integer"}
+SAVE_EVERY_MIN = 20  #@param {type:"number"}
 KEEP_LAST = 2  #@param {type:"integer"}
 TIME_LIMIT_MIN = 0  #@param {type:"number"}
 RESUME_FROM = "auto"  #@param ["auto", "none"]
+
+# ONPOLICY_FRAC = 0.0: the teacher generate() per batch is the second big cost after a missing causal-conv1d; 0.0 gives
+# about 3-5x the throughput of 0.25. Raise it to 0.1-0.25 for a short polish run once cell 2 reported causal-conv1d ACTIVE.
+# TIME_LIMIT_MIN = 0 keeps the cell running until Colab itself stops it; SAVE_EVERY_MIN = 20 writes an atomic checkpoint
+# every 20 wall-clock minutes, and SIGINT/SIGTERM (cell interrupt) also save before stopping, so nothing is lost.
+# SAVE_EVERY = 25 keeps the step-granular checkpoints cheap; KEEP_LAST = 2 prunes the old ones on Drive.
 
 token = HF_TOKEN
 if not token:
@@ -314,21 +368,30 @@ if not token:
         token = ""
 env = {"HF_TOKEN": token} if token else {}
 if not token:
-    print("WARNING: no HF_TOKEN: the gated sources (bigcode/starcoderdata, uonlp/CulturaX) will be skipped")
+    print("WARNING: no HF_TOKEN: the gated sources (bigcode/starcoderdata, uonlp/CulturaX) are skipped once and not "
+          "retried on reruns; the aya multilingual source is open and needs no token")
 CORPUS = CORPUS_DIR or f"{DRIVE_OUT}/corpus"
 RUN_DIR = f"{DRIVE_OUT}/run"
 
-# --- corpus: resumable (manifest.json); finished sources are not streamed again
+# --- corpus: resumable (manifest.json); finished sources are not streamed again, and gated sources that failed
+# without a token are not re-attempted without one (SKIP_CORPUS_IF_READY short-circuits the whole step)
 man_p = os.path.join(CORPUS, "manifest.json")
-have = 0
+have, corpus_ok, has_shards = 0, False, False
 if os.path.exists(man_p):
     with open(man_p) as f:
-        have = json.load(f).get("total", 0)
-if have >= 0.9 * CORPUS_TOTAL and any(n.startswith("shard-") for n in os.listdir(CORPUS)):
+        man_old = json.load(f)
+    have = man_old.get("total", 0)
+    has_shards = os.path.isdir(CORPUS) and any(n.startswith("shard-") for n in os.listdir(CORPUS))
+    corpus_ok = has_shards and have >= 0.9 * CORPUS_TOTAL
+if SKIP_CORPUS_IF_READY and has_shards and not env:
+    # no token now: rerunning would re-skip the gated sources anyway; train on what Drive already holds
+    print(f"SKIP_CORPUS_IF_READY: training on the {have} samples already in {CORPUS} (no HF_TOKEN: nothing new to stream)")
+elif corpus_ok:
     print(f"corpus: {have} samples already in {CORPUS}, skipping")
 else:
-    run([PY, f"{TOOLS}/prepare_corpus.py", "--out", CORPUS, "--total", str(CORPUS_TOTAL), "--on-error", "skip",
-         "--min-fraction", "0.5"], "prepare_corpus", env=dict(env, HF_DATASETS_DISABLE_PROGRESS_BARS="1"))
+    cmd = [PY, f"{TOOLS}/prepare_corpus.py", "--out", CORPUS, "--total", str(CORPUS_TOTAL), "--on-error", "skip",
+           "--min-fraction", "0.5"] + (["--retry-errors"] if env else [])
+    run(cmd, "prepare_corpus", env=dict(env, HF_DATASETS_DISABLE_PROGRESS_BARS="1"))
 with open(man_p) as f:
     man = json.load(f)
 print(f"corpus: {man['total']} samples; per source: {man['counts']}")
@@ -337,19 +400,22 @@ for name, err in man.get("errors", {}).items():
         print(f"  missing {name}: {err}")
 
 # --- training. BF16 autocast + TF32 matmuls (Tensor Cores), fused AdamW, gradient checkpointing per unroll step.
-# train_state.pt and the newest KEEP_LAST blk.64 checkpoints are written to Drive every SAVE_EVERY steps; running this cell
-# again (also after a disconnect, once cells 1-4 have run) continues from the last saved step.
+# train_state.pt and the newest KEEP_LAST blk.64 checkpoints are written to Drive every SAVE_EVERY steps or every
+# SAVE_EVERY_MIN minutes (whichever comes first); running this cell again (also after a disconnect, once cells 1-4
+# have run) continues from the last saved step.
 train_cmd = [PY, f"{TOOLS}/train_bonsai_mtp.py", "--teacher", TEACHER_DIR, "--corpus", CORPUS, "--out", RUN_DIR,
              "--steps", str(STEPS), "--seq-len", str(SEQ_LEN), "--batch", str(BATCH), "--grad-accum", str(GRAD_ACCUM),
              "--lr", str(LR), "--warmup", str(WARMUP), "--unroll", str(UNROLL), "--kl-chunk", str(KL_CHUNK),
              "--drafter", str(DRAFTER), "--df3-block", str(DF3_BLOCK), "--df3-layers", str(DF3_LAYERS),
-             "--onpolicy-frac", str(ONPOLICY_FRAC), "--save-every", str(SAVE_EVERY), "--keep-last", str(KEEP_LAST),
+             "--onpolicy-frac", str(ONPOLICY_FRAC), "--save-every", str(SAVE_EVERY),
+             "--save-every-min", str(SAVE_EVERY_MIN), "--keep-last", str(KEEP_LAST),
              "--time-limit-min", str(TIME_LIMIT_MIN), "--resume-from", RESUME_FROM, "--attn-impl", ATTN_IMPL,
              "--device", "cuda"] + INIT_ARGS
 run(train_cmd, "train", env=dict(env, PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True", TOKENIZERS_PARALLELISM="false"))
 with open(os.path.join(RUN_DIR, "train_log.jsonl")) as f:
     last = json.loads(f.readlines()[-1])
-print(f"last logged step {last['step']}: top-1 agreement per unroll step {[round(x, 3) for x in last['top1_agree']]}")
+print(f"last logged step {last['step']}: top-1 agreement per unroll step {[round(x, 3) for x in last['top1_agree']]} "
+      f"({last.get('sec_per_step', '?')} s/step, eta {last.get('eta_h', '?')} h)")
 '''
 
 CELL6 = r'''#@title 6. Export the final blk.64 (safetensors + GGUF) to Drive and print the commands for your PC
@@ -389,31 +455,54 @@ print("\n".join(lines))
 qt0 = [q.strip() for q in EXPORT_QUANTS.split(",") if q.strip()][0]
 print(f"""
 Files on Drive: {FINAL}
-On your PC (repo checkout, no GPU needed for this step; numpy is enough):
+(download the sidecar GGUF(s) from there to your PC first, e.g. into ~/models/27b-bonsai/)
+On your PC (repo checkout of this branch, engine built with ./scripts/setup.sh):
+
+OPTION 1 (recommended, nothing duplicated): run the sidecar directly with --mtp-gguf. The 5.4 GB base GGUF stays untouched:
+
+  taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b-bonsai/Ternary-Bonsai-2-27B-{QUANT}.gguf \\
+      --mtp-gguf ~/models/27b-bonsai/mtp_blk64_{qt0}.gguf \\
+      --gpu-layers auto --ctx 4096 --mtp-adaptive 1 --gen-mtp-steps 3 -f bench/prompt512.txt -n 256
+
+Race it against the r3 head (the ProCreations sidecar your warm start began from), same flags with a different sidecar:
+
+  taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b-bonsai/Ternary-Bonsai-2-27B-{QUANT}.gguf \\
+      --mtp-gguf ~/models/27b-bonsai/r3_mtp_blk64_{qt0}.gguf \\
+      --gpu-layers auto --ctx 4096 --mtp-adaptive 1 --gen-mtp-steps 3 -f bench/prompt512.txt -n 256
+
+Compare decode_tok_s and draft_n_accepted / draft_n between the two (greedy output tokens must be identical to
+--gen-mtp-steps 0; the drafts only change the speed).
+
+OPTION 2 (optional, permanent): copy the head into a duplicated GGUF:
 
   python3 qwen38-engine/tools/bonsai_mtp_train/inject_mtp_gguf.py \\
       --base ~/models/27b-bonsai/Ternary-Bonsai-2-27B-{QUANT}.gguf \\
       --from-gguf mtp_blk64_{qt0}.gguf \\
       --out ~/models/27b-bonsai/Ternary-Bonsai-2-27B-{QUANT}-mtp.gguf
 
-Then run the engine with drafting (the MTP block is placed on the GPU when it fits):
-
   taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b-bonsai/Ternary-Bonsai-2-27B-{QUANT}-mtp.gguf \\
       --gpu-layers auto --ctx 4096 --mtp-adaptive 0 --mtp-steps 2 -f bench/prompt512.txt -n 256
-
-Compare decode_tok_s and draft_n_accepted / draft_n with --mtp-steps 0 (the output tokens must be identical).
 """)
 '''
 
 TROUBLE = """## Troubleshooting
 
 - **A cell failed:** the error shows the exit code and the last 40 lines; the full log is in `DRIVE_OUT/logs/<step>.log`.
+- **Steps take 71-76 s:** `causal-conv1d` did not install (see the WARNING at the end of cell 2). The training log says
+  `accelerator: causal-conv1d: FALLBACK`. Retrying the pip line sometimes helps after a Colab restart; otherwise the run
+  is just slower, `--save-every-min 20` protects every 20 minutes, and `--steps 2000` is sized so the warm start still
+  finishes in one session.
 - **CUDA out of memory in cell 5:** lower `KL_CHUNK` (256 → 128), then `SEQ_LEN` (2048 → 1536) or `BATCH`. The resumed run keeps
   its step count.
-- **Corpus has fewer samples than requested:** a gated source was skipped. Set `HF_TOKEN` (account must have accepted the dataset
-  terms), delete `DRIVE_OUT/corpus/manifest.json` entries you want to redo (or the folder), and run cell 5 again.
+- **Corpus has fewer samples than requested:** a gated source was skipped (cell 5 prints `missing <source>: ...`).
+  Set `HF_TOKEN` (account must have accepted the dataset terms) and run cell 5 again: with a token the gated sources
+  are retried. Without a token they are skipped once and not retried again (`--retry-errors` would force it).
+  `SKIP_CORPUS_IF_READY` trains directly on what Drive already holds when no token is set.
+- **Warm start failed with `no tensor for blk....` or a shape message:** the init file is not a single-layer blk.64 head
+  (the loader auto-maps the ProCreations `mtp.*` names and rejects shape mismatches). Pick `INIT_MODE = qwen_blk64` or
+  `procreations_r3` instead of a hand-made safetensors.
 - **Session limit:** set `TIME_LIMIT_MIN` a bit below the remaining session time: training saves and stops cleanly, the next session
-  continues from there.
+  continues from there. An interrupted cell (stop button) also saves once before exiting.
 - **Start over:** delete `DRIVE_OUT/run` (keeps the corpus and the warm-start file), or run with `RESUME_FROM = none`.
 """
 

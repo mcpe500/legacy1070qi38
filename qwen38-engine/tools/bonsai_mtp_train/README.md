@@ -15,11 +15,16 @@ the cells in order. Each cell has a parameter form.
 | Cell | Step | Output |
 |---|---|---|
 | 1 | Preflight: GPU ≥ 80 GiB, RAM, ≥ 70 GB free on `/content`. Mounts Google Drive and creates `DRIVE_OUT` (default `MyDrive/bonsai_mtp`). | `DRIVE_OUT/logs/` |
-| 2 | Clones or pulls this repo, installs `transformers>=5`, `datasets`, `safetensors`, `huggingface_hub`, `gguf` and optionally `flash-linear-attention` / `flash-attn` (SDPA is the fallback), then runs the four `--selftest`s. | |
-| 3 | Downloads `Ternary-Bonsai-2-27B-PTQ1_0.gguf` (or `Q2_0`) from `prism-ml/Ternary-Bonsai-2-27B-gguf` to `/content/models/`, skipping it when the size already matches. Optional warm start: Qwen3.8-27B's own `blk.64` from `unsloth/Qwen3.8-27B-GGUF`, dequantized once and kept on Drive. | `/content/models/`, `DRIVE_OUT/init/` |
+| 2 | Clones or pulls this repo, installs `transformers>=5`, `datasets`, `safetensors`, `huggingface_hub`, `gguf` and optionally `flash-linear-attention`, `causal-conv1d` (both fuse the teacher's Gated DeltaNet kernels; `causal-conv1d` is built from source with `--no-build-isolation`, and a clean WARNING falls back to PyTorch), then runs the four `--selftest`s. | |
+| 3 | Downloads `Ternary-Bonsai-2-27B-PTQ1_0.gguf` (or `Q2_0`) from `prism-ml/Ternary-Bonsai-2-27B-gguf` to `/content/models/`, skipping it when the size already matches. Warm start options: `qwen_blk64` (Qwen3.8-27B's own `blk.64` from `unsloth/Qwen3.8-27B-GGUF`, dequantized once and kept on Drive), `procreations_r3` (only an 850 MB `model_mtp.safetensors` from `ProCreations/Ternary-Bonsai-2-27B-MTP` — the head the engine uses as the `r3_mtp_blk64_q4_k_m.gguf` sidecar; the loader auto-maps its `mtp.*` names and checks every shape), `drive_safetensors`, or `random`. | `/content/models/`, `DRIVE_OUT/init/` |
 | 4 | `convert_gguf_to_hf_bf16.py --check`, then the conversion to `/content/models/bonsai-hf-bf16` (50.1 GiB, local SSD only). | |
-| 5 | `prepare_corpus.py` (streamed; the corpus is on Drive and resumable), then `train_bonsai_mtp.py` with BF16 autocast + TF32 and checkpoints every `SAVE_EVERY` steps on Drive. | `DRIVE_OUT/corpus/`, `DRIVE_OUT/run/` |
-| 6 | Takes the newest checkpoint (`--latest`) and writes `mtp_blk64.safetensors` plus `mtp_blk64_q4_k_m.gguf` / `mtp_blk64_q8_0.gguf` (blk.64 only, about 273 / 450 MiB) with SHA-256 checksums. It also prints the commands for your PC. | `DRIVE_OUT/final/` |
+| 5 | `prepare_corpus.py` (streamed; the corpus is on Drive and resumable; gated sources that failed without `HF_TOKEN` are not retried without one), then `train_bonsai_mtp.py` with BF16 autocast + TF32 and atomic checkpoints on Drive every `SAVE_EVERY` steps **or** every `SAVE_EVERY_MIN` minutes (default 20), whichever comes first. Defaults sized for a real RTX PRO 6000 warm-start session: `STEPS = 2000`, `ONPOLICY_FRAC = 0.0` (the teacher `generate()` per batch costs 3-5x; raise it to 0.1-0.25 for a polish run once `causal-conv1d` is active), `SIGINT`/`SIGTERM` save before stopping. | `DRIVE_OUT/corpus/`, `DRIVE_OUT/run/` |
+| 6 | Takes the newest checkpoint (`--latest`) and writes `mtp_blk64.safetensors` plus `mtp_blk64_q4_k_m.gguf` / `mtp_blk64_q8_0.gguf` (blk.64 only, about 273 / 450 MiB) with SHA-256 checksums. It prints both ways to use the result at home: the `--mtp-gguf` sidecar (nothing duplicated, plus the race command against `r3_mtp_blk64_q4_k_m.gguf`) and the optional permanent `inject_mtp_gguf.py` copy. | `DRIVE_OUT/final/` |
+
+Speed reality check from a real RTX PRO 6000 run (steps 0-40, warm start from `qwen_blk64`): **without `causal-conv1d` one step
+takes 71-76 s** (the teacher conv runs the PyTorch reference), and the training log prints which kernels are active
+(`accelerator: causal-conv1d: ACTIVE / FALLBACK`). The warm start converges fast regardless: step-1 top-1 agreement rose from
+75.1 % to 83.5 % (all four unroll steps improved) within 30-40 steps.
 
 Every step runs as a subprocess. Its output is streamed into the cell and written to `DRIVE_OUT/logs/<step>.log`. A non-zero exit code
 stops the cell with the last 40 lines of the log.
@@ -46,11 +51,11 @@ python3 make_colab_notebook.py && python3 check_colab_notebook.py
 |---|---|---|
 | `convert_gguf_to_hf_bf16.py` | turns the Bonsai GGUF (PTQ1_0 or Q2_0, Hadamard basis) into the BF16 Hugging Face teacher (`Qwen3_5ForCausalLM`) | CPU, 6 GB RAM, about 35 min |
 | `compare_engine_hf.py` | checks a converted checkpoint against the engine's per-layer tap dumps | CPU + engine |
-| `prepare_corpus.py` | streams and mixes about 200,000 samples from Hugging Face into ChatML JSONL shards | any machine with network |
-| `train_bonsai_mtp.py` | live online distillation: frozen BF16 teacher, one trainable decoder layer + nextn projection, 4-step unrolled self-rollout, full-vocabulary KL + cosine feature alignment | 1x RTX PRO 6000 96 GB |
-| `inject_mtp_gguf.py` | quantizes the trained head to Q4_K_M or Q8_0 and writes a new GGUF with `blk.64` and `block_count = 65`, or a small blk.64-only GGUF (`--mtp-only-out`) to inject later with `--from-gguf` | CPU |
+| `prepare_corpus.py` | streams and mixes about 200,000 samples from Hugging Face into ChatML JSONL shards; resumable, and gated sources that failed without a token are skipped on reruns (`--retry-errors` forces a retry) | any machine with network |
+| `train_bonsai_mtp.py` | live online distillation: frozen BF16 teacher, one trainable decoder layer + nextn projection, 4-step unrolled self-rollout, full-vocabulary KL + cosine feature alignment; atomic checkpoints on `--save-every` steps or `--save-every-min` minutes, ETA/throughput in the log, warm start also from the ProCreations `mtp.*` schema | 1x RTX PRO 6000 96 GB |
+| `inject_mtp_gguf.py` | quantizes the trained head to Q4_K_M or Q8_0 and writes a new GGUF with `blk.64` and `block_count = 65`, or a small blk.64-only GGUF (`--mtp-only-out`) to use as a `--mtp-gguf` sidecar or inject later with `--from-gguf` | CPU |
 | `train_bonsai_mtp_colab.ipynb` | the whole pipeline on Google Colab (see the quick start above) | Colab, RTX PRO 6000 |
-| `make_colab_notebook.py`, `check_colab_notebook.py` | generate the notebook and check it against the scripts | CPU |
+| `make_colab_notebook.py`, `check_colab_notebook.py` | generate the notebook and check it against the scripts (including a negative control: a broken copy must be detected) | CPU |
 
 ## 0. Teacher checkpoint (GGUF -> Hugging Face BF16)
 
@@ -97,7 +102,7 @@ Default mix (edit with `--mix mix.json`, a list in the format of `DEFAULT_MIX`):
 | 15 % | `open-thoughts/OpenThoughts-114k` | reasoning with chain of thought |
 | 20 % | `HuggingFaceH4/ultrachat_200k` (`train_sft`) | English dialogue |
 | 10 % | `uonlp/CulturaX` `id` (6 %), `wikimedia/wikipedia` `20231101.id` (4 %) | Indonesian |
-| 10 % | `uonlp/CulturaX` zh / ja / de / es (6 %), `CohereForAI/aya_collection` `aya_dataset` (4 %) | Chinese, Japanese, German, Spanish |
+| 10 % | `uonlp/CulturaX` zh / ja / de / es (6 %), `CohereLabs/aya_collection` config `aya_dataset` (4 %; its `language` column holds ISO 639-3 codes — jpn / zho / spa / deu — not display names) | Chinese, Japanese, German, Spanish |
 
 Every sample is ChatML with the thinking block closed when the source has none, so the token layout matches inference.
 Plain documents become an assistant answer to a short "write a text / source file" request. Exact duplicates are
@@ -152,8 +157,10 @@ Checkpoints and resume:
 - `runs/mtp1/mtp_step{N}.safetensors`: FP32 with GGUF tensor names. Only the newest `--keep-last` (default 2) are kept.
 - `train_state.pt`: student + optimizer + step, written atomically. `mtp_final.safetensors` is written when `--steps` is reached.
 - `--resume-from auto` (the default) continues from `--out/train_state.pt` when it exists. Pass `--resume-from PATH` for a state file (or a directory holding one) elsewhere, or `--resume-from none` to start fresh.
-- `--init-mtp-safetensors FILE` warm-starts from any blk.64 safetensors: an earlier `mtp_step*.safetensors`, or `--export-init gguf:Qwen3.8-27B-UD-Q4_K_M.gguf --out FILE`. The warm start is ignored when a state is resumed.
+- `--init-mtp-safetensors FILE` warm-starts from any blk.64 safetensors: an earlier `mtp_step*.safetensors`, the ProCreations `model_mtp.safetensors` (its `mtp.*` / HF nextn keys are auto-mapped to the blk.64 names and every shape is checked), or `--export-init gguf:Qwen3.8-27B-UD-Q4_K_M.gguf --out FILE`. The warm start is ignored when a state is resumed.
+- `--save-every-min N` (default 20, 0 = off) additionally saves an atomic checkpoint whenever N wall-clock minutes passed since the last save — on a runtime without `causal-conv1d` (71-76 s per step) the step-based `--save-every` alone would let a failure eat hours. `SIGINT`/`SIGTERM` (or the Colab stop button) finish the current step, save once and exit cleanly.
 - `--time-limit-min N` saves and stops after N minutes. `--latest DIR` prints the newest checkpoint of a run.
+- Every JSONL log line carries `sec_per_step`, `tok_per_sec`, `elapsed_min` and `eta_h`; the run start prints which fused kernels are active (`accelerator: flash-linear-attention: ...`, `accelerator: causal-conv1d: ...`) or that the PyTorch fallback is in effect.
 - `--attn-impl sdpa|flash_attention_2` selects the teacher's attention kernel.
 
 ## 3. Into the GGUF
@@ -173,8 +180,22 @@ python3 inject_mtp_gguf.py --selftest                  # Q8_0 / Q4_K round trips
 
 ## 4. In the engine
 
+Two ways to run the trained head. The sidecar is the recommended one (nothing is duplicated, the 5.4 GB base GGUF stays untouched):
+
 ```bash
-taskset -c 0-3 ./build/qwen38-engine -m Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf --gpu-layers auto --ctx 4096 \
+# sidecar (CLI and server): the blk.64-only GGUF of cell 6, mmapped next to the base file
+taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf \
+    --mtp-gguf ~/models/27b-bonsai/mtp_blk64_q4_k_m.gguf --gpu-layers auto --ctx 4096 \
+    --mtp-adaptive 1 --gen-mtp-steps 3 -f bench/prompt512.txt -n 256
+
+# race it against the r3 head (the ProCreations sidecar), then keep the better one:
+#   --mtp-gguf ~/models/27b-bonsai/r3_mtp_blk64_q4_k_m.gguf
+
+# permanent injection instead (duplicates the base into a -mtp.gguf):
+python3 tools/bonsai_mtp_train/inject_mtp_gguf.py --base ~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf \
+    --from-checkpoint runs/mtp1/mtp_step2000.safetensors --quant q4_k_m \
+    --out ~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf        # --in-place replaces the base after a verified write
+taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0-mtp.gguf --gpu-layers auto --ctx 4096 \
     --mtp-adaptive 0 --mtp-steps 2 -p "..." -n 256
 ```
 
