@@ -36,3 +36,37 @@ GPU otherwise free (`scripts/gpu_isolate.sh`), greedy, seed 42. Raw output:
 - Real-prompt decode at 512 tokens, no MTP: 17.4 tok/s; with r3 MTP: 19-22 tok/s depending on the workload
   (`m3_cascade_speed.txt`).
 - Verification batch T=17 attention: 429.5 µs per call at 32K, 865.8 µs at 64K (`verify_t17_test`).
+
+## Follow-up (2026-11-22): the MTP boundary and the new `--verify-t` knob
+
+The engine drops MTP entirely at 131072 (its rollback rows plus the partial buffer push the LM head off the
+GPU, and a CPU head costs about 0.2 s per token), so the default deep-context answer is the no-MTP column.
+
+`--verify-t N` (new CLI flag) sizes the buffers manually. At ctx 131072:
+
+| setting | LM head | MTP | decode |
+|---|---|---|---|
+| default (verify_t 17) | CPU | disabled by the auto policy | 3.33 tok/s (CPU head) / 8.91 without MTP |
+| `--verify-t 5` | **GPU** | **enabled** (4 drafts) | **8.92 tok/s** |
+
+So 131072 is not a hard limit for MTP: with a 4-draft batch the head stays on the GPU and the buffers fit
+(the prefill chunk is lowered to 64 tokens, which does not change the weight traffic per token). The engine
+now also lowers the verification batch automatically in the head-fit decision instead of only in the
+zero-layer plan, so the head stays on the GPU without the flag. Where the default (verify_t 17) boundary sits
+measured: 114688 works, 131072 does not.
+
+Real-generation throughput with MTP enabled at 131072 still needs a 131K-token prompt (about 30 minutes of
+prefill per run) and was not measured; whether the draft acceptance rate holds at that depth is the open
+question.
+
+## Where deep-decode time goes, and the one lever left
+
+Per token at 131072 (112 ms measured, 8.92 tok/s), estimated from the kernel measurements:
+- GEMV weight reads: 5.66 GB at the PTQ1_0 T=1 effective 131 GB/s (59% of the DRAM ceiling) ≈ 43 ms. The M1
+  analysis says the decode kernel is issue-bound there, so little is left.
+- iso3 KV attention decode: 16 layers × 3.546 ms ≈ 57 ms. The KV traffic is 105 MB per layer per token, so
+  the kernel runs at about 30 GB/s of the 222 GB/s DRAM ceiling — 13%. **This is the single biggest lever at
+  128K**: reaching even 60 GB/s would cut about 28 ms per token, or 8.92 → about 11.8 tok/s. The cost is the
+  iso3 dequantization (quaternion rotation + codebook) on 50-byte strided blocks; the v2 kernel already moved
+  the rotation out of the loop and gained 2.48x, so the next step needs profiling (nsys) of where the
+  remaining 3.5 ms per layer goes.

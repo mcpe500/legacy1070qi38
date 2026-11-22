@@ -316,16 +316,6 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
         }
     }
     const int g0 = cfg_.gpu_layers;
-    // The verification batch was picked with a zero-layer plan, so it can still be too large for the plan that the
-    // fixed layer count leaves (--gpu-layers 64 at 128K, say). Step it down to the largest value that fits here
-    // before anything is built, so a tight budget degrades the buffer instead of refusing the run.
-    for (int cand : {verify_t, kRollTMid, kRollT}) {
-        if (cand < 1 || cand > verify_t) continue;
-        if (GpuLayers::projected_mib(ix, gpu_config(g0, stream_on, false, false, cand)) <= cfg_.vram_budget_mib) { verify_t = cand; break; }
-        verify_t = cand == kRollT ? kRollT : (cand == kRollTMid ? kRollT : kRollTMid);
-    }
-    verify_t_ = verify_t;
-    roll_t_ = roll ? (verify_t > kRollT ? verify_t : kRollT) : 0;
     // LM head on the GPU: only with every layer there (the stream is already in VRAM), when it fits after the layers.
     // Auto (-1) puts it there if the plan stays under the budget; 1 requires it; 0 keeps it on the CPU.
     if (g0 == kLayers && cfg_.gpu_head != 0) {
@@ -345,6 +335,27 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
             return fit;
         };
         bool fit = head_fits();
+        // Before giving up on the head: the verification batch may be the reason. At 128K the rollback rows plus the
+        // partial buffer (about 90 MiB between verify_t 17 and 5) are what push the head off the GPU, and a CPU head
+        // costs about 0.2 s per token. A 4-draft batch (kRollT) is the standard MTP path and there is no 16-draft
+        // drafter trained yet, so shrinking the buffer to keep the head on the GPU is the right trade.
+        if (!fit && roll) {
+            for (int cand : {verify_t, kRollTMid, kRollT}) {
+                if (cand < 1 || cand >= verify_t) continue;
+                verify_t = cand;
+                verify_t_ = cand;
+                roll_t_ = cand > kRollT ? cand : kRollT;
+                if (head_fits()) { fit = true; break; }
+            }
+            if (fit)
+                std::fprintf(stderr, "verify batch lowered to %d rows so the LM head stays on the GPU\n", verify_t);
+            else {   // restore the largest size, the head goes to the CPU and the MTP block decides below
+                verify_t = kRollTMid;
+                verify_t_ = kRollTMid;
+                roll_t_ = kRollTMid;
+                for (int cand : {kRollT}) if (GpuLayers::projected_mib(ix, gcfg(g0, false, true, false)) <= cfg_.vram_budget_mib) { verify_t = verify_t_ = cand; roll_t_ = cand; break; }
+            }
+        }
         // The MTP rollback buffers (about 150 MiB) can push the head off the GPU at 128K. A CPU head costs about 0.2 s per
         // token (1 GiB from DDR4) and an MTP draft cycle needs it too: measured 2.49 tok/s with MTP 2 vs 4.72 without at
         // 128K. In auto mode (--gpu-mtp auto) the draft head is dropped instead (and with it PLD, which uses the same verify path).
@@ -457,7 +468,18 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     arena_->freeze();
 
     if (g0 > 0) {
-        const GpuConfig gc = gcfg(g0, stream_on, head_on_, mtp_gpu_);
+    // The verification batch was picked while the layer count, the LM head and the MTP block were still
+    // undecided, so it can be too large for the plan that is actually built (at 128K the rollback rows plus the
+    // partial buffer push the LM head off the GPU, which costs about 0.2 s per token). Step it down here, with
+    // every flag final: a smaller buffer keeps the head on the GPU, and a run without MTP always keeps kRollT.
+    for (int cand : {verify_t, kRollTMid, kRollT}) {
+        if (cand < 1 || cand > verify_t) continue;
+        if (GpuLayers::projected_mib(ix, gpu_config(g0, stream_on, head_on_, mtp_gpu_, cand)) <= cfg_.vram_budget_mib) { verify_t = cand; break; }
+        verify_t = cand == kRollT ? kRollT : (cand == kRollTMid ? kRollT : kRollTMid);
+    }
+    verify_t_ = verify_t;
+    roll_t_ = roll ? (verify_t > kRollT ? verify_t : kRollT) : 0;
+    const GpuConfig gc = gcfg(g0, stream_on, head_on_, mtp_gpu_);
         gpu_ = std::make_unique<GpuLayers>(ix, gc, eps_);
         for (int il = 0; il < g0; ++il) hint_layer(il, false);  // weights are in VRAM now: drop their file pages
         const double used = vram_used_mib();

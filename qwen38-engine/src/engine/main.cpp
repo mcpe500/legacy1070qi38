@@ -163,6 +163,8 @@ int main(int argc, char ** argv) {
         else if (a == "--mtp-window") gp.mtp_window = std::atoi(next().c_str());
         else if (a == "--mtp-gpu-prefill") cfg.mtp_gpu_prefill = std::atoi(next().c_str()) != 0;
         else if (a == "--pld") gp.pld_enabled = std::atoi(next().c_str()) != 0;
+        else if (a == "--verify-t") { cfg.verify_t = std::atoi(next().c_str());
+                                    if (cfg.verify_t < 1 || cfg.verify_t > 17) { std::fprintf(stderr, "--verify-t must be 1..17\n"); return 2; } }
         else if (a == "--pld-max") { gp.pld_max = std::atoi(next().c_str());
                                     if (gp.pld_max < 1 || gp.pld_max > 16) { std::fprintf(stderr, "--pld-max must be 1..16\n"); return 2; } }
         else if (a == "--pld-min-len") gp.pld_min_len = std::atoi(next().c_str());
