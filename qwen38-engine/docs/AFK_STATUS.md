@@ -671,3 +671,30 @@ Readings to keep:
 - Recommended setting: r3 Q4_K_M + adaptive drafting.
 - Cascaded PLD + MTP is slower than MTP alone on all 12 suite/head pairs at 512.
 - At 128K the auto mode drops MTP, because its rollback buffers would push the LM head off the GPU.
+
+---
+
+# Marathon v2 (exp/bonsai-overnight-v2-prefill-t17-drafter, issue #57)
+
+Updated: 2026-11-22. Six milestones on the locked GTX 1070 Ti, each committed and pushed at its end. Full log:
+`bench/results/bonsai_overnight_v2/EXPERIMENT-LOG.md`; per-milestone documents `M1-FAST-PREFILL.md`,
+`M2-VERIFY-T17.md`, `M3-SUFFIX-PLD-CASCADE.md`, `M4-Q2K-AND-ARCH-DISPATCH.md`, `M5-DRAFTER-V2-PIPELINE.md`;
+figure `docs/figures/57_bonsai_fastprefill_t17_drafter.svg` (0 errors, 0 warnings).
+
+| Milestone | Result | Evidence |
+|---|---|---|
+| M1 prefill 128K | **target 45 min not met** (stays about 60.4 min); the relaxed-order fast prefill path is a measured loss and is not wired into the engine | `M1-FAST-PREFILL.md`, paired A/B in `bench/quant_roofline_bench.cu --fast` |
+| M2 verify T=17 | **met**: iso3 T=17 / T=5 / 17 single rows byte-identical at 512/4096/32K/64K; rollback keep=1..17 byte-identical; buffer chosen by the VRAM budget (17 → 8 → 5) | `tests/cuda/verify_t17_test.cu`, `tests/cuda/dn_rollback_test.cu` |
+| M3 PLD 16 drafts | **met as capability, no speed win**: up to 16 drafts, cascade lossless vs r3 MTP, 0.39-0.63 µs/step; slower than MTP alone on chat | `tests/` none new; `M3-SUFFIX-PLD-CASCADE.md`, `m3_cascade_ids.txt`, `m3_cascade_speed.txt` |
+| M4 Q2_K + arch | **met for Q2_K**: GPU `__dp4a` kernel at 98% of the Q4_K MAC rate, parity 8.4e-08; 28/28 (arch, kernel) compile pairs for sm_61/75/86/89 | `tests/cuda/q2_k_parity.cu`, `scripts/arch_compile_check.sh` |
+| M5 Drafter v2 pipeline | **met as contract sync**: drafter schedule modes and a CPU gate; no training run (needs the RTX PRO 6000) | `tools/bonsai_mtp_train/verify_m5.sh` |
+| M6 regression + PR | gates re-run, log, figure, this section | `EXPERIMENT-LOG.md` |
+
+Gates on this branch: `ternary_ab_test` 180/180, `ternary_test`, `ptq1_fast_gate` 42/42, `dn_rec_ab_test`,
+`dn_rollback_test` 9/9, `verify_t17_test` 32/32, `q2_k_parity` 4/4, `attn_long_test`,
+`arch_compile_check` 28/28, `verify_m5.sh` 6/6, SASS gate (IDP.4A ×6205, zero half arithmetic).
+Not re-run here: the HTTP server suites, the headless WebUI test, the Qwen greedy set, and a fresh 128K needle
+run; no claim is made about them.
+
+Carried forward as the next task: the MTP vs non-MTP argmax divergence that the cascade benchmark exposed on
+3 of 4 workloads (already present before this branch), which is worth 1.2x-1.3x on its own.
