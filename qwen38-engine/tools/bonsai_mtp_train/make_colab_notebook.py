@@ -336,6 +336,7 @@ HF_TOKEN = ""  #@param {type:"string"}
 CORPUS_TOTAL = 200000  #@param {type:"integer"}
 CORPUS_DIR = ""  #@param {type:"string"}
 SKIP_CORPUS_IF_READY = True  #@param {type:"boolean"}
+RUN_DIR_SUBDIR = "run"  #@param {type:"string"}
 STEPS = 2000  #@param {type:"integer"}
 SEQ_LEN = 2048  #@param {type:"integer"}
 BATCH = 2  #@param {type:"integer"}
@@ -372,7 +373,10 @@ if not token:
     print("WARNING: no HF_TOKEN: the gated sources (bigcode/starcoderdata, uonlp/CulturaX) are skipped once and not "
           "retried on reruns; the aya multilingual source is open and needs no token")
 CORPUS = CORPUS_DIR or f"{DRIVE_OUT}/corpus"
-RUN_DIR = f"{DRIVE_OUT}/run"
+RUN_DIR = f"{DRIVE_OUT}/{RUN_DIR_SUBDIR.strip('/') or 'run'}"
+# One folder per training run: RUN_DIR_SUBDIR = "run_df3" for a df3 run keeps the mtp checkpoints of the earlier
+# run intact — resume-from auto continues whatever train_state.pt sits in the folder, so sharing a folder between
+# schedules would silently mix them.
 
 # --- corpus: resumable (manifest.json); finished sources are not streamed again, and gated sources that failed
 # without a token are not re-attempted without one (SKIP_CORPUS_IF_READY short-circuits the whole step)
