@@ -240,10 +240,12 @@ def generation_pad_id(tok):
 def report_accelerators():
     """Prints whether the fused teacher kernels are importable (flash-linear-attention, causal-conv1d) or the run
     falls back to the slower PyTorch reference paths. A causal-conv1d fallback costs roughly 4x the step time."""
-    for mod, what in (("flash-linear-attention", "Triton kernels for the 48 Gated DeltaNet layers"),
-                      ("causal-conv1d", "fused conv1d of the Gated DeltaNet convs")):
+    for mod, import_name, what in (("flash-linear-attention", "fla",
+                                    "Triton kernels for the 48 Gated DeltaNet layers"),
+                                   ("causal-conv1d", "causal_conv1d",
+                                    "fused conv1d of the Gated DeltaNet convs")):
         try:
-            m = __import__(mod.replace("-", "_"))
+            m = __import__(import_name)   # the PyPI name is not the module name: import fla, not flash_linear_attention
             if mod == "causal-conv1d" and not hasattr(m, "causal_conv1d_fn"):
                 raise RuntimeError("causal_conv1d_fn missing")
             print(f"accelerator: {mod}: ACTIVE ({what})", flush=True)
