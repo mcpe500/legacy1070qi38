@@ -47,6 +47,7 @@ or inject into your Bonsai GGUF (cell 6 prints both).
 | 4 | GGUF → Hugging Face BF16 teacher (`convert_gguf_to_hf_bf16.py`, about 35 min) | `/content/models/bonsai-hf-bf16` (local SSD, not Drive) |
 | 5 | streamed multilingual corpus (`prepare_corpus.py`), then training (`train_bonsai_mtp.py`) | corpus and checkpoints on Drive |
 | 6 | export the final `blk.64` (safetensors + GGUF Q4_K_M / Q8_0) and print the commands for your PC | `DRIVE_OUT/final/` |
+| 7 | (optional) publish `DRIVE_OUT/final/` to a Hugging Face repo — a write token (`HF_TOKEN_UP` field or Colab secret) and a repo id are the only inputs; the repo is created private | `https://huggingface.co/<HF_REPO_ID>` |
 
 **After a disconnect:** run cells 1 to 5 again. The Bonsai GGUF is downloaded again and the teacher converted again (local disk
 is wiped). The corpus, the warm-start file and the training state are on Drive, so training resumes from the last saved step
@@ -485,9 +486,48 @@ OPTION 2 (optional, permanent): copy the head into a duplicated GGUF:
 """)
 '''
 
+CELL7 = r'''#@title 7. (optional) Publish the final head to Hugging Face
+UPLOAD_TO_HF = False  #@param {type:"boolean"}
+HF_REPO_ID = ""  #@param {type:"string"}
+HF_PRIVATE = True  #@param {type:"boolean"}
+HF_TOKEN_UP = ""  #@param {type:"string"}
+
+# One token with write access (https://huggingface.co/settings/tokens) is all this cell needs: it creates the
+# repo (private unless HF_PRIVATE is unticked) and uploads everything in DRIVE_OUT/final — the safetensors,
+# both GGUF sidecars and MANIFEST.txt with the SHA-256 sums. Rerunning skips nothing: upload_folder
+# re-uploads changed files only.
+if not UPLOAD_TO_HF:
+    print(f"UPLOAD_TO_HF = False: skipped. To publish, set HF_REPO_ID to 'username/name', put a write token in "
+          f"HF_TOKEN_UP (or the Colab secret HF_TOKEN_UP), tick UPLOAD_TO_HF and run again. Files waiting: "
+          f"{sorted(os.listdir(FINAL))}")
+else:
+    if not HF_REPO_ID or "/" not in HF_REPO_ID:
+        raise RuntimeError(f"set HF_REPO_ID to 'username/name' (got {HF_REPO_ID!r})")
+    tok = HF_TOKEN_UP
+    if not tok:
+        try:
+            from google.colab import userdata
+            tok = userdata.get("HF_TOKEN_UP") or ""
+        except Exception:   # no secret set or not on Colab
+            tok = ""
+    if not tok:
+        raise RuntimeError("no write token: fill HF_TOKEN_UP (or set the Colab secret HF_TOKEN_UP). A read-only "
+                           "token is rejected by create_repo; make one at huggingface.co/settings/tokens")
+    from huggingface_hub import HfApi
+    api = HfApi(token=tok)
+    api.create_repo(HF_REPO_ID, private=HF_PRIVATE, exist_ok=True)
+    api.upload_folder(folder_path=FINAL, repo_id=HF_REPO_ID, repo_type="model",
+                      commit_message="MTP blk.64 draft head trained with the bonsai_mtp_train notebook")
+    vis = "private" if HF_PRIVATE else "public"
+    print(f"uploaded {sorted(os.listdir(FINAL))} to https://huggingface.co/{HF_REPO_ID}/tree/main ({vis})")
+'''
+
 TROUBLE = """## Troubleshooting
 
 - **A cell failed:** the error shows the exit code and the last 40 lines; the full log is in `DRIVE_OUT/logs/<step>.log`.
+- **Cell 7 rejects the token:** `create_repo` needs a token with **write** role (read-only tokens fail). Create one at
+  huggingface.co/settings/tokens, put it in `HF_TOKEN_UP` (field or Colab secret) — the Colab `HF_TOKEN` secret used by
+  cell 5 may be read-only and is not used here.
 - **Steps take 71-76 s:** `causal-conv1d` did not install (see the WARNING at the end of cell 2). The training log says
   `accelerator: causal-conv1d: FALLBACK`. Retrying the pip line sometimes helps after a Colab restart; otherwise the run
   is just slower, `--save-every-min 20` protects every 20 minutes, and `--steps 2000` is sized so the warm start still
@@ -525,7 +565,7 @@ def main():
             "kernelspec": {"display_name": "Python 3", "name": "python3"},
             "language_info": {"name": "python"},
         },
-        "cells": [md(INTRO), code(CELL1), code(CELL2), code(CELL3), code(CELL4), code(CELL5), code(CELL6), md(TROUBLE)],
+        "cells": [md(INTRO), code(CELL1), code(CELL2), code(CELL3), code(CELL4), code(CELL5), code(CELL6), code(CELL7), md(TROUBLE)],
     }
     for i, c in enumerate(nb["cells"]):
         c["id"] = f"cell-{i}"
