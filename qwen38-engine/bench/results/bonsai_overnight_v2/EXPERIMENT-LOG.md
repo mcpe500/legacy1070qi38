@@ -136,3 +136,22 @@ exercise was modified), but they were not re-run here, so no claim is made about
 | Q2_K GEMV | CPU path | CPU path | GPU `__dp4a` kernel, 1071 G MAC/s at T=64 (M4) |
 | multi-arch | sm_61 only | sm_61 only | sm_61 build unchanged, compile-checked for sm_75/86/89 (M4) |
 | new gates in the tree | - | - | `ptq1_fast_gate`, `verify_t17_test`, `dn_rollback_test`, `q2_k_parity`, `arch_compile_check`, `verify_m5.sh` |
+## 8. MTP sidecar race — user head (2.000-step distillation) vs ProCreations r3 (2026-11-23)
+
+The Colab head trained in milestone 5's pipeline (2.000 steps, 65.54 M tokens, 114.610 samples,
+warm start `qwen_blk64`, exported by the user as `mtp_blk64_q4_k_m.gguf` / `q8_0`, sha256-verified
+against the training MANIFEST) raced the r3 sidecar on this GPU, same session, same flags
+(`--mtp-adaptive 1`, ctx 4096, greedy, 256 tokens, lossless — ids identical to `--gen-mtp-steps 0`
+in every run):
+
+| workload | no MTP | r3 | user Q4_K_M | user Q8_0 |
+|---|---|---|---|---|
+| prompt512 | 17.34 | 27.80 | **28.39** | 27.59 |
+| coding (LRU cache) | 17.31 | 27.81 | **28.48** | 27.17 |
+| Indonesian (list/tuple/set) | 17.27 | **25.85** | 24.83 | 24.58 |
+
+Verdict (details + logs in `mtp_race/results.md`): adopt the user Q4_K_M sidecar as the default for
+coding-agent use (+2.1 % / +2.4 % over r3); r3 keeps Indonesian by 4 % on the one prompt tried.
+Adaptive mode never spends a third draft here (`--gen-mtp-steps 3` == `2` everywhere), and the CLI
+hard-caps the flag at 3. A 300–500-step polish run (`ONPOLICY_FRAC 0.15`, `LR 3e-5`, resume from the
+safetensors) is the optional follow-up if the Indonesian gap matters.

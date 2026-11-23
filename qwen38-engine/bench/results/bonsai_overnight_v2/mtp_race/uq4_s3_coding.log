@@ -1,0 +1,47 @@
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 1517 MiB (budget 14541)
+mtp: sidecar /home/ivan/models/27b-bonsai/mtp_blk64_q4_k_m.gguf, 15 tensors, 272.9 MiB
+ternary: Hadamard basis (block 1024, explicit signs), gdn_v_grouped=1
+gpu-layers auto: 64 layers fit 7373 MiB at ctx 4096 (prefill streaming off)
+LM head: GPU
+MTP block: GPU
+VRAM plan: arena 6361.1 MiB, projected process total 6499.3 MiB (budget 7373)
+loaded in 38.24 s; CPU arena 249.6 MiB; CPU resident layers 0 (0.00 GiB), streamed 0.00 GiB
+GPU: layers 0..63, KV iso3, arena 6381.3 MiB (weights 5668.3 MiB, KV 53.1 MiB), device memory in use 6496.2 MiB
+prompt tokens: 98
+
+prompt: Implement a thread-safe LRU cache in Python with O(1) get and put. Provide the full class `LRUCache` with `__init__(self, capacity: int)`, `get(self, key: str) -> object`, and `put(self, key: str, value: object) -> None`, using `collections.OrderedDict` and a `threading.Lock`. Then explain the eviction policy in one sentence and state the time complexity of each method.
+
+generated: 
+
+```python
+from collections import OrderedDict
+from threading import Lock
+
+
+class LRUCache:
+    """Thread-safe LRU cache with O(1) get and put."""
+
+    def __init__(self, capacity: int) -> None:
+        if capacity <= 0:
+            raise ValueError("capacity must be positive")
+        self._capacity = capacity
+        self._cache: OrderedDict[str, object] = OrderedDict()
+        self._lock = Lock()
+
+    def get(self, key: str) -> object:
+        """Return the value for key, or None if absent. Moves key to MRU."""
+        with self._lock:
+            if key not in self._cache:
+                return None
+            # Move to end (most recently used)
+            self._cache.move_to_end(key)
+            return self._cache[key]
+
+    def put(self, key: str, value: object) -> None:
+        """Insert or update key->value. Evicts LRU entry if over capacity."""
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+            else:
+                if len(self._cache)
+{"prompt_tokens":98,"generated_tokens":256,"ids":[248069,271,71093,12305,198,1445,14856,1120,51425,198,1445,29174,1120,15240,1358,1005,436,34810,7976,25,198,262,4071,6641,53269,436,34810,6297,440,496,7,16,8,615,321,2113,71483,271,262,687,1259,2251,3676,701,11,8390,25,514,8,1411,2168,25,198,285,413,8390,2564,220,15,25,198,309,4673,14953,437,36151,1902,381,6572,871,198,285,638,1385,36151,283,8390,198,285,638,1385,9082,25,51425,16793,11,1576,60,283,51425,363,198,285,638,1385,988,283,15240,363,271,262,687,615,1153,11,1328,25,592,8,1411,1576,25,198,285,4071,5423,279,869,364,1328,11,466,2168,413,26334,13,54704,1328,310,27412,52,71483,198,285,440,638,1385,988,25,198,309,413,1328,524,303,638,1385,9082,25,198,388,460,2168,198,309,653,14142,310,809,318,3444,5742,1429,8,198,309,638,1385,9082,13242,2270,6018,4702,8,198,309,460,638,1385,9082,7900,60,271,262,687,2113,1153,11,1328,25,592,11,869,25,1576,8,1411,2168,25,198,285,4071,13384,466,2560,1328,397,927,13,10114,29015,436,34810,4202,413,888,8390,71483,198,285,440,638,1385,988,25,198,309,413,1328,303,638,1385,9082,25,198,388,638,1385,9082,13242,2270,6018,4702,8,198,309,745,25,198,388,413,2343,1153,1385,9082,8],"text":"\n\n```python\nfrom collections import OrderedDict\nfrom threading import Lock\n\n\nclass LRUCache:\n    \"\"\"Thread-safe LRU cache with O(1) get and put.\"\"\"\n\n    def __init__(self, capacity: int) -> None:\n        if capacity <= 0:\n            raise ValueError(\"capacity must be positive\")\n        self._capacity = capacity\n        self._cache: OrderedDict[str, object] = OrderedDict()\n        self._lock = Lock()\n\n    def get(self, key: str) -> object:\n        \"\"\"Return the value for key, or None if absent. Moves key to MRU.\"\"\"\n        with self._lock:\n            if key not in self._cache:\n                return None\n            # Move to end (most recently used)\n            self._cache.move_to_end(key)\n            return self._cache[key]\n\n    def put(self, key: str, value: object) -> None:\n        \"\"\"Insert or update key->value. Evicts LRU entry if over capacity.\"\"\"\n        with self._lock:\n            if key in self._cache:\n                self._cache.move_to_end(key)\n            else:\n                if len(self._cache)","load_s":38.24,"prefill_s":1.58,"prefill_tok_s":61.868,"decode_s":8.99,"decode_tok_s":28.4809,"heap_allocs_in_decode_forward":0,"peak_rss_kb":887612,"rss_anon_kb":181604,"rss_file_kb":677768,"swap_used_kb_before":728792,"swap_used_kb_after":728792,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":6381.3,"gpu_weights_mib":5668.3,"gpu_kv_mib":53.1,"vram_used_mib":6554.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":6.744,"decode_cpu_layers_s":0.000,"decode_head_s":0.647,"mtp_steps":4,"cycles":80,"draft_n":193,"draft_n_accepted":175,"accept_hist":[7,27,14,8,24,0,0,0,0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.023,"prefill_main_s":1.561,"mtp_draft_s":1.499,"mtp_verify_s":7.395,"mtp_rollback_s":0.094,"stream_min_t":40,"verify_t":17,"verify_t_requested":17,"roll_t":17,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":193,"pld_step_us":0.00,"ttft_s":1.584,"finish":"length","temperature":0.000,"ctx":4096,"reused_tokens":0,"state_load_s":0.000}

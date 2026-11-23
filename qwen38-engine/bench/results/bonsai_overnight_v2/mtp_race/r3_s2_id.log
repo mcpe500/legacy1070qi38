@@ -1,0 +1,44 @@
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 1600 MiB (budget 14541)
+mtp: sidecar /home/ivan/models/27b-bonsai/procreations-mtp/r3_mtp_blk64_q4_k_m.gguf, 15 tensors, 272.9 MiB
+ternary: Hadamard basis (block 1024, explicit signs), gdn_v_grouped=1
+gpu-layers auto: 64 layers fit 7373 MiB at ctx 4096 (prefill streaming off)
+LM head: GPU
+MTP block: GPU
+VRAM plan: arena 6361.1 MiB, projected process total 6499.3 MiB (budget 7373)
+loaded in 38.04 s; CPU arena 249.6 MiB; CPU resident layers 0 (0.00 GiB), streamed 0.00 GiB
+GPU: layers 0..63, KV iso3, arena 6381.3 MiB (weights 5668.3 MiB, KV 53.1 MiB), device memory in use 6496.2 MiB
+prompt tokens: 44
+
+prompt: Jelaskan perbedaan antara list, tuple, dan set dalam bahasa Python: kapan masing-masing sebaiknya dipakai, bagaimana perilaku duplikat dan urutan pada setiap struktur, dan berikan satu contoh kode singkat untuk masing-masing.
+
+generated: 
+The user is asking me to explain the differences between list, tuple, and set in Python. They want:
+1. When each should be used
+2. How duplicates and ordering behave in each structure
+3. A short code example for each
+
+Let me organize this clearly in Indonesian since the question is in Indonesian.
+
+Let me structure my response:
+
+**List:**
+- Mutable (can be modified)
+- Ordered (maintains insertion order)
+- Allows duplicates
+- Use when: you need a collection that can change, order matters, duplicates are acceptable
+- Syntax: [1, 2, 3]
+
+**Tuple:**
+- Immutable (cannot be modified after creation)
+- Ordered (maintains insertion order)
+- Allows duplicates
+- Use when: you need a fixed collection, order matters, you want to prevent accidental modification (e.g., coordinates, database records)
+- Syntax: (1, 2, 3)
+
+**Set:**
+- Mutable (can be modified)
+- Unordered (no guaranteed order)
+- No duplicates (automatically removes them)
+- Use when: you need unique elements, order doesn't matter, you want fast membership testing
+- Syntax: {
+{"prompt_tokens":44,"generated_tokens":256,"ids":[248068,198,760,1156,369,9859,728,310,10033,279,11461,1881,1103,11,13992,11,321,716,303,12654,13,2302,1318,25,198,16,13,3095,1754,1220,381,1429,198,17,13,2500,40922,321,20735,34512,303,1754,5759,198,18,13,357,2716,1970,3010,364,1754,271,9764,728,29249,411,9077,303,56839,2394,279,3296,369,303,56839,13,271,9764,728,5759,821,1965,25,271,332,826,64700,198,12,30123,318,4660,381,10490,8,198,12,38269,318,64557,1674,34736,1906,8,198,12,44247,40922,198,12,5272,948,25,488,1144,264,4281,421,628,2222,11,1906,12482,11,40922,513,20895,198,12,31058,25,498,16,11,220,17,11,220,18,60,271,332,27742,64700,198,12,37964,318,32157,381,10490,1238,9400,8,198,12,38269,318,64557,1674,34736,1906,8,198,12,44247,40922,198,12,5272,948,25,488,1144,264,8097,4281,11,1906,12482,11,488,1318,310,5190,47279,16531,318,68,1257,2487,13534,11,4475,7189,8,198,12,31058,25,318,16,11,220,17,11,220,18,8,271,332,1591,64700,198,12,30123,318,4660,381,10490,8,198,12,1188,10231,318,2083,18739,1906,8,198,12,2233,40922,318,26205,6804,27245,1070,8,198,12,5272,948,25,488,1144,4752,5255,11,1906,3070,914,4766,11,488,1318,4778,15403,7262,198,12,31058,25,313],"text":"\nThe user is asking me to explain the differences between list, tuple, and set in Python. They want:\n1. When each should be used\n2. How duplicates and ordering behave in each structure\n3. A short code example for each\n\nLet me organize this clearly in Indonesian since the question is in Indonesian.\n\nLet me structure my response:\n\n**List:**\n- Mutable (can be modified)\n- Ordered (maintains insertion order)\n- Allows duplicates\n- Use when: you need a collection that can change, order matters, duplicates are acceptable\n- Syntax: [1, 2, 3]\n\n**Tuple:**\n- Immutable (cannot be modified after creation)\n- Ordered (maintains insertion order)\n- Allows duplicates\n- Use when: you need a fixed collection, order matters, you want to prevent accidental modification (e.g., coordinates, database records)\n- Syntax: (1, 2, 3)\n\n**Set:**\n- Mutable (can be modified)\n- Unordered (no guaranteed order)\n- No duplicates (automatically removes them)\n- Use when: you need unique elements, order doesn't matter, you want fast membership testing\n- Syntax: {","load_s":38.04,"prefill_s":0.70,"prefill_tok_s":63.227,"decode_s":9.90,"decode_tok_s":25.8516,"heap_allocs_in_decode_forward":0,"peak_rss_kb":884736,"rss_anon_kb":178816,"rss_file_kb":677680,"swap_used_kb_before":730584,"swap_used_kb_after":730584,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":6381.3,"gpu_weights_mib":5668.3,"gpu_kv_mib":53.1,"vram_used_mib":6554.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":7.570,"decode_cpu_layers_s":0.000,"decode_head_s":0.682,"mtp_steps":4,"cycles":100,"draft_n":177,"draft_n_accepted":155,"accept_hist":[23,38,12,15,12,0,0,0,0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.010,"prefill_main_s":0.685,"mtp_draft_s":1.530,"mtp_verify_s":8.269,"mtp_rollback_s":0.103,"stream_min_t":40,"verify_t":17,"verify_t_requested":17,"roll_t":17,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":177,"pld_step_us":0.00,"ttft_s":0.696,"finish":"length","temperature":0.000,"ctx":4096,"reused_tokens":0,"state_load_s":0.000}
