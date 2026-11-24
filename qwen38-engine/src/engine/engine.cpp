@@ -255,6 +255,7 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
             gc.signs_6144 = signs_6144_;
             gc.signs_17408 = signs_17408_;
             gc.gdn_v_grouped = gdn_v_grouped_;
+            gc.f16_gemm = cfg_.f16_gemm;   // sm_75+ only: ternary_f16_init refuses anything older
         }
         return gc;
     };
@@ -930,6 +931,24 @@ void Engine::attn_layer(int il, const LayerW & L, int T, int pos0) {
 
     tmatmul(L.wo, attn_o_, T, proj_, kInner, act_);
     for (int64_t i = 0; i < static_cast<int64_t>(T) * kHidden; ++i) x_[i] += proj_[i];
+}
+
+void Engine::head_rows(const float * rows, int n, float * logits) {
+    if (n < 1 || n > 8) throw std::runtime_error("head_rows: n must be 1..8");
+    if (head_on_) {
+        gpu_->head_host(rows, n, logits);   // already-normed rows go straight into the GPU head
+        return;
+    }
+    for (int r = 0; r < n; ++r) {           // CPU head (dump mode without a GPU head; slow but exact)
+        const float * src = rows + static_cast<int64_t>(r) * kHidden;
+        if (ternary_mode_) {
+            std::memcpy(rot5120_, src, sizeof(float) * kHidden);
+            hadamard_rotate(rot5120_, signs_5120_, kHidden, 1);
+            qmatmul(*pool_, lm_head_, rot5120_, 1, logits + static_cast<int64_t>(r) * n_vocab, nullptr);
+        } else {
+            qmatmul(*pool_, lm_head_, src, 1, logits + static_cast<int64_t>(r) * n_vocab, act_);
+        }
+    }
 }
 
 void Engine::forward(const int32_t * tokens, int T, int pos0, float * logits) { forward_ex(tokens, T, pos0, logits, logits ? 1 : 0, nullptr); }

@@ -70,7 +70,7 @@ set_source_files_properties(third_party/cpp-httplib/httplib.cpp PROPERTIES COMPI
 
 add_executable(qwen38-engine
   src/engine/main.cpp src/engine/engine.cpp src/engine/tokenizer.cpp src/engine/alloc_guard.cpp
-  src/engine/sampler.cpp src/engine/generator.cpp src/engine/server.cpp
+  src/engine/sampler.cpp src/engine/generator.cpp src/engine/server.cpp src/engine/dump_targets.cpp
   third_party/cpp-httplib/httplib.cpp "${WEBUI_CPP}"
   src/cpu/cpu_ops.cpp)
 target_include_directories(qwen38-engine PRIVATE src/engine src/cpu src/packer src/cuda third_party third_party/cpp-httplib "${LLAMA_SRC}/ggml/include")
@@ -90,9 +90,10 @@ set_target_properties(foundation_test PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin
 
 # Stage 3 CUDA kernels (sm_61): quantized GEMV, FP32 operators, iso3 KV store, and the GPU layer runner.
 add_library(gpu_cuda STATIC
-  src/cuda/gemv.cu src/cuda/dp4a_gemv.cu src/cuda/ops.cu src/cuda/iso3_quant.cu src/cuda/q8_gemv.cu src/cuda/gpu_layers.cu src/cuda/ternary_gemv.cu)
+  src/cuda/gemv.cu src/cuda/dp4a_gemv.cu src/cuda/ops.cu src/cuda/iso3_quant.cu src/cuda/q8_gemv.cu src/cuda/gpu_layers.cu src/cuda/ternary_gemv.cu
+  src/cuda/ternary_f16.cu)
 target_include_directories(gpu_cuda PUBLIC src/cuda src/common src/packer)
-target_link_libraries(gpu_cuda PUBLIC CUDA::cudart)
+target_link_libraries(gpu_cuda PUBLIC CUDA::cudart CUDA::cublas)
 # The iso3 quantizer must reproduce the CPU bytes exactly, so fused multiply-add contraction is off in that file only.
 set_source_files_properties(src/cuda/iso3_quant.cu PROPERTIES COMPILE_OPTIONS "--fmad=false")
 

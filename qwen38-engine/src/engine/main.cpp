@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "arena.hpp"
+#include "dump_targets.hpp"
 #include "engine.hpp"
 #include "generator.hpp"
 #include "gpu_layers.hpp"
@@ -110,6 +111,8 @@ int main(int argc, char ** argv) {
     int gen_mtp_steps = -1;
     int n_predict = 16;
     bool parse_special = false, rollback_test = false, serve = false;
+    DumpConfig dcfg;
+    bool dump_targets = false;
     ServerOptions sopt;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -175,6 +178,16 @@ int main(int argc, char ** argv) {
         else if (a == "--parity-dir") parity_dir = next();
         else if (a == "--tokenize-file") tok_file = next();
         else if (a == "--parse-special") parse_special = true;
+        else if (a == "--dump-targets") { dump_targets = true; dcfg.targets_out = next(); }
+        else if (a == "--tokens-bin") dcfg.tokens_bin = next();
+        else if (a == "--plan-json") dcfg.plan_json = next();
+        else if (a == "--dump-samples") dcfg.samples = std::atoi(next().c_str());
+        else if (a == "--dump-seq-len") dcfg.seq_len = std::atoi(next().c_str());
+        else if (a == "--dump-top-k") dcfg.top_k = std::atoi(next().c_str());
+        else if (a == "--dump-hidden-dtype") dcfg.hidden_dtype = next().c_str();
+        else if (a == "--shard-samples") dcfg.shard_samples = std::atoi(next().c_str());
+        else if (a == "--max-gb") dcfg.max_gb = std::atof(next().c_str());
+        else if (a == "--dump-f32-hidden") dcfg.dump_f32_hidden = true;
         else { std::fprintf(stderr, "unknown argument: %s\n", a.c_str()); return 2; }
     }
     if (cfg.gguf.empty()) { std::fprintf(stderr, "usage: %s -m MODEL.gguf [-p prompt] [-n N] [--server --port 8080]\n", argv[0]); return 2; }
@@ -184,6 +197,8 @@ int main(int argc, char ** argv) {
     gp.max_tokens = n_predict;
 
     try {
+        if (dump_targets) return run_dump(cfg, dcfg);   // constructs its own Engine (seq_len decides ctx/t_max)
+
         if (!tok_file.empty()) {  // tokenizer-only mode: no weights are touched
             GgufIndex ix;
             ix.open(cfg.gguf);

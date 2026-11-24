@@ -51,6 +51,9 @@ struct EngineConfig {
     // Drafter v2 batch of 16 drafts + 1. The attention partial buffer and the DeltaNet rollback buffers grow with it,
     // so the engine keeps the largest value whose whole plan still fits vram_budget_mib and falls back to 8 or 5.
     int verify_t = 17;
+    // sm_75+ FP16 Tensor Core GEMM backend for ternary weights (--dump-targets fast path; refused at init on
+    // sm_61 Pascal, which keeps the FP32/dp4a path and its SASS gate exactly as before).
+    bool f16_gemm = false;
 };
 
 class GpuLayers;
@@ -87,6 +90,11 @@ public:
     // Like forward(), for speculative verification: logits of the last n_out rows go to logits[n_out][n_vocab] (n_out = 0 for none)
     // and, when h_rows != nullptr, the output-normed hidden state of every row to h_rows[T][5120] (the MTP head input).
     void forward_ex(const int32_t * tokens, int T, int pos0, float * logits, int n_out, float * h_rows);
+
+    // LM head only, for ALREADY output-normed hidden rows rows[n][5120] (--dump-targets): logits[n][n_vocab].
+    // GPU head when it is resident (rows are uploaded directly), else the CPU qmatmul path. n <= 8 on the GPU path.
+    void head_rows(const float * rows, int n, float * logits);
+    bool head_ready() const { return head_on_; }
 
     // MTP draft head (block 64). Batch of T tokens at positions pos0.. with the hidden rows h_in[T][5120] of the previous
     // positions (see src/engine/main.cpp for the pairing). Fills the MTP KV; the last row's hidden state (after the head norm)

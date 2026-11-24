@@ -509,32 +509,34 @@ TROUBLE = """## Troubleshooting
 """
 
 
-INTRO_T4 = f"""# Ternary Bonsai 2 27B: train the MTP/df3 head WITHOUT the teacher (T4 16 GB / local GPU)
+INTRO_T4 = f"""# Ternary Bonsai 2 27B: native PTQ1_0 target precompute + teacher-free head training (Tesla T4)
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)]({COLAB_URL_T4})
 
-Companion to the live-training notebook. One teacher burst (Phase A, ~20-45 min on a big GPU, ONCE) writes a
-compressed target package to Drive; after that every training iteration (Phase B) runs on a free/murah T4 or a local
-GPU in minutes, with the 50.1 GiB teacher absent from the loop. Design, budgets and the audit behind the numbers:
-`PRECOMPUTE_T4_DESIGN.md`.
+Companion to the live-training notebook — but this one is **T4-only**: there is no BF16 conversion (no
+50.1 GiB teacher folder), no A100 session, and no layer-by-layer CPU<->GPU streaming. The engine itself
+(`qwen38-engine`, built here for sm_75) loads the whole `Ternary-Bonsai-2-27B-PTQ1_0.gguf` (~5.54 GiB,
+all 64 layers + the LM head resident, ~5.7 GiB VRAM) and runs Phase A directly:
 
-| Phase | Where | What | Cost |
-|---|---|---|---|
-| A (once) | a >= 48 GB session (run the main notebook's cells 1-4 first) | `precompute_teacher_targets.py`: pure teacher forward, stores INT4 group-64 hidden + sparse top-64 logits + lse per position, plus the frozen FP16 `lm_head_embed_frozen.safetensors` | 8K samples x 1024 tok = **~25 GB** on Drive (12K = 38 GB), 20-45 min |
-| B (any number of times) | T4 16 GB / local GPU / L4 | `train_bonsai_mtp.py --from-targets`: same blk.64 student (mtp unroll-4 or df3 block-16), sparse top-K KL + cosine loss, FP16 + GradScaler on pre-Ampere cards, 8-bit AdamW / Adafactor | **~2-6 s/step** at 16-32K tokens/step (vs 52 s for a live teacher on a T4) |
+| Phase | What | Cost |
+|---|---|---|
+| A (once) | `./build/qwen38-engine --dump-targets`: per sample a clean DeltaNet/KV state, one full prefill, the output-normed hidden of every position captured, top-64 logits + FP16 logsumexp computed chunked on the GPU, hidden stored INT4 group-64 — the exact math the home engine runs, so parity is by construction. Plus `export_frozen_head.py`: only 3 tensors (embed, output_norm, lm_head — unrotated) -> `lm_head_embed_frozen.safetensors` in ~2-4 min, never touching the other ~850 tensors | ~5.8 GB Drive per 2000 samples (4000 samples ~11.6 GB); speed recorded by the first run |
+| B (any number of times) | `train_bonsai_mtp.py --from-targets`: the same blk.64 student (mtp unroll-4 or df3 block-16), **renormalized top-K KL (mathematically >= 0)** + cosine loss, FP16 + GradScaler on pre-Ampere cards, 8-bit AdamW, warm start from your r3 sidecar | T4; ~2-6 s/step at 16K tokens/step is the estimate until the first run measures it |
 
 Notes:
-- T4 (sm_75) has FP16/INT8 tensor cores but no BF16 tensor cores; the trainer picks FP16 + `GradScaler` automatically.
-- Shards are copied to local SSD (`--stage-dir`) before training, so the Drive FUSE read path is never in the loop.
-- The exported sidecar is the same blk.64-only GGUF as always: `--mtp-gguf` plug-and-play.
-- A future 2-3 layer DFlash head (engine loader pending) trains with `DRAFTER = "df3"` here; a 2-layer student on a
-  16 GB card wants `--frozen-device cpu` (the trainer picks it automatically above 500M params).
+- Phase A reads `tokens.bin` + `plan.json` written by `tokenize_for_engine.py`: the corpus is tokenized with the
+  engine's own BPE (the exact tokenizer the dump uses), balanced over the sources of the `prepare_corpus.py`
+  shards (OpenCodeInstruct / OpenThoughts / UltraChat / Wikipedia-ID / Aya).
+- On sm_75+ the dump dequantizes one weight matrix at a time into a small FP16 VRAM scratch (~170-335 MiB) and
+  multiplies through `cublasGemmEx` (FP16 in, FP32 accumulate); sm_61 (the local GTX 1070 Ti) keeps the
+  FP32/dp4a path untouched (SASS gate: zero half arithmetic).
+- Shards are plain `.npy` directories (the Python tool writes `.npz`) — `--from-targets` reads both. Every shard
+  is written atomically and auto-resumed; `--max-gb` stops with a consistent manifest.
+- Phase B warms from `procreations_r3` by default (the `INIT_MODE` dropdown in cell 4).
 """
 
-T4CELL1 = r'''#@title 1. Preflight (T4 16 GB or any >= 14 GB GPU) and helpers
+T4CELL1 = r'''#@title 1. Preflight (Tesla T4 15 GiB) and helpers
 DRIVE_OUT = "/content/drive/MyDrive/bonsai_mtp"  #@param {type:"string"}
-TARGETS_DIR = "/content/drive/MyDrive/bonsai_mtp/targets"  #@param {type:"string"}
-CORPUS_DIR = "/content/drive/MyDrive/bonsai_mtp/corpus"  #@param {type:"string"}
 MOUNT_DRIVE = True  #@param {type:"boolean"}
 MIN_VRAM_GB = 14  #@param {type:"number"}
 MIN_RAM_GB = 12  #@param {type:"number"}
@@ -552,6 +554,9 @@ import time
 PY = sys.executable
 REPO_DIR = "/content/legacy1070qi38"
 TOOLS = f"{REPO_DIR}/qwen38-engine/tools/bonsai_mtp_train"
+ENGINE = f"{REPO_DIR}/qwen38-engine/build/qwen38-engine"
+TARGETS_DIR = f"{DRIVE_OUT}/targets"
+CORPUS_DIR = f"{DRIVE_OUT}/corpus"
 LOG_DIR = f"{DRIVE_OUT}/logs"
 
 
@@ -584,97 +589,144 @@ try:
     q = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"],
                        capture_output=True, text=True, check=True).stdout.strip().splitlines()
 except (OSError, subprocess.CalledProcessError) as e:
-    raise RuntimeError("No NVIDIA GPU visible. Runtime -> Change runtime type -> select a T4 (16 GB) or better.") from e
+    raise RuntimeError("No NVIDIA GPU visible. Runtime -> Change runtime type -> select a Tesla T4 (or better).") from e
 gpu_name, gpu_mib, driver = [x.strip() for x in q[0].split(",")]
 gpu_gb = float(gpu_mib) / 1024
 print(f"GPU: {gpu_name}, {gpu_gb:.1f} GiB, driver {driver}")
 if gpu_gb < MIN_VRAM_GB:
-    raise RuntimeError(f"{gpu_name} has {gpu_gb:.1f} GiB; Phase B wants >= {MIN_VRAM_GB} GiB.")
+    raise RuntimeError(f"{gpu_name} has {gpu_gb:.1f} GiB; this notebook wants >= {MIN_VRAM_GB} GiB (Tesla T4 = 15 GiB).")
 with open("/proc/meminfo") as f:
     mem = {l.split(":")[0]: int(l.split()[1]) for l in f}
 ram_gb = mem["MemTotal"] / 1e6
-print(f"RAM: {ram_gb:.1f} GB total")
+print(f"RAM: {ram_gb:.1f} GB total; CPU threads {os.cpu_count()}")
 if ram_gb < MIN_RAM_GB:
-    raise RuntimeError(f"{ram_gb:.1f} GB RAM; shard staging + training want >= {MIN_RAM_GB} GB.")
+    raise RuntimeError(f"{ram_gb:.1f} GB RAM; the engine build + shard staging want >= {MIN_RAM_GB} GB.")
 if MOUNT_DRIVE:
     from google.colab import drive
     drive.mount("/content/drive")
     if not os.path.isdir("/content/drive/MyDrive"):
         raise RuntimeError("Google Drive did not mount at /content/drive/MyDrive.")
-elif TARGETS_DIR.startswith("/content/drive"):
-    raise RuntimeError("MOUNT_DRIVE is off but TARGETS_DIR points into Drive; mount Drive or use a local path.")
 os.makedirs(LOG_DIR, exist_ok=True)
 print(f"DRIVE_OUT = {DRIVE_OUT} ({shutil.disk_usage(DRIVE_OUT).free / 1e9:.1f} GB free there)")
 print("preflight OK")
 '''
 
-T4CELL2 = r'''#@title 2. Repository, packages, self-tests
+T4CELL2 = r'''#@title 2. Clone, build qwen38-engine for sm_75, light pip packages, CPU self-tests
 REPO_URL = "https://github.com/mcpe500/legacy1070qi38.git"  #@param {type:"string"}
 BRANCH = "main"  #@param {type:"string"}
+LLAMA_REPO = "https://github.com/mcpe500/llama.cpp.git"  #@param {type:"string"}
+LLAMA_BRANCH = "feat/iso3-kv"  #@param {type:"string"}
 INSTALL_BITSANDBYTES = True  #@param {type:"boolean"}
-INSTALL_FLA_CONV1D = True  #@param {type:"boolean"}
 RUN_SELFTESTS = True  #@param {type:"boolean"}
 
-# bitsandbytes: 8-bit AdamW for the 16 GB cards (falls back to Adafactor cleanly when missing).
-# flash-linear-attention / causal-conv1d only speed up the Phase A teacher burst; Phase B never loads the teacher.
+# The engine links the ggml CPU libraries of the mcpe500 fork (iso3/PTQ1_0 row sizes); no CUDA ggml needed —
+# the engine carries its own CUDA kernels (this build targets sm_75 for the T4; sm_61 stays untouched).
+LLAMA_DIR = "/content/llama.cpp"
+LLAMA_BUILD = f"{LLAMA_DIR}/build-iso3"
+
 if not os.path.isdir(REPO_DIR):
-    run(["git", "clone", "--filter=blob:none", REPO_URL, REPO_DIR], "clone")
-run(["git", "-C", REPO_DIR, "fetch", "origin", BRANCH], "fetch")
-run(["git", "-C", REPO_DIR, "checkout", BRANCH], "checkout")
-run(["git", "-C", REPO_DIR, "pull", "--ff-only"], "pull")
+    run(["git", "clone", "--filter=blob:none", REPO_URL, REPO_DIR], "clone_repo")
+run(["git", "-C", REPO_DIR, "fetch", "origin", BRANCH], "fetch_repo")
+run(["git", "-C", REPO_DIR, "checkout", BRANCH], "checkout_repo")
+run(["git", "-C", REPO_DIR, "pull", "--ff-only"], "pull_repo")
+if not os.path.isdir(LLAMA_DIR):
+    run(["git", "clone", "--filter=blob:none", "-b", LLAMA_BRANCH, LLAMA_REPO, LLAMA_DIR], "clone_llama")
+if not os.path.exists(f"{LLAMA_BUILD}/bin/libggml-cpu.so"):
+    run(["cmake", "-S", LLAMA_DIR, "-B", LLAMA_BUILD, "-DCMAKE_BUILD_TYPE=Release", "-DGGML_CUDA=OFF",
+         "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=OFF", "-DLLAMA_BUILD_SERVER=OFF"], "cmake_llama")
+    run(["cmake", "--build", LLAMA_BUILD, "--target", "ggml", "-j", str(os.cpu_count() or 2)], "build_ggml")
+run(["cmake", "-S", f"{REPO_DIR}/qwen38-engine", "-B", f"{REPO_DIR}/qwen38-engine/build",
+     "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=75"], "cmake_engine",
+    env={"LLAMA_SRC": LLAMA_DIR, "LLAMA_BUILD": LLAMA_BUILD})
+run(["ninja", "-C", f"{REPO_DIR}/qwen38-engine/build", "-j", str(os.cpu_count() or 2), "qwen38-engine"], "build_engine",
+    env={"LLAMA_SRC": LLAMA_DIR, "LLAMA_BUILD": LLAMA_BUILD})
+run([ENGINE], "engine_link_check", ok_codes=(2,))   # prints its usage line (exit 2 = expected): proves the binary links and runs
+
 if INSTALL_BITSANDBYTES:
     try:
         run([PY, "-m", "pip", "install", "-q", "bitsandbytes"], "pip_bitsandbytes")
         run([PY, "-c", "import bitsandbytes; print('bitsandbytes', bitsandbytes.__version__)"], "check_bnb")
     except RuntimeError as e:
         print(f"WARNING: bitsandbytes unavailable, --optim adamw8bit falls back to Adafactor.\n{e}")
-if INSTALL_FLA_CONV1D:
-    try:
-        run([PY, "-m", "pip", "install", "-q", "flash-linear-attention"], "pip_fla")
-        run([PY, "-m", "pip", "install", "-q", "--no-build-isolation", "causal-conv1d>=1.5"], "pip_conv1d")
-    except RuntimeError as e:
-        print(f"WARNING: fused teacher kernels unavailable; the Phase A burst is just slower.\n{e}")
 if RUN_SELFTESTS:
     for s in ("precompute_teacher_targets", "train_bonsai_mtp", "prepare_corpus", "convert_gguf_to_hf_bf16",
-              "inject_mtp_gguf"):
+              "inject_mtp_gguf", "export_frozen_head", "tokenize_for_engine"):
         run([PY, f"{TOOLS}/{s}.py", "--selftest"], f"selftest_{s}", env={"CUDA_VISIBLE_DEVICES": ""})
-print("cell 2 OK")
+print("cell 2 OK (engine built for sm_75)")
 '''
 
-T4CELL3 = r'''#@title 3. Phase A (once, on a >= 48 GB session): write the target package to Drive
-RUN_PHASE_A = False  #@param {type:"boolean"}
-TEACHER_DIR = "/content/models/bonsai-hf-bf16"  #@param {type:"string"}
-SAMPLES = 8000  #@param {type:"integer"}
-SEQ_LEN_A = 1024  #@param {type:"integer"}
-BATCH_A = 8  #@param {type:"integer"}
+T4CELL3 = r'''#@title 3. Phase A (once): native PTQ1_0 dump on the T4 -> target package on Drive
+RUN_PHASE_A = True  #@param {type:"boolean"}
+HF_REPO = "mcpe500/bonsai-ptq10"  #@param {type:"string"}
+GGUF_NAME = "Ternary-Bonsai-2-27B-PTQ1_0.gguf"  #@param {type:"string"}
+SAMPLES = 4000  #@param {type:"integer"}
+SEQ_LEN = 1024  #@param {type:"integer"}
 TOP_K = 64  #@param {type:"integer"}
 HIDDEN_DTYPE = "int4g64"  #@param ["int4g64", "int8"]
 SHARD_SAMPLES = 128  #@param {type:"integer"}
-MAX_GB = 100  #@param {type:"number"}
+MAX_GB = 40  #@param {type:"number"}
+VRAM_BUDGET_MIB = 14000  #@param {type:"integer"}
+DUMP_F32_HIDDEN = False  #@param {type:"boolean"}
 
-# Fastest flow: run the main notebook's cells 1-4 on the big-GPU session (they build the BF16 teacher), then this
-# cell, then switch the runtime to a free T4 for cells 1-2 and 4-5. The burst is a pure teacher forward: no student,
-# no backward, auto-resume per shard, and --max-gb stops with a consistent manifest when the quota is hit.
+# All-resident native dump: ~5.7 GiB VRAM for the quantized 27B + a small FP16 dequant scratch, NO BF16 copy,
+# NO layer streaming. Auto-resume per shard; re-running with the same TARGETS_DIR continues where it stopped.
+import json as _json
+
+def manifest_done():
+    p = os.path.join(TARGETS_DIR, "manifest.json")
+    if not os.path.exists(p):
+        return False
+    try:
+        return _json.load(open(p)).get("total_samples", 0) >= SAMPLES
+    except (ValueError, OSError):
+        return False
+
 if not RUN_PHASE_A:
-    print(f"RUN_PHASE_A = False: skipped. Phase A needs the converted teacher at TEACHER_DIR ({TEACHER_DIR}) and "
-          f"writes ~25-45 GB of shards + the frozen lm_head/embed file to {TARGETS_DIR}.")
+    print(f"RUN_PHASE_A = False: skipped (frozen-head file still exported below if missing)")
 else:
-    if not os.path.exists(os.path.join(TEACHER_DIR, "conversion.json")):
-        raise RuntimeError(f"{TEACHER_DIR} is not a converted teacher (no conversion.json there); run the main "
-                           f"notebook's cell 4 first, or point TEACHER_DIR at the converted directory")
-    run([PY, f"{TOOLS}/precompute_teacher_targets.py", "--teacher", TEACHER_DIR, "--corpus", CORPUS_DIR,
-         "--out", TARGETS_DIR, "--samples", str(SAMPLES), "--seq-len", str(SEQ_LEN_A), "--batch", str(BATCH_A),
-         "--top-k", str(TOP_K), "--hidden-dtype", HIDDEN_DTYPE, "--shard-samples", str(SHARD_SAMPLES),
-         "--max-gb", str(MAX_GB), "--device", "cuda"], "precompute")
-    man = json.load(open(os.path.join(TARGETS_DIR, "manifest.json")))
-    print(f"package: {man['total_tokens'] / 1e6:.1f}M tokens, {man['total_bytes'] / 1e9:.1f} GB on Drive")
+    if manifest_done():
+        print(f"manifest at {TARGETS_DIR} already covers {SAMPLES} samples - Phase A skipped")
+    else:
+        if not os.path.isdir(CORPUS_DIR) or not os.listdir(CORPUS_DIR):
+            raise RuntimeError(f"no corpus at {CORPUS_DIR}: run the main notebook's corpus step once "
+                               f"(prepare_corpus.py) or point CORPUS_DIR at your prepared corpus")
+        gguf = f"/content/models/{GGUF_NAME}"
+        os.makedirs("/content/models", exist_ok=True)
+        if not os.path.exists(gguf):
+            run([PY, "-m", "huggingface_hub.commands.huggingface_cli", "download", HF_REPO, GGUF_NAME,
+                 "--local-dir", "/content/models"], "hf_download_gguf")
+        if not os.path.getsize(gguf) == 5946648928:
+            print(f"WARNING: {gguf} is {os.path.getsize(gguf)} bytes, expected 5946648928")
+        run([PY, f"{TOOLS}/tokenize_for_engine.py", "--corpus", CORPUS_DIR, "--gguf", gguf, "--engine", ENGINE,
+             "--out", "/content/tok", "--samples", str(SAMPLES), "--seq-len", str(SEQ_LEN)], "tokenize")
+        cmd = [ENGINE, "-m", gguf, "--dump-targets", TARGETS_DIR, "--tokens-bin", "/content/tok/tokens.bin",
+               "--dump-samples", str(SAMPLES), "--dump-seq-len", str(SEQ_LEN), "--dump-top-k", str(TOP_K),
+               "--dump-hidden-dtype", HIDDEN_DTYPE, "--shard-samples", str(SHARD_SAMPLES),
+               "--max-gb", str(MAX_GB), "--vram-budget-mib", str(VRAM_BUDGET_MIB)]
+        if DUMP_F32_HIDDEN:
+            cmd.append("--dump-f32-hidden")
+        run(cmd, "dump_targets")
+frozen = os.path.join(TARGETS_DIR, "lm_head_embed_frozen.safetensors")
+if not os.path.exists(frozen):
+    run([PY, f"{TOOLS}/export_frozen_head.py", "--gguf", f"/content/models/{GGUF_NAME}", "--out", frozen],
+        "export_frozen_head", env={"CUDA_VISIBLE_DEVICES": ""})
+man_p = os.path.join(TARGETS_DIR, "manifest.json")
+if os.path.exists(man_p):
+    man = _json.load(open(man_p))
+    print(f"package: {man['total_tokens'] / 1e6:.2f}M tokens, {man['total_bytes'] / 1e9:.1f} GB, "
+          f"top_k {man.get('top_k')}, hidden {man.get('hidden_dtype')}")
+else:
+    print(f"no manifest at {TARGETS_DIR} yet - Phase B needs it (run Phase A first)")
 '''
 
-T4CELL4 = r'''#@title 4. Phase B (T4 / local GPU): student-only training from the package
+T4CELL4 = r'''#@title 4. Phase B: teacher-free student training from the package (T4, FP16 + GradScaler)
 RUN_PHASE_B = True  #@param {type:"boolean"}
 DRAFTER = "mtp"  #@param ["mtp", "df3"]
+INIT_MODE = "procreations_r3"  #@param ["procreations_r3", "drive_safetensors", "qwen_blk64", "random"]
+INIT_HF_REPO = "mcpe500/bonsai-mtp"  #@param {type:"string"}
+INIT_HF_FILE = "model_mtp.safetensors"  #@param {type:"string"}
+INIT_DRIVE_PATH = "/content/drive/MyDrive/bonsai_mtp/final_t4/mtp_blk64.safetensors"  #@param {type:"string"}
 STEPS = 2000  #@param {type:"integer"}
-SEQ_LEN = 1024  #@param {type:"integer"}
 BATCH = 2  #@param {type:"integer"}
 GRAD_ACCUM = 8  #@param {type:"integer"}
 LR = 2e-4  #@param {type:"number"}
@@ -689,28 +741,46 @@ STAGE_DIR = "/content/target_cache"  #@param {type:"string"}
 RUN_DIR = "/content/drive/MyDrive/bonsai_mtp/run_t4"  #@param {type:"string"}
 RESUME_FROM = "auto"  #@param ["auto", "none"]
 
-# No 27B teacher in this loop: the trainer reads the shards (INT4 hidden + sparse top-64 teacher logits + lse) and
-# the frozen lm_head/embed file, picks FP16 + GradScaler on pre-Ampere cards by itself, and stages the shards onto
-# local SSD first so Drive FUSE never throttles the step. A T4 should land at ~2-6 s/step at 16K tokens/step.
+# TOP_K / HIDDEN_DTYPE come from the package manifest (never from a skipped cell), so this cell is safe to run
+# on its own after Phase A produced the package once.
+import json as _json
+
 man_p = os.path.join(TARGETS_DIR, "manifest.json")
 if not os.path.exists(man_p):
-    raise RuntimeError(f"no target package at {TARGETS_DIR}: run cell 3 (Phase A) once on a big-GPU session first")
-man = json.load(open(man_p))
-print(f"package: {man['total_tokens'] / 1e6:.1f}M tokens, {man['total_bytes'] / 1e9:.1f} GB")
+    raise RuntimeError(f"no target package at {TARGETS_DIR}: run cell 3 (Phase A) first - it writes the manifest")
+man = _json.load(open(man_p))
+TOP_K = int(man.get("top_k", 64))
+HIDDEN_DTYPE = str(man.get("hidden_dtype", "int4g64"))
+print(f"package: {man['total_tokens'] / 1e6:.2f}M tokens, {man['total_bytes'] / 1e9:.1f} GB; "
+      f"loss width top_k={TOP_K}, hidden {HIDDEN_DTYPE}")
 if not RUN_PHASE_B:
     print("RUN_PHASE_B = False: skipped")
 else:
+    init_args = []
+    if INIT_MODE == "procreations_r3":
+        init_st = f"/content/models/{INIT_HF_FILE}"
+        if not os.path.exists(init_st):
+            os.makedirs("/content/models", exist_ok=True)
+            run([PY, "-m", "huggingface_hub.commands.huggingface_cli", "download", INIT_HF_REPO, INIT_HF_FILE,
+                 "--local-dir", "/content/models"], "hf_download_init")
+        init_args = ["--init-mtp-safetensors", init_st]
+    elif INIT_MODE == "drive_safetensors":
+        if not os.path.exists(INIT_DRIVE_PATH):
+            raise RuntimeError(f"--init safetensors not found: {INIT_DRIVE_PATH}")
+        init_args = ["--init-mtp-safetensors", INIT_DRIVE_PATH]
+    elif INIT_MODE == "qwen_blk64":
+        init_args = ["--init", f"gguf:/content/models/{GGUF_NAME}"]
     run([PY, f"{TOOLS}/train_bonsai_mtp.py", "--from-targets", TARGETS_DIR,
          "--lm-head-file", os.path.join(TARGETS_DIR, "lm_head_embed_frozen.safetensors"),
          "--out", RUN_DIR, "--drafter", str(DRAFTER), "--unroll", str(UNROLL), "--df3-block", str(DF3_BLOCK),
-         "--steps", str(STEPS), "--seq-len", str(SEQ_LEN), "--batch", str(BATCH), "--grad-accum", str(GRAD_ACCUM),
+         "--steps", str(STEPS), "--seq-len", "1024", "--batch", str(BATCH), "--grad-accum", str(GRAD_ACCUM),
          "--lr", str(LR), "--warmup", str(WARMUP), "--epochs", str(EPOCHS), "--optim", str(OPTIM),
          "--top-k-kl", str(TOP_K), "--hidden-dtype", HIDDEN_DTYPE, "--save-every", str(SAVE_EVERY),
          "--save-every-min", str(SAVE_EVERY_MIN), "--keep-last", "2", "--resume-from", str(RESUME_FROM),
-         "--log-every", "10", "--device", "cuda", "--stage-dir", STAGE_DIR], "train_t4")
+         "--log-every", "10", "--device", "cuda", "--stage-dir", STAGE_DIR] + init_args, "train_t4")
     with open(os.path.join(RUN_DIR, "train_log.jsonl")) as f:
-        last = json.loads(f.readlines()[-1])
-    print(f"last step {last['step']}: top-1 {[round(x, 3) for x in last['top1_agree']]} "
+        last = _json.loads(f.readlines()[-1])
+    print(f"last step {last['step']}: top1_agree {[round(x, 3) for x in last['top1_agree']]} "
           f"({last.get('sec_per_step', '?')} s/step, eta {last.get('eta_h', '?')} h)")
 '''
 
@@ -743,9 +813,9 @@ for qt in [q.strip() for q in EXPORT_QUANTS.split(",") if q.strip()]:
 qt0 = [q.strip() for q in EXPORT_QUANTS.split(",") if q.strip()][0]
 print("\n".join(lines))
 print(f"""
-Sidecar GGUFs on Drive: {FINAL}. On your PC (engine built with ./scripts/setup.sh):
+Sidecar GGFs on Drive: {FINAL}. On your PC (engine built with ./scripts/setup.sh):
 
-  taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf \\
+  taskset -c 0,1,2,3 ./build/qwen38-engine -m ~/models/27b-bonsai/Ternary-Bonsai-2-27B-PTQ1_0.gguf \\
       --mtp-gguf ~/models/27b-bonsai/mtp_blk64_{qt0}.gguf --gpu-layers auto --ctx 4096 \\
       --mtp-adaptive 1 --gen-mtp-steps 2 -f bench/prompt512.txt -n 256
 """)
@@ -753,15 +823,22 @@ Sidecar GGUFs on Drive: {FINAL}. On your PC (engine built with ./scripts/setup.s
 
 TROUBLE_T4 = """## Troubleshooting (T4 notebook)
 
-- **No package at cell 4:** Phase A has not run yet. It needs one big-GPU session (the main notebook builds the BF16
-  teacher in its cell 4); the package then lives on Drive and Phase B never needs the big GPU again.
-- **CUDA out of memory in cell 4:** lower `BATCH` (2 -> 1) or `SEQ_LEN` (1024 -> 512); a future 2-layer df3 student
-  should also set `--frozen-device cpu` (the trainer picks it automatically above 500M parameters).
-- **`bitsandbytes` WARNING in cell 2:** `--optim adamw8bit` fell back to Adafactor automatically; training works, the
-  optimizer state just takes a little more memory. bitsandbytes wheels exist only for common CUDA versions.
-- **Slow steps with Drive shards:** make sure `STAGE_DIR` points at local SSD (`/content/target_cache`), not Drive.
-- **KL goes slightly negative:** expected with the renormalized top-64 approximation; the number that matters is
-  `top1_agree` (the engine's acceptance proxy) and the final engine race, not the sign of the KL.
+- **Cell 2 build fails:** the engine needs the ggml CPU libraries of the `mcpe500/llama.cpp` fork
+  (`feat/iso3-kv`); the cell clones and builds them automatically (~3-8 min on the T4's 2 vCPUs, once per
+  session). The engine build itself targets `CMAKE_CUDA_ARCHITECTURES=75`; `LLAMA_SRC`/`LLAMA_BUILD` are passed
+  through the environment. A "GGML_LIB not found" means the llama.cpp build failed — open its log in Drive.
+- **Phase A says "no corpus":** Phase A tokenizes from the `prepare_corpus.py` shards on Drive (balanced over
+  OpenCodeInstruct / OpenThoughts / UltraChat / Wikipedia-ID / Aya). Run the main notebook's corpus step once;
+  it lands in `DRIVE_OUT/corpus`.
+- **HF download fails:** set `HF_REPO` / `INIT_HF_REPO` to the repos that hold your
+  `Ternary-Bonsai-2-27B-PTQ1_0.gguf` (5,946,648,928 bytes) and your warm-start `model_mtp.safetensors`.
+- **CUDA out of memory in cell 3:** keep `VRAM_BUDGET_MIB >= 14000` (the resident 27B is ~5.7 GiB plus the FP16
+  scratch); lower `SEQ_LEN` (1024 -> 512) if the runtime is smaller than a full T4.
+- **Slow steps in cell 4 with Drive shards:** keep `STAGE_DIR` at local SSD (`/content/target_cache`), not Drive.
+- **`bitsandbytes` WARNING in cell 2:** `--optim adamw8bit` falls back to Adafactor automatically.
+- **KL is >= 0:** the sparse top-K loss is the renormalized teacher distribution
+  (`softmax(topk_vals)` vs the student's renormalized K logits) — a true KL divergence. `top1_agree` is the
+  number to watch (the engine's acceptance proxy), then the real engine race.
 """
 
 

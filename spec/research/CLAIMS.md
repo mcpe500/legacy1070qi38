@@ -154,6 +154,10 @@ yang memakai arsitektur `qwen35` (lihat C-20), tetapi itu bukan Qwen3.8-27B dan 
 
 
 
+| C-107 | Mode dump target native `qwen38-engine --dump-targets`: seluruh 64 lapis + LM head PTQ1_0 residen penuh di VRAM (terukur 5742 MiB pada seq 128, GTX 1070 Ti, budget 7373 MiB; tanpa konversi BF16 50,1 GiB dan tanpa streaming lapis), shard `.npy`-dir + manifest atomik + auto-resume, dan paritas end-to-end: cosine rata-rata baris top-K hasil `lm_head @ h` numpy terhadap `tk_vals` tersimpan = 1,000000, selisih lse maksimum 0,0177, dan `train_bonsai_mtp.py --from-targets` melahap shard hasil engine pada CPU dengan KL >= 0 turun (4,17 -> 3,45 dalam 4 langkah) dan top1_agree naik; ekspor kepala beku 3 tensor dari GGUF 184-233 s | `qwen38-engine/src/engine/dump_targets.cpp`, `qwen38-engine/src/cuda/ternary_f16.cu`, `qwen38-engine/tools/bonsai_mtp_train/export_frozen_head.py`, `qwen38-engine/tools/bonsai_mtp_train/tokenize_for_engine.py`, log smoke `/tmp/opencode/tg_smoke/` (direproduksi dari branch) | Terukur | ⚠ jalur sm_61 (fallback dp4a FP32); jalur FP16 Tensor Core sm_75 baru lolos compile-check + SASS (0 HFMA2/HMUL2) — klaim 300-450 tok/s T4 dan s/step Phase B masih estimasi roofline sampai run Colab T4 pertama mencatat angka nyata |
+| C-108 | Perbaikan loss sparse top-K: `p_tilde = softmax(topk_vals)` (distribusi teacher ter-renormalisasi atas set K) menjadikan D_KL(p_tilde || q_tilde) >= 0 secara matematis; selftest wajib membuktikan kl >= 0 turun dan top1_agree >= 0,50 pada --from-targets mtp (0,63) dan df3 (0,85), dengan akar masalah agree=0,0 lama adalah perbandingan indeks lokal 0..K-1 melawan vocab id pada `zs.argmax` | `qwen38-engine/tools/bonsai_mtp_train/train_bonsai_mtp.py` (`sparse_chunk_loss`, selftest) | Kode + Terukur | ⚠ fixture selftest sintetis; angka pada data nyata mengikuti run Phase B pertama |
+
+
 ## Cara memakai
 
 1. Sebelum menulis klaim faktual di dokumen lain, tambahkan baris di sini dengan ID baru.

@@ -40,6 +40,10 @@ struct GpuConfig {
     // LM head on the GPU (output_norm + output.weight, rotated for a ternary head): head() computes the logits of the last
     // rows from the device copy of the stream after the last GPU layer. Only meaningful with n_layers = 64.
     bool head = false;
+    // sm_75+ FP16 Tensor Core GEMM backend for ternary weights (dump-targets fast path): one matrix at a time is
+    // dequantized to an FP16 scratch and multiplied through cublasGemmEx (FP32 accumulate). Requires the ternary
+    // signs; refused silently at init on devices below sm_75 (the dp4a path keeps running there).
+    bool f16_gemm = false;
     // MTP draft head (blk.64) on the GPU: its decoder layer, nextn.eh_proj and shared_head_norm live in the arena, its KV in
     // the format of the other attention layers. Needs head = true (the draft logits use the GPU LM head).
     bool mtp = false;
