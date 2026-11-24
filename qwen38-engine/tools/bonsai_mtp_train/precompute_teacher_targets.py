@@ -113,11 +113,18 @@ def write_shard(path, ids, hq, hs, tk_ids, tk_vals, tk_lse, meta):
 
 
 def load_shard(path):
-    with open(path, "rb") as f:
-        z = np.load(f)
-        d = {k: z[k] for k in ("ids", "hq", "hs", "tk_ids", "tk_vals", "tk_lse")}
+    """path is a Python-written .npz (plus a <path>.json sidecar) or an engine-written shard directory
+    (ids/hq/hs/tk_ids/tk_vals/tk_lse as plain .npy files plus a meta.json inside). Both give the same dict."""
+    if os.path.isdir(path):
+        d = {k: np.load(os.path.join(path, k + ".npy"))
+             for k in ("ids", "hq", "hs", "tk_ids", "tk_vals", "tk_lse")}
+        mp = os.path.join(path, "meta.json")
+    else:
+        with open(path, "rb") as f:
+            z = np.load(f)
+            d = {k: z[k] for k in ("ids", "hq", "hs", "tk_ids", "tk_vals", "tk_lse")}
+        mp = path + ".json"
     meta = {}
-    mp = path + ".json"
     if os.path.exists(mp):
         meta = json.load(open(mp))
     return d, meta
@@ -130,11 +137,16 @@ def stage_shard(path, stage_dir):
     os.makedirs(stage_dir, exist_ok=True)
     local = os.path.join(stage_dir, os.path.basename(path))
     if not os.path.exists(local + ".ok"):
-        tmp = local + ".tmp"
         import shutil
-        shutil.copyfile(path, tmp)
-        os.replace(tmp, local)
-        shutil.copyfile(path + ".json", local + ".json")
+        if os.path.isdir(path):
+            tmp = local + ".tmp"
+            shutil.copytree(path, tmp)
+            os.replace(tmp, local)
+        else:
+            tmp = local + ".tmp"
+            shutil.copyfile(path, tmp)
+            os.replace(tmp, local)
+            shutil.copyfile(path + ".json", local + ".json")
         open(local + ".ok", "w").close()
     return local
 
@@ -336,6 +348,19 @@ def selftest():
     ok &= good
     print(f"[{'PASS' if good else 'FAIL'}] shard round-trip: cosine {cos:.4f}, {bpt:.0f} bytes/token "
           f"(formula {4 + 5120 * 0.53125 + K * 6 + 2:.0f})")
+    # engine-written shard directory (plain .npy per array + meta.json inside) loads identically
+    pdir = os.path.join(tmp, "target-shard-00001")
+    os.makedirs(pdir, exist_ok=True)
+    for name, arr, dt in (("ids", ids, "<i4"), ("hq", hq, "|u1"), ("hs", hs, "<f2"),
+                          ("tk_ids", ti, "<i4"), ("tk_vals", tv, "<f2"), ("tk_lse", lse, "<f2")):
+        with open(os.path.join(pdir, name + ".npy"), "wb") as f:
+            np.lib.format.write_array(f, arr.astype(dt))
+    json.dump(meta, open(os.path.join(pdir, "meta.json"), "w"))
+    d2, m2 = load_shard(stage_shard(pdir, os.path.join(tmp, "stage")))
+    same = (all(d2[k].dtype == d[k].dtype and d2[k].shape == d[k].shape and
+                np.array_equal(d2[k], d[k]) for k in d) and m2.get("top_k") == K)
+    ok &= same
+    print(f"[{'PASS' if same else 'FAIL'}] engine shard dir round-trip: 6 .npy + meta.json == npz contents")
     # manifest accounting: two shards of S samples each
     man_p = os.path.join(tmp, "manifest.json")
     total = 0

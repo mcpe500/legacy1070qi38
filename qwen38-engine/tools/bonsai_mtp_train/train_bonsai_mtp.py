@@ -410,18 +410,22 @@ class Frozen:
 def sparse_chunk_loss(f, tk_ids, tk_vals, tk_lse, h_tgt, frozen, T, cos_w):
     """From-targets replacement of chunk_loss. f [N, H] student features; tk_* the stored teacher top-K of the
     target positions; h_tgt the (dequantized) teacher hidden of the target positions.
-    Teacher probabilities p_k = exp(v_k - lse) are exact inside the stored K set (the tail mass 1 - sum p_k is
-    dropped); the student logits are the K gathered lm_head rows only, renormalized over K — the standard
-    fast-distillation approximation that removes the 1.27B-parameter full-vocab lm_head backward."""
+    Teacher probabilities are renormalized over the stored K set exactly: p_tilde = softmax(topk_vals) = the
+    teacher's own conditional distribution restricted to its top-K support, so the loss
+    D_KL(p_tilde || q_tilde) is a true KL divergence and >= 0 in exact arithmetic (fp16 vals round it to
+    ~1e-4). The stored lse is no longer needed by the loss (it stays in the package for tail-mass audits);
+    the student logits are the K gathered lm_head rows renormalized over K — the standard fast-distillation
+    approximation that removes the 1.27B-parameter full-vocab lm_head backward."""
     K = tk_ids.shape[-1]
     rows = frozen.lm_rows(tk_ids)                                   # [N, K, H], frozen, no grad
     zs = torch.einsum("nh,nkh->nk", f.to(rows.dtype), rows).float() / T
     with torch.no_grad():
-        lp = tk_vals.float() - tk_lse[:, None].float()
-        p = lp.exp()
-        agree = (tk_ids[:, 0] == zs.detach().argmax(-1)).sum()
+        lp_tilde = torch.log_softmax(tk_vals.float(), -1)           # renormalized teacher log-probs over K
+        p_tilde = lp_tilde.exp()
+        win = zs.detach().argmax(-1)                                # local winner 0..K-1 ...
+        agree = (torch.gather(tk_ids, 1, win[:, None])[:, 0] == tk_ids[:, 0]).sum()   # ... mapped to its vocab id
     lq = torch.log_softmax(zs, -1)
-    kl = (p * (lp - lq)).sum()
+    kl = (p_tilde * (lp_tilde - lq)).sum()
     cos = (1.0 - torch.nn.functional.cosine_similarity(f.float(), h_tgt.float(), dim=-1)).sum()
     return kl, cos * cos_w, agree
 
@@ -469,7 +473,8 @@ def target_batches(from_dir, args, dev):
     crop offset, so multi-epoch runs see different block/anchor positions (what the df3 schedule wants)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import precompute_teacher_targets as pc
-    files = sorted(glob.glob(os.path.join(from_dir, "target-shard-*.npz")))
+    files = sorted(p for p in glob.glob(os.path.join(from_dir, "target-shard-*"))
+                   if p.endswith(".npz") or os.path.isdir(p))   # Python .npz shards or engine shard directories
     if not files:
         raise SystemExit(f"no target-shard-*.npz in {from_dir} (run precompute_teacher_targets.py first)")
     epoch = 0
@@ -974,18 +979,25 @@ def selftest():
             corpus=None, selftest=False, export_init=None, latest=None, attn_impl=None, teacher_f32=False)
         train_targets(a_t)
         log = [json.loads(l) for l in open(os.path.join(a_t.out, "train_log.jsonl"))]
-        good = (len(log) >= 2 and all(math.isfinite(x) for x in (log[0]["kl"][0], log[-1]["kl"][0]))
-                and log[-1]["kl"][0] < log[0]["kl"][0]
-                and all(k in log[-1] for k in ("sec_per_step", "tok_per_sec", "elapsed_min", "eta_h", "top1_agree"))
+        kls0, kls1 = log[0]["kl"], log[-1]["kl"]
+        agree1 = log[-1]["top1_agree"]
+        good = (len(log) >= 2
+                and all(math.isfinite(x) for x in kls0 + kls1)
+                and min(kls1) >= -1e-3                                   # renormalized KL: >= 0 up to fp16 eps
+                and kls1[0] < kls0[0]                                    # and it descends
+                and min(agree1) >= 0.50                                  # the acceptance proxy must really learn
+                and all(k in log[-1] for k in ("sec_per_step", "tok_per_sec", "elapsed_min", "eta_h"))
                 and os.path.exists(os.path.join(a_t.out, "mtp_final.safetensors")))
-        return good, log[0]["kl"][0], log[-1]["kl"][0]
+        return good, kls0[0], kls1[0], min(agree1)
 
-    ok_m, k0, k1 = run_targets("mtp", 12)
+    ok_m, k0, k1, a1 = run_targets("mtp", 12)
     ok &= ok_m
-    print(f"[{'PASS' if ok_m else 'FAIL'}] --from-targets mtp: kl {k0:.3f} -> {k1:.3f}, final saved, telemetry ok")
-    ok_d, k0d, k1d = run_targets("df3", 10)
+    print(f"[{'PASS' if ok_m else 'FAIL'}] --from-targets mtp: kl {k0:.3f} -> {k1:.3f} (>= 0), "
+          f"top1_agree {a1:.2f} (>= 0.50), final saved")
+    ok_d, k0d, k1d, a1d = run_targets("df3", 16)
     ok &= ok_d
-    print(f"[{'PASS' if ok_d else 'FAIL'}] --from-targets df3 (block schedule K=4): kl {k0d:.3f} -> {k1d:.3f}")
+    print(f"[{'PASS' if ok_d else 'FAIL'}] --from-targets df3 (block schedule K=4): kl {k0d:.3f} -> {k1d:.3f} (>= 0), "
+          f"top1_agree {a1d:.2f} (>= 0.50)")
 
     # optimizer fallback chain without bitsandbytes: adamw8bit -> adafactor (or adamw) must never hard-fail
     _p = [torch.zeros(2, requires_grad=True)]

@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "dp4a_gemv.cuh"
+#include "ternary_f16.cuh"
 #include "gemv.cuh"
 #include "ops.cuh"
 #include "q8_gemv.cuh"
@@ -80,6 +81,10 @@ struct GpuLayers::Impl {
     const float * act_src = nullptr;  // buffer `act` was quantized from (rotated or plain)
     bool tmode = false;               // any weight of the GPU layers is ternary (PTQ1_0 / Q2_0)
     const float * sgn[3] = {nullptr, nullptr, nullptr};   // device sign vectors for widths 5120 / 6144 / 17408
+    // sm_75+ FP16 Tensor Core backend (cfg.f16_gemm): rotated FP16 activations + dequant-on-the-fly GEMM.
+    TernaryF16 * f16_ = nullptr;
+    bool f16_rot = false;             // quant_rot / the grouped ssm_out path prepared `f16_->xf` for the next ternary gemv
+    int sidx_of(int64_t in) const { return in == kHidden ? 0 : (in == kInner ? 1 : 2); }
     float * xr5120 = nullptr, *xr6144 = nullptr, *xr17408 = nullptr;  // rotated activations [t_max][width]
     float * xr_of(int sidx) const { return sidx == 0 ? xr5120 : (sidx == 1 ? xr6144 : xr17408); }
     float * h_stage = nullptr;  // pinned staging buffer
@@ -398,6 +403,7 @@ struct GpuLayers::Impl {
 
     // Quantizes `x` once for all the listed matrices that take the dp4a path (nothing happens when none does).
     void quant(const float * x, int64_t in, int T, std::initializer_list<const WMat *> mats) {
+        f16_rot = false;   // plain-basis path: the next ternary gemv must not reuse a stale FP16 input
         for (const WMat * w : mats) {
             if (use_dp4a(*w)) { CK(actq8_quantize(x, in, T, act, st)); act_src = x; return; }
         }
@@ -409,6 +415,11 @@ struct GpuLayers::Impl {
         bool any = false;
         for (const WMat * w : mats) if (ternary::is_ternary(w->type)) any = true;
         if (!any || !sgn[sidx]) { quant(x, in, T, mats); return; }
+        if (f16_) {   // FP16 rotated activations instead of Q8: the f16 gemm consumes them directly
+            CK(ternary_f16_rotate(f16_, x, sgn[sidx], in, T, st));
+            f16_rot = true;
+            return;
+        }
         CK(ternary_rotate_q8(x, sgn[sidx], xr_of(sidx), static_cast<int>(in), T, act, st));   // rotate + Q8_1 in one launch
         act_src = xr_of(sidx);
     }
@@ -416,6 +427,12 @@ struct GpuLayers::Impl {
     // The caller must have run quant() for the same `in` buffer when use_dp4a(W) is true.
     void gemv(const WMat & W0, const float * in, int T, float * out) {
         WMat W = W0;
+        // f16_rot stays set across several gemv calls that share one rotated input (ffn_gate + ffn_up);
+        // the next quant()/quant_rot() decides what the following ternary gemv consumes.
+        if (f16_ && f16_rot && !W.src && W.type == ternary::kTypePtq1_0) {
+            CK(ternary_f16_gemm(f16_, W.p, W.in, W.out, T, out, st));   // FP16 Tensor Core path, weights resident
+            return;
+        }
         int b = -1;
         if (W.src && registered) {   // overlapped: the matrix was (or is being) uploaded by the copy stream
             if (cur >= seq.size() || seq[cur] != W.src) throw std::runtime_error("streamed GEMV order differs from the upload order");
@@ -521,8 +538,13 @@ struct GpuLayers::Impl {
         CK(op_dn_rec(conv, gate, beta, bufB, l.ssm_norm, l.ssm_state, attn_o, T, eps, st));
         if (tmode && cfg.gdn_v_grouped) {  // ssm_out reads its value heads in grouped order (prism metadata)
             CK(op_gdn_v_permute(attn_o, xr6144, T, st));
-            CK(ternary_rotate_q8(xr6144, sgn[1], xr6144, kInner, T, act, st));
-            act_src = xr6144;
+            if (f16_) {
+                CK(ternary_f16_rotate(f16_, xr6144, sgn[1], kInner, T, st));
+                f16_rot = true;
+            } else {
+                CK(ternary_rotate_q8(xr6144, sgn[1], xr6144, kInner, T, act, st));
+                act_src = xr6144;
+            }
         } else {
             quant_rot({&l.ssm_out}, attn_o, kInner, T, 1);
         }
@@ -592,6 +614,11 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
         m.canon_cnt = nullptr;
         if (n) std::fprintf(stderr, "ternary: %llu invalid PTQ1_0 payload bytes rewritten to their table value (byte 0)\n", n);
     }
+    if (m.cfg.f16_gemm && m.sgn[0]) {
+        // FP16 Tensor Core scratch: one 32768x5120 (or 17408x5120) FP16 weight chunk + t_max x 17408 activations.
+        m.f16_ = ternary_f16_init(static_cast<int64_t>(32768) * kHidden * 2, static_cast<int64_t>(m.cfg.t_max) * kFFN * 2);
+        if (!m.f16_) m.cfg.f16_gemm = false;   // unsupported device or OOM: the dp4a path keeps running
+    }
     if (!m.stage) m.pin_free();   // kept for the streamed prefill uploads otherwise
     if (m.stage) {
         CK(cudaStreamCreateWithFlags(&m.cp, cudaStreamNonBlocking));
@@ -640,6 +667,7 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
 
 GpuLayers::~GpuLayers() {
     if (!p_) return;
+    ternary_f16_free(p_->f16_);
     p_->pin_free();
     for (cudaGraphExec_t g : p_->gexec) if (g) cudaGraphExecDestroy(g);
     if (p_->registered) cudaHostUnregister(p_->reg_ptr);

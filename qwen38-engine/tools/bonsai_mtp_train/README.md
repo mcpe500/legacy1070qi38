@@ -52,12 +52,15 @@ python3 make_colab_notebook.py && python3 check_colab_notebook.py
 | `convert_gguf_to_hf_bf16.py` | turns the Bonsai GGUF (PTQ1_0 or Q2_0, Hadamard basis) into the BF16 Hugging Face teacher (`Qwen3_5ForCausalLM`) | CPU, 6 GB RAM, about 35 min |
 | `compare_engine_hf.py` | checks a converted checkpoint against the engine's per-layer tap dumps | CPU + engine |
 | `prepare_corpus.py` | streams and mixes about 200,000 samples from Hugging Face into ChatML JSONL shards; resumable, and gated sources that failed without a token are skipped on reruns (`--retry-errors` forces a retry) | any machine with network |
-| `train_bonsai_mtp.py` | live online distillation: frozen BF16 teacher, one trainable decoder layer + nextn projection, 4-step unrolled self-rollout, full-vocabulary KL + cosine feature alignment; atomic checkpoints on `--save-every` steps or `--save-every-min` minutes, ETA/throughput in the log, warm start also from the ProCreations `mtp.*` schema. `--from-targets DIR` is the teacher-free mode for 16 GB cards (sparse top-K KL against a precomputed package) | 1x RTX PRO 6000 96 GB (live) / any >= 14 GB GPU (`--from-targets`) |
-| `precompute_teacher_targets.py` | the one-shot teacher burst for the T4 path: pure forward (`torch.inference_mode`) over a curated corpus subset, stores INT4 group-64 hidden + sparse top-K logits + logsumexp per position, shard files + atomic manifest (auto-resume, `--max-gb` quota, tok/s + ETA), and the frozen FP16 `lm_head_embed_frozen.safetensors` | the big-GPU session, once, 20-45 min |
+| `train_bonsai_mtp.py` | live online distillation: frozen BF16 teacher, one trainable decoder layer + nextn projection, 4-step unrolled self-rollout, full-vocabulary KL + cosine feature alignment; atomic checkpoints on `--save-every` steps or `--save-every-min` minutes, ETA/throughput in the log, warm start also from the ProCreations `mtp.*` schema. `--from-targets DIR` is the teacher-free mode for 16 GB cards (renormalized top-K KL, >= 0) | 1x RTX PRO 6000 96 GB (live) / any >= 14 GB GPU (`--from-targets`) |
+| `precompute_teacher_targets.py` | the original Python target burst: pure teacher forward, INT4-g64/INT8 hidden, sparse top-K logits + logsumexp per position, shard files + atomic manifest (auto-resume, `--max-gb` quota, tok/s + ETA). The engine's native `--dump-targets` supersedes it on the T4 path; its shard loader reads both formats | any GPU that fits the teacher |
+| `export_frozen_head.py` | 3 tensors only (token_embd + output_norm + output, unrotated) straight from the PTQ1_0 GGUF -> `lm_head_embed_frozen.safetensors` in ~3 min on a CPU — no BF16 conversion for the frozen head | CPU |
+| `tokenize_for_engine.py` | balanced corpus samples -> `tokens.bin` + `plan.json` for the engine's `--dump-targets`, tokenized with the engine's own BPE (`--tokenize-file`), seed-deterministic | CPU + engine binary |
+| engine `--dump-targets` | native Phase A: the full PTQ1_0 model resident in VRAM (~5.7 GiB), per-sample clean DeltaNet/KV state, per-position output-normed hidden (INT4-g64/INT8) + top-64 logits + lse, atomic `.npy` shard dirs + manifest + dims.json, auto-resume; sm_75+ FP16 Tensor Core GEMM path (`src/cuda/ternary_f16.cu`, sm_61 untouched) | the T4 itself |
 | `inject_mtp_gguf.py` | quantizes the trained head to Q4_K_M or Q8_0 and writes a new GGUF with `blk.64` and `block_count = 65`, or a small blk.64-only GGUF (`--mtp-only-out`) to use as a `--mtp-gguf` sidecar or inject later with `--from-gguf` | CPU |
 | `train_bonsai_mtp_colab.ipynb` | the whole pipeline on Google Colab (see the quick start above) | Colab, RTX PRO 6000 |
 | `make_colab_notebook.py`, `check_colab_notebook.py` | generate both notebooks (live + T4) and check them against the scripts (including a negative control: a broken copy must be detected) | CPU |
-| `train_bonsai_t4_student_colab.ipynb` | the teacher-free path: Phase A burst once on a big GPU, then unlimited Phase B iterations on a T4 16 GB / local GPU | Colab T4 / local |
+| `train_bonsai_t4_student_colab.ipynb` | the T4-only path: cell 2 builds `qwen38-engine` for sm_75 (ggml fork included), cell 3 = native `--dump-targets` Phase A + frozen head, cell 4 = Phase B training with warm-start dropdown, cell 5 = sidecar export | Colab T4 / local |
 
 ## 0. Teacher checkpoint (GGUF -> Hugging Face BF16)
 
@@ -215,34 +218,46 @@ prompt 509 tokens, 256 generated tokens, both runs with bit-identical output tok
 
 These runs are tests of the plumbing: a head distilled on Bonsai itself should accept more drafts.
 
-## 5. T4 / local-GPU mode (precompute once, train without the teacher)
+## 5. T4 / local-GPU mode (native PTQ1_0 dump once, train without the teacher)
 
-`PRECOMPUTE_T4_DESIGN.md` carries the full audit and budgets; the short version:
+`PRECOMPUTE_T4_DESIGN.md` carries the full audit and budgets; the short version — no BF16 conversion, no
+layer-by-layer streaming, no big-GPU session:
 
-1. **Phase A, once, on a >= 48 GB session** (the fastest flow: the main notebook's cells 1-4, then cell 3 of
-   `train_bonsai_t4_student_colab.ipynb`):
+1. **Phase A, once, on the T4 itself** (`train_bonsai_t4_student_colab.ipynb` cell 3, or by hand):
 
    ```bash
-   python3 tools/bonsai_mtp_train/precompute_teacher_targets.py \
-       --teacher /content/models/bonsai-hf-bf16 --corpus /content/drive/MyDrive/bonsai_mtp/corpus \
-       --out /content/drive/MyDrive/bonsai_mtp/targets --samples 8000 --seq-len 1024 --max-gb 100
+   python3 tools/bonsai_mtp_train/tokenize_for_engine.py --corpus /content/drive/MyDrive/bonsai_mtp/corpus \
+       --gguf /content/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf --engine ./build/qwen38-engine \
+       --out /content/tok --samples 4000 --seq-len 1024
+   ./build/qwen38-engine -m /content/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf \
+       --dump-targets /content/drive/MyDrive/bonsai_mtp/targets --tokens-bin /content/tok/tokens.bin \
+       --dump-samples 4000 --dump-seq-len 1024 --dump-top-k 64 --shard-samples 128 --max-gb 40 \
+       --vram-budget-mib 14000
+   python3 tools/bonsai_mtp_train/export_frozen_head.py \
+       --gguf /content/models/Ternary-Bonsai-2-27B-PTQ1_0.gguf \
+       --out /content/drive/MyDrive/bonsai_mtp/targets/lm_head_embed_frozen.safetensors
    ```
 
-   Stores INT4 group-64 teacher hidden + sparse top-64 logits + logsumexp per position (~25 GB for 8.2M tokens)
-   plus the frozen FP16 `lm_head_embed_frozen.safetensors` (4.7 GiB). Auto-resumes per shard.
+   The whole quantized 27B (~5.54 GiB) sits resident in VRAM with the LM head; per sample the engine resets the
+   DeltaNet/KV state, prefills 1024 tokens, captures the output-normed hidden of every position, reduces the
+   top-64 logits + FP16 logsumexp chunked on the GPU, and writes atomic `.npy` shard directories (auto-resume,
+   `--max-gb` quota). ~11.6 GB on Drive for 4000 samples. On sm_75+ the matmuls run on FP16 Tensor Cores with
+   FP32 accumulation (one matrix dequantized at a time into a small VRAM scratch); sm_61 keeps the FP32/dp4a
+   path bit-for-bit.
 
-2. **Phase B, unlimited, on a T4 16 GB / L4 / local GPU** — `train_bonsai_t4_student_colab.ipynb` cell 4, or:
+2. **Phase B, unlimited, on the same T4 / L4 / local GPU** — `train_bonsai_t4_student_colab.ipynb` cell 4, or:
 
    ```bash
    python3 tools/bonsai_mtp_train/train_bonsai_mtp.py --from-targets /content/drive/MyDrive/bonsai_mtp/targets \
        --out /content/drive/MyDrive/bonsai_mtp/run_t4 --drafter mtp --steps 2000 --seq-len 1024 \
-       --batch 2 --grad-accum 8 --epochs 3 --optim adamw8bit --stage-dir /content/target_cache
+       --batch 2 --grad-accum 8 --epochs 3 --optim adamw8bit --stage-dir /content/target_cache \
+       --init-mtp-safetensors /content/models/model_mtp.safetensors
    ```
 
-   No teacher is loaded; the loss is a sparse top-K KL (the student logits are the K gathered lm_head rows,
-   renormalized, teacher probabilities from the stored top-K + logsumexp) plus the same cosine feature loss.
-   sm_75 cards train FP16 + `GradScaler` automatically (no BF16 tensor cores there); `--frozen-device cpu` keeps
-   the 4.7 GiB of frozen rows out of a small card when the student grows past 500M parameters (a future 2-layer
-   DFlash head). Expected step time on a T4: ~2-6 s at 16-32K tokens/step, vs 52 s for a live teacher on the same
-   card and 24.19 s on the A100 — verify with your own run and record it.
+   No teacher is loaded; the loss is the **renormalized** top-K KL (`softmax(topk_vals)` vs the student's
+   renormalized K logits — mathematically >= 0) plus the same cosine feature loss against the dequantized
+   hidden. sm_75 cards train FP16 + `GradScaler` automatically (no BF16 tensor cores there); `--frozen-device`
+   cpu keeps the 4.7 GiB of frozen rows out of a small card when the student grows past 500M parameters (a
+   future 2-layer DFlash head). Expected step time on a T4: ~2-6 s at 16-32K tokens/step — an estimate until
+   your first run records the real number.
 
