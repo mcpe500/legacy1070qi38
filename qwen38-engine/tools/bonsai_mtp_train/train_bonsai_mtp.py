@@ -41,6 +41,8 @@ Usage:
   python3 train_bonsai_mtp.py --selftest        # tiny random teacher on CPU: shapes, losses, backward, export names,
                                                  # external warm-start mapping, warning-free generate, save triggers
   python3 train_bonsai_mtp.py --export-init gguf:QWEN.gguf --out x.safetensors   # dequantized init only (warm start file)
+  python3 train_bonsai_mtp.py --from-targets /drive/bonsai_mtp/targets --out runs/t4 --steps 2000 --optim adamw8bit \
+      --seq-len 1024   # T4/local-GPU mode: no teacher loaded, sparse top-64 KL against the precomputed package
 """
 import argparse
 import glob
@@ -52,6 +54,7 @@ import re
 import sys
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -378,6 +381,316 @@ def unrolled_loss(student, emb_fn, lm_w, ids, H, args):
     return total, logs
 
 
+# --------------------------------------------------------------------------- from-targets mode (T4 / local GPU)
+class Frozen:
+    """embed_tokens + lm_head from the precompute package's lm_head_embed_frozen.safetensors. The 27B teacher never
+    loads in this mode; these 4.7 GiB of frozen FP16 rows are everything the loss touches of it. Parked on the CPU
+    when the student is big (--frozen-device cpu / auto): a [N, K, H] row gather is tiny, so the PCIe hop is cheap."""
+
+    def __init__(self, path, dev, gpu):
+        from safetensors.torch import load_file
+        if not os.path.exists(path):
+            raise SystemExit(f"--lm-head-file {path} not found (run precompute_teacher_targets.py first)")
+        sd = load_file(path)
+        self.dev = dev if gpu else torch.device("cpu")
+        self.emb = sd["embed_tokens.weight"].to(self.dev)
+        self.lm = sd["lm_head.weight"].to(self.dev)
+        self.norm = sd.get("output_norm.weight", torch.zeros(1)).to(self.dev)
+        self.vocab = self.lm.shape[0]
+
+    def emb_fn(self, tok):
+        e = torch.nn.functional.embedding(tok.to(self.emb.device), self.emb)
+        return e.to(tok.device)
+
+    def lm_rows(self, idx):
+        r = torch.nn.functional.embedding(idx.to(self.lm.device), self.lm)
+        return r.to(idx.device)
+
+
+def sparse_chunk_loss(f, tk_ids, tk_vals, tk_lse, h_tgt, frozen, T, cos_w):
+    """From-targets replacement of chunk_loss. f [N, H] student features; tk_* the stored teacher top-K of the
+    target positions; h_tgt the (dequantized) teacher hidden of the target positions.
+    Teacher probabilities p_k = exp(v_k - lse) are exact inside the stored K set (the tail mass 1 - sum p_k is
+    dropped); the student logits are the K gathered lm_head rows only, renormalized over K — the standard
+    fast-distillation approximation that removes the 1.27B-parameter full-vocab lm_head backward."""
+    K = tk_ids.shape[-1]
+    rows = frozen.lm_rows(tk_ids)                                   # [N, K, H], frozen, no grad
+    zs = torch.einsum("nh,nkh->nk", f.to(rows.dtype), rows).float() / T
+    with torch.no_grad():
+        lp = tk_vals.float() - tk_lse[:, None].float()
+        p = lp.exp()
+        agree = (tk_ids[:, 0] == zs.detach().argmax(-1)).sum()
+    lq = torch.log_softmax(zs, -1)
+    kl = (p * (lp - lq)).sum()
+    cos = (1.0 - torch.nn.functional.cosine_similarity(f.float(), h_tgt.float(), dim=-1)).sum()
+    return kl, cos * cos_w, agree
+
+
+def unrolled_loss_targets(student, emb_fn, frozen, ids, H, tk_ids, tk_vals, tk_lse, args):
+    """The unrolled self-rollout of unrolled_loss, with stored targets instead of a live teacher.
+    H is the dequantized teacher hidden of the window, tk_* the stored top-K/lse of every position."""
+    B, L = ids.shape
+    K = unroll_K(args)
+    Kw = tk_ids.shape[-1]   # stored teacher ids per position (sparse-KL width) — unrelated to the unroll K
+    if L < K + 2:
+        raise SystemExit(f"--seq-len {L} too small for K={K} unrolled steps (need >= {K + 2})")
+    total = 0.0
+    logs = []
+    h_in = H[:, : L - 1]
+    for k in range(1, K + 1):
+        n = L - k
+        tok = ids[:, k: k + n]
+        pos = torch.arange(k, k + n, device=ids.device).expand(B, n)
+        emb = emb_fn(tok)
+        run = lambda e, h, p: student(e, h, p)   # noqa: E731
+        f = torch.utils.checkpoint.checkpoint(run, emb, h_in[:, :n], pos, use_reentrant=False) if args.ckpt else run(emb, h_in[:, :n], pos)
+        tgt = H[:, k: k + n]
+        fr, tr = f.reshape(-1, f.shape[-1]), tgt.reshape(-1, tgt.shape[-1])
+        tid = tk_ids[:, k: k + n].reshape(-1, Kw)
+        tv = tk_vals[:, k: k + n].reshape(-1, Kw)
+        tl = tk_lse[:, k: k + n].reshape(-1)
+        kl_s = cos_s = 0.0
+        agree = 0
+        for c in range(0, fr.shape[0], args.kl_chunk):
+            kl, cs, ag = sparse_chunk_loss(fr[c: c + args.kl_chunk], tid[c: c + args.kl_chunk],
+                                           tv[c: c + args.kl_chunk], tl[c: c + args.kl_chunk],
+                                           tr[c: c + args.kl_chunk], frozen, args.temperature, args.cos_weight)
+            kl_s, cos_s, agree = kl_s + kl, cos_s + cs, agree + ag
+        rows = fr.shape[0]
+        lk = (kl_s + cos_s) / rows
+        total = total + (args.step_decay ** (k - 1)) * lk
+        logs.append((float(kl_s.detach()) / rows, float(cos_s.detach()) / rows / max(args.cos_weight, 1e-12), float(agree) / rows))
+        h_in = f
+    return total, logs
+
+
+def target_batches(from_dir, args, dev):
+    """Infinite batch iterator over the precompute package: per epoch a fresh shard shuffle and per row a random
+    crop offset, so multi-epoch runs see different block/anchor positions (what the df3 schedule wants)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import precompute_teacher_targets as pc
+    files = sorted(glob.glob(os.path.join(from_dir, "target-shard-*.npz")))
+    if not files:
+        raise SystemExit(f"no target-shard-*.npz in {from_dir} (run precompute_teacher_targets.py first)")
+    epoch = 0
+    dtype_note = False
+    while True:
+        rng = random.Random(args.seed + 131 * epoch)
+        order = files[:]
+        rng.shuffle(order)
+        for fp in order:
+            local = pc.stage_shard(fp, args.stage_dir)
+            d, meta = pc.load_shard(local)
+            dt = pc.hidden_dtype_of(meta, fp)
+            if not dtype_note and dt != args.hidden_dtype:
+                print(f"note: shards store hidden as {dt}, --hidden-dtype {args.hidden_dtype} is ignored for decoding",
+                      flush=True)
+                dtype_note = True
+            if not dtype_note and meta.get("top_k") not in (None, args.top_k_kl):
+                print(f"note: shards store top_k={meta.get('top_k')}, --top-k-kl {args.top_k_kl} is informational only; "
+                      f"the loss uses the stored ids", flush=True)
+                dtype_note = True
+            H = torch.from_numpy(pc.dequantize_hidden(d["hq"], d["hs"], dt)).half()
+            ids = torch.from_numpy(d["ids"].astype(np.int64))
+            ti = torch.from_numpy(d["tk_ids"].astype(np.int64))
+            tv = torch.from_numpy(d["tk_vals"])
+            tl = torch.from_numpy(d["tk_lse"])
+            S, Ls = ids.shape
+            L = min(args.seq_len, Ls)
+            if L < unroll_K(args) + 2:
+                raise SystemExit(f"stored seq {Ls} < --seq-len {args.seq_len} needed for K={unroll_K(args)} steps")
+            for b in range(0, S, args.batch):
+                idxs = list(range(b, min(b + args.batch, S)))
+                offs = [rng.randint(0, Ls - L) for _ in idxs] if Ls > L else [0] * len(idxs)
+                sl = lambda t: torch.stack([t[i, o: o + L] for i, o in zip(idxs, offs)])   # noqa: E731
+                yield (sl(ids).to(dev), sl(H).to(dev), sl(ti).to(dev), sl(tv).to(dev), sl(tl).to(dev))
+        epoch += 1
+        if args.epochs and epoch >= args.epochs:
+            print(f"--epochs {args.epochs} exhausted; stopping at an optimizer boundary", flush=True)
+            return
+
+
+def make_optim(name, params, lr, dev_type="cpu", allow_bnb=True):
+    """Optimizer chain for low-VRAM cards: adamw8bit (bitsandbytes) -> adafactor -> adamw. Returns (opt, name_used)
+    so the train state records what really ran (a resumed run resets optimizer state on a mismatch, as live mode)."""
+    if name == "sgd":
+        return torch.optim.SGD(params, lr=lr), "sgd"
+    if name == "adamw8bit" and allow_bnb:
+        try:
+            import bitsandbytes as bnb
+            return bnb.optim.AdamW8bit(params, lr=lr, betas=(0.9, 0.95), weight_decay=0.01), "adamw8bit"
+        except ImportError as e:
+            print(f"--optim adamw8bit: bitsandbytes unavailable ({type(e).__name__}); falling back to Adafactor",
+                  flush=True)
+            name = "adafactor"
+    if name in ("adafactor", "adamw8bit"):
+        try:
+            from transformers.optimization import Adafactor
+            return Adafactor(params, lr=lr, scale_parameter=False, relative_step=False, warmup_init=False), "adafactor"
+        except ImportError:
+            print("Adafactor unavailable; falling back to AdamW (FP32 optimizer state, more memory)", flush=True)
+    return torch.optim.AdamW(params, lr=lr, betas=(0.9, 0.95), weight_decay=0.01,
+                             fused=dev_type == "cuda"), "adamw"
+
+
+def train_dtype(dev):
+    """(autocast dtype, GradScaler) for the from-targets loop. sm_75 (T4) has FP16/INT8 tensor cores but no BF16
+    tensor cores: BF16 there silently emulates in FP32, so pre-Ampere cards train FP16 with a GradScaler."""
+    if dev.type != "cuda":
+        return torch.float32, False
+    major = torch.cuda.get_device_capability(dev)[0]
+    return (torch.float16, True) if major < 8 else (torch.bfloat16, False)
+
+
+def run_training(args, dev, student, opt, batch_iter, loss_fn, amp_dtype, use_scaler, save, step0):
+    """The shared optimizer loop of the live and from-targets modes: warmup+cosine LR, grad accumulation, atomic
+    saves on --save-every / --save-every-min / signals / time limit, and the per-step JSONL telemetry."""
+    scaler = torch.amp.GradScaler("cuda", enabled=use_scaler and dev.type == "cuda")
+
+    def lr_at(s):
+        if s < args.warmup:
+            return args.lr * (s + 1) / args.warmup
+        p = (s - args.warmup) / max(1, args.steps - args.warmup)
+        return args.lr * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(1.0, p))))
+
+    t0 = time.time()
+    log_f = open(os.path.join(args.out, "train_log.jsonl"), "a")
+    last_save_t, last_log_t, last_log_step = t0, t0, step0
+    stop = {"sig": None}
+    import signal
+
+    def _sig(s, _f):
+        stop["sig"] = s
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _sig)
+
+    for step in range(step0, args.steps):
+        for g in opt.param_groups:
+            g["lr"] = lr_at(step)
+        opt.zero_grad(set_to_none=True)
+        acc_logs = []
+        for _ in range(args.grad_accum):
+            try:
+                payload = next(batch_iter)
+            except StopIteration:      # --epochs exhausted: save what we have at an optimizer boundary
+                if time.time() - last_save_t > 1.0:
+                    save(step)
+                print(f"epoch limit reached after step {step}, stopping", flush=True)
+                log_f.close()
+                return
+            with torch.autocast(dev.type, dtype=amp_dtype, enabled=dev.type == "cuda" and amp_dtype != torch.float32):
+                loss, logs = loss_fn(payload)
+            if use_scaler and dev.type == "cuda":
+                scaler.scale(loss / args.grad_accum).backward()
+            else:
+                (loss / args.grad_accum).backward()
+            acc_logs.append(logs)
+        if use_scaler and dev.type == "cuda":
+            scaler.unscale_(opt)
+        gn = torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
+        if use_scaler and dev.type == "cuda":
+            scaler.step(opt)
+            scaler.update()
+        else:
+            opt.step()
+        now = time.time()
+        if step % args.log_every == 0:
+            K = unroll_K(args)
+            avg = [[sum(l[k][j] for l in acc_logs) / len(acc_logs) for j in range(3)] for k in range(K)]
+            sps = (now - last_log_t) / max(1, step - last_log_step)
+            rec = {"step": step, "lr": lr_at(step), "grad_norm": float(gn), "s": time.time() - t0,
+                   "kl": [a[0] for a in avg], "cos_loss": [a[1] for a in avg], "top1_agree": [a[2] for a in avg],
+                   "sec_per_step": round(sps, 3),
+                   "tok_per_sec": round(args.batch * args.grad_accum * args.seq_len / sps, 1) if sps else None,
+                   "elapsed_min": round((now - t0) / 60.0, 1),
+                   "eta_h": round((args.steps - step - 1) * sps / 3600.0, 2)}
+            print(json.dumps(rec), flush=True)
+            log_f.write(json.dumps(rec) + "\n")
+            log_f.flush()
+            last_log_t, last_log_step = now, step
+        if save_due(step + 1, args, now - last_save_t):
+            save(step + 1)
+            last_save_t = now
+        if args.time_limit_min and (now - t0) / 60.0 >= args.time_limit_min:
+            print(f"time limit of {args.time_limit_min} min reached after step {step + 1}, stopping", flush=True)
+            break
+        if stop["sig"] is not None:
+            if now - last_save_t > 1.0:
+                save(step + 1)
+            print(f"{signal.Signals(stop['sig']).name} received after step {step + 1}, stopping", flush=True)
+            break
+    log_f.close()
+
+
+def train_targets(args):
+    """--from-targets: the whole training loop without the teacher. Loads the frozen lm_head/embed rows, dequantizes
+    the stored INT4 hidden per batch, and trains the same blk.64 student with the sparse top-K KL."""
+    dev = torch.device(args.device)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    os.makedirs(args.out, exist_ok=True)
+    dims_p = os.path.join(args.from_targets, "dims.json")
+    if not os.path.exists(dims_p):
+        raise SystemExit(f"{dims_p} not found (the precompute package ships it)")
+    d = Dims(**json.load(open(dims_p)))
+    student = MTPHead(d).to(dev)
+    init_spec = f"st:{args.init_mtp_safetensors}" if args.init_mtp_safetensors else args.init
+    resume = find_resume(args.resume_from, args.out)
+    init = None if resume else load_init(init_spec, d)
+    if init is not None:
+        student.load_gguf_state(init)
+        print(f"init: {init_spec}")
+    n_par = sum(p.numel() for p in student.parameters())
+    gpu_frozen = args.frozen_device == "gpu" or (args.frozen_device == "auto" and n_par <= 5e8)
+    frozen = Frozen(args.lm_head_file or os.path.join(args.from_targets, "lm_head_embed_frozen.safetensors"),
+                    dev, gpu_frozen)
+    print(f"student: {n_par / 1e6:.1f}M parameters; frozen lm_head/embed on {frozen.dev} "
+          f"(vocab {frozen.vocab}); dims {vars(d)}", flush=True)
+    opt, optim_used = make_optim(args.optim, student.parameters(), args.lr, dev.type)
+    print(f"optimizer: {optim_used}", flush=True)
+    step0 = 0
+    st_path = os.path.join(args.out, "train_state.pt")
+    if resume:
+        st = torch.load(resume, map_location="cpu", weights_only=False)
+        student.load_state_dict(st["student"])
+        if st.get("optim") in (None, optim_used):
+            opt.load_state_dict(st["opt"])
+        else:
+            print(f"resume: optimizer {st.get('optim')} != {optim_used}, optimizer state reset")
+        step0 = int(st["step"])
+        print(f"resumed at step {step0} from {resume}")
+    if step0 >= args.steps:
+        print(f"nothing to do: step {step0} >= --steps {args.steps}")
+        if not os.path.exists(os.path.join(args.out, "mtp_final.safetensors")):
+            from safetensors.torch import save_file
+            save_file(student.gguf_state(), os.path.join(args.out, "mtp_final.safetensors"))
+        return
+
+    def save(done_steps):
+        from safetensors.torch import save_file
+        sd = student.gguf_state()
+        ck = os.path.join(args.out, f"mtp_step{done_steps}.safetensors")
+        save_file(sd, ck + ".tmp")
+        os.replace(ck + ".tmp", ck)
+        torch.save({"student": student.state_dict(), "opt": opt.state_dict(), "step": done_steps,
+                    "optim": optim_used, "args": vars(args)}, st_path + ".tmp")
+        os.replace(st_path + ".tmp", st_path)
+        prune_checkpoints(args.out, args.keep_last)
+        if done_steps == args.steps:
+            save_file(sd, os.path.join(args.out, "mtp_final.safetensors"))
+        print(f"saved step {done_steps}: {ck}", flush=True)
+
+    dtype, use_scaler = train_dtype(dev)
+    print(f"precision: {str(dtype).replace('torch.', '')}"
+          f"{' + GradScaler' if use_scaler else ''} (auto per GPU)", flush=True)
+    batches = target_batches(args.from_targets, args, dev)
+
+    def loss_fn(payload):
+        ids, H, ti, tv, tl = payload
+        return unrolled_loss_targets(student, frozen.emb_fn, frozen, ids, H, ti, tv, tl, args)
+
+    run_training(args, dev, student, opt, batches, loss_fn, dtype, use_scaler, save, step0)
+
+
 # ------------------------------------------------------------------------------------------------------------ main
 def random_batches(vocab, seq_len, batch, seed):
     """--smoke: random token ids (no corpus, no tokenizer), for a pipeline test of the teacher + student + loss + step."""
@@ -468,31 +781,12 @@ def train(args):
             save_file(student.gguf_state(), os.path.join(args.out, "mtp_final.safetensors"))
         return
 
-    def lr_at(s):
-        if s < args.warmup:
-            return args.lr * (s + 1) / args.warmup
-        p = (s - args.warmup) / max(1, args.steps - args.warmup)
-        return args.lr * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(1.0, p))))
-
     vocab = teacher.lm_head.weight.shape[0]
     data = random_batches(vocab, args.seq_len, args.batch, args.seed + step0) if args.smoke else \
         packed_batches(args.corpus, teacher.tok, args.seq_len, args.batch, args.seed + step0)
     rng = random.Random(args.seed + 7 * step0)
     lm_w = teacher.lm_head.weight
     emb_fn = lambda t: teacher.embed(t)   # noqa: E731  (frozen, BF16)
-    t0 = time.time()
-    log_f = open(os.path.join(args.out, "train_log.jsonl"), "a")
-    last_save_t, last_log_t, last_log_step = t0, t0, step0
-
-    # SIGINT/SIGTERM only set a flag: the loop finishes the current optimizer step and then saves atomically,
-    # so a Ctrl-C or an external kill never cuts a save in half and never loses the last --save-every-min minutes.
-    stop = {"sig": None}
-    import signal
-
-    def _sig(s, _f):
-        stop["sig"] = s
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(sig, _sig)
 
     def save(done_steps):
         from safetensors.torch import save_file
@@ -508,50 +802,16 @@ def train(args):
             save_file(sd, os.path.join(args.out, "mtp_final.safetensors"))
         print(f"saved step {done_steps}: {ck}", flush=True)
 
-    for step in range(step0, args.steps):
-        for g in opt.param_groups:
-            g["lr"] = lr_at(step)
-        opt.zero_grad(set_to_none=True)
-        acc_logs = []
-        for _ in range(args.grad_accum):
-            ids = next(data).to(dev)
-            if rng.random() < args.onpolicy_frac:   # teacher continuation of a corpus prefix (on-policy tokens)
-                keep = args.seq_len - args.onpolicy_new
-                ids = teacher.continue_(ids[:, :keep], args.onpolicy_new)[:, : args.seq_len]
-            H = teacher.hidden(ids)
-            with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
-                loss, logs = unrolled_loss(student, emb_fn, lm_w, ids, H, args)
-            (loss / args.grad_accum).backward()
-            acc_logs.append(logs)
-        gn = torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
-        opt.step()
-        now = time.time()
-        if step % args.log_every == 0:
-            K = unroll_K(args)
-            avg = [[sum(l[k][j] for l in acc_logs) / len(acc_logs) for j in range(3)] for k in range(K)]
-            sps = (now - last_log_t) / max(1, step - last_log_step)   # seconds per optimizer step
-            rec = {"step": step, "lr": lr_at(step), "grad_norm": float(gn), "s": time.time() - t0,
-                   "kl": [a[0] for a in avg], "cos_loss": [a[1] for a in avg], "top1_agree": [a[2] for a in avg],
-                   "sec_per_step": round(sps, 3),
-                   "tok_per_sec": round(args.batch * args.grad_accum * args.seq_len / sps, 1) if sps else None,
-                   "elapsed_min": round((now - t0) / 60.0, 1),
-                   "eta_h": round((args.steps - step - 1) * sps / 3600.0, 2)}
-            print(json.dumps(rec), flush=True)
-            log_f.write(json.dumps(rec) + "\n")
-            log_f.flush()
-            last_log_t, last_log_step = now, step
-        if save_due(step + 1, args, now - last_save_t):
-            save(step + 1)
-            last_save_t = now
-        if args.time_limit_min and (now - t0) / 60.0 >= args.time_limit_min:
-            print(f"time limit of {args.time_limit_min} min reached after step {step + 1}, stopping", flush=True)
-            break
-        if stop["sig"] is not None:
-            if now - last_save_t > 1.0:   # the signal arrived between saves: one more atomic save right here
-                save(step + 1)
-            print(f"{signal.Signals(stop['sig']).name} received after step {step + 1}, stopping", flush=True)
-            break
-    log_f.close()
+    def loss_fn(payload):
+        ids = payload.to(dev)
+        if rng.random() < args.onpolicy_frac:   # teacher continuation of a corpus prefix (on-policy tokens)
+            keep = args.seq_len - args.onpolicy_new
+            ids = teacher.continue_(ids[:, :keep], args.onpolicy_new)[:, : args.seq_len]
+        H = teacher.hidden(ids)
+        return unrolled_loss(student, emb_fn, lm_w, ids, H, args)
+
+    # live mode keeps its BF16 autocast and no GradScaler exactly as before (an A100/RTX PRO card has BF16 cores)
+    run_training(args, dev, student, opt, data, loss_fn, torch.bfloat16, False, save, step0)
 
 
 def selftest():
@@ -673,6 +933,74 @@ def selftest():
     trig_ok &= save_due(499, sv, 21 * 60.0) and not save_due(499, sv, 1.0) and save_due(2000, sv, 0.0)
     ok &= trig_ok
     print(f"save triggers (step / final / minutes / disabled combos): {'ok' if trig_ok else 'WRONG'}")
+
+    # ---- from-targets (T4 / local-GPU) end-to-end on synthetic shards: the whole path, no teacher anywhere
+    import tempfile
+    from types import SimpleNamespace
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import precompute_teacher_targets as pc
+    td = tempfile.mkdtemp(prefix="tg_selftest_")
+    ids_t = torch.randint(0, V, (3, 32))
+    with torch.no_grad():
+        H_t = teacher_hidden(ids_t)
+    z_t = lm(H_t)                                   # [3, 32, V] toy-teacher logits
+    Kt = 8
+    ti_t, tv_t, tl_t = pc.topk_targets(z_t.reshape(-1, V), Kt)
+    ti_t = ti_t.reshape(3, 32, Kt)
+    tv_t = tv_t.reshape(3, 32, Kt)
+    tl_t = tl_t.reshape(3, 32)
+    hq_t, hs_t = pc.quantize_hidden(H_t.numpy(), "int4g64")
+    for si, lo, hi in ((0, 0, 2), (1, 2, 3)):       # shard 0: rows 0-1, shard 1: row 2
+        pc.write_shard(pc.shard_path(td, si), ids_t[lo:hi].numpy().astype(np.int32), hq_t[lo:hi], hs_t[lo:hi],
+                       ti_t[lo:hi].astype(np.int32), tv_t[lo:hi], tl_t[lo:hi],
+                       {"version": 1, "hidden_dtype": "int4g64", "top_k": Kt, "hidden": d.hidden,
+                        "seq_len": 32, "samples": hi - lo})
+    from safetensors.torch import save_file
+    save_file({"embed_tokens.weight": emb.weight.detach().half(), "lm_head.weight": lm.weight.detach().half(),
+               "output_norm.weight": torch.ones(d.hidden).half()},
+              os.path.join(td, "lm_head_embed_frozen.safetensors"))
+    with open(os.path.join(td, "dims.json"), "w") as f:
+        json.dump(vars(d), f)
+
+    def run_targets(drafter, steps):
+        a_t = SimpleNamespace(
+            from_targets=td, lm_head_file=None, top_k_kl=Kt, hidden_dtype="int4g64", epochs=0, stage_dir=None,
+            frozen_device="cpu", out=os.path.join(td, f"run_{drafter}"), init="random",
+            init_mtp_safetensors=None, resume_from="none", keep_last=1, time_limit_min=0,
+            steps=steps, seq_len=24, batch=2, grad_accum=1, lr=5e-3, warmup=1, drafter=drafter,
+            df3_block=4, df3_layers=2, unroll=4, temperature=1.0, cos_weight=0.5, step_decay=0.8,
+            kl_chunk=16, onpolicy_frac=0.0, onpolicy_new=8, ckpt=True, log_every=1, save_every=0,
+            save_every_min=0.0, seed=7, device="cpu", optim="adamw8bit", smoke=False, teacher=None,
+            corpus=None, selftest=False, export_init=None, latest=None, attn_impl=None, teacher_f32=False)
+        train_targets(a_t)
+        log = [json.loads(l) for l in open(os.path.join(a_t.out, "train_log.jsonl"))]
+        good = (len(log) >= 2 and all(math.isfinite(x) for x in (log[0]["kl"][0], log[-1]["kl"][0]))
+                and log[-1]["kl"][0] < log[0]["kl"][0]
+                and all(k in log[-1] for k in ("sec_per_step", "tok_per_sec", "elapsed_min", "eta_h", "top1_agree"))
+                and os.path.exists(os.path.join(a_t.out, "mtp_final.safetensors")))
+        return good, log[0]["kl"][0], log[-1]["kl"][0]
+
+    ok_m, k0, k1 = run_targets("mtp", 12)
+    ok &= ok_m
+    print(f"[{'PASS' if ok_m else 'FAIL'}] --from-targets mtp: kl {k0:.3f} -> {k1:.3f}, final saved, telemetry ok")
+    ok_d, k0d, k1d = run_targets("df3", 10)
+    ok &= ok_d
+    print(f"[{'PASS' if ok_d else 'FAIL'}] --from-targets df3 (block schedule K=4): kl {k0d:.3f} -> {k1d:.3f}")
+
+    # optimizer fallback chain without bitsandbytes: adamw8bit -> adafactor (or adamw) must never hard-fail
+    _p = [torch.zeros(2, requires_grad=True)]
+    _o1, n1 = make_optim("adamw8bit", _p, 1e-3, "cpu", allow_bnb=False)
+    _o2, n2 = make_optim("sgd", _p, 1e-3)
+    fb_ok = n1 in ("adafactor", "adamw") and n2 == "sgd"
+    ok &= fb_ok
+    print(f"[{'PASS' if fb_ok else 'FAIL'}] optimizer fallback chain: adamw8bit -> {n1}, sgd -> {n2}")
+
+    # precision policy: pre-Ampere (T4) FP16 + GradScaler, Ampere+ BF16, CPU FP32 (cuda branches documented)
+    dt_cpu, sc_cpu = train_dtype(torch.device("cpu"))
+    prec_ok = dt_cpu == torch.float32 and not sc_cpu
+    ok &= prec_ok
+    print(f"[{'PASS' if prec_ok else 'FAIL'}] train_dtype on cpu: fp32, no scaler (sm<80 -> fp16+scaler on cuda)")
+
     print(f"full-size student: {n_par / 1e6:.1f}M parameters, GGUF shapes {'ok' if shapes_ok else 'WRONG'}")
     print("selftest:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
@@ -720,7 +1048,21 @@ def main():
                     help="also save when this many wall-clock minutes passed since the last save (0 = only --save-every)")
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--device", default="cuda", help="cuda (training) or cpu (--smoke tests)")
-    ap.add_argument("--optim", default="adamw", choices=["adamw", "sgd"])
+    ap.add_argument("--optim", default="adamw", choices=["adamw", "sgd", "adamw8bit", "adafactor"],
+                    help="adamw (live default) | sgd (CPU smoke) | adamw8bit / adafactor (from-targets on 16 GB cards; "
+                         "both fall back down the chain when the dependency is missing)")
+    ap.add_argument("--from-targets", help="train without the teacher: the target package dir written by "
+                    "precompute_teacher_targets.py (T4 16 GB / local-GPU mode)")
+    ap.add_argument("--lm-head-file", help="frozen safetensors (default: <from-targets>/lm_head_embed_frozen.safetensors)")
+    ap.add_argument("--top-k-kl", type=int, default=64, help="sparse KL over this many stored teacher ids per token "
+                    "(from-targets mode; skipping the full 248K lm_head backward is what makes a T4 fast)")
+    ap.add_argument("--hidden-dtype", default="int4g64", choices=["int4g64", "int8"],
+                    help="quantization of the stored teacher hidden in the package")
+    ap.add_argument("--epochs", type=int, default=1, help="passes over the target package; each epoch reshuffles the "
+                    "shards and crops a random block/anchor offset per row (training saves and stops when exhausted)")
+    ap.add_argument("--stage-dir", help="copy shards here once before training (local SSD instead of a Drive FUSE)")
+    ap.add_argument("--frozen-device", default="auto", choices=["auto", "cpu", "gpu"],
+                    help="where the frozen lm_head/embed rows live (auto: GPU while the student is <= 500M params)")
     ap.add_argument("--teacher-f32", action="store_true", help="load the teacher in FP32 (CPU smoke tests)")
     ap.add_argument("--smoke", action="store_true", help="random token ids instead of --corpus (pipeline test)")
     ap.add_argument("--selftest", action="store_true")
@@ -755,11 +1097,20 @@ def main():
         save_file(s.gguf_state(), a.out)
         print(f"wrote {a.out}: {len(sd)} tensors")
         return 0
+    if a.from_targets:
+        if "--onpolicy-frac" in sys.argv and a.onpolicy_frac:
+            ap.error("--onpolicy-frac needs the live teacher; --from-targets has no teacher to continue from")
+        a.onpolicy_frac = 0.0   # the live default (0.25) is meaningless without a teacher
+        if a.teacher or a.corpus:
+            print("note: --teacher/--corpus are ignored in --from-targets mode")
+        if not a.out:
+            ap.error("--out is required")
+        train_targets(a)
+        return 0
     if not (a.teacher and (a.corpus or a.smoke) and a.out):
         ap.error("--teacher, --corpus (or --smoke) and --out are required")
     train(a)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -52,10 +52,12 @@ python3 make_colab_notebook.py && python3 check_colab_notebook.py
 | `convert_gguf_to_hf_bf16.py` | turns the Bonsai GGUF (PTQ1_0 or Q2_0, Hadamard basis) into the BF16 Hugging Face teacher (`Qwen3_5ForCausalLM`) | CPU, 6 GB RAM, about 35 min |
 | `compare_engine_hf.py` | checks a converted checkpoint against the engine's per-layer tap dumps | CPU + engine |
 | `prepare_corpus.py` | streams and mixes about 200,000 samples from Hugging Face into ChatML JSONL shards; resumable, and gated sources that failed without a token are skipped on reruns (`--retry-errors` forces a retry) | any machine with network |
-| `train_bonsai_mtp.py` | live online distillation: frozen BF16 teacher, one trainable decoder layer + nextn projection, 4-step unrolled self-rollout, full-vocabulary KL + cosine feature alignment; atomic checkpoints on `--save-every` steps or `--save-every-min` minutes, ETA/throughput in the log, warm start also from the ProCreations `mtp.*` schema | 1x RTX PRO 6000 96 GB |
+| `train_bonsai_mtp.py` | live online distillation: frozen BF16 teacher, one trainable decoder layer + nextn projection, 4-step unrolled self-rollout, full-vocabulary KL + cosine feature alignment; atomic checkpoints on `--save-every` steps or `--save-every-min` minutes, ETA/throughput in the log, warm start also from the ProCreations `mtp.*` schema. `--from-targets DIR` is the teacher-free mode for 16 GB cards (sparse top-K KL against a precomputed package) | 1x RTX PRO 6000 96 GB (live) / any >= 14 GB GPU (`--from-targets`) |
+| `precompute_teacher_targets.py` | the one-shot teacher burst for the T4 path: pure forward (`torch.inference_mode`) over a curated corpus subset, stores INT4 group-64 hidden + sparse top-K logits + logsumexp per position, shard files + atomic manifest (auto-resume, `--max-gb` quota, tok/s + ETA), and the frozen FP16 `lm_head_embed_frozen.safetensors` | the big-GPU session, once, 20-45 min |
 | `inject_mtp_gguf.py` | quantizes the trained head to Q4_K_M or Q8_0 and writes a new GGUF with `blk.64` and `block_count = 65`, or a small blk.64-only GGUF (`--mtp-only-out`) to use as a `--mtp-gguf` sidecar or inject later with `--from-gguf` | CPU |
 | `train_bonsai_mtp_colab.ipynb` | the whole pipeline on Google Colab (see the quick start above) | Colab, RTX PRO 6000 |
-| `make_colab_notebook.py`, `check_colab_notebook.py` | generate the notebook and check it against the scripts (including a negative control: a broken copy must be detected) | CPU |
+| `make_colab_notebook.py`, `check_colab_notebook.py` | generate both notebooks (live + T4) and check them against the scripts (including a negative control: a broken copy must be detected) | CPU |
+| `train_bonsai_t4_student_colab.ipynb` | the teacher-free path: Phase A burst once on a big GPU, then unlimited Phase B iterations on a T4 16 GB / local GPU | Colab T4 / local |
 
 ## 0. Teacher checkpoint (GGUF -> Hugging Face BF16)
 
@@ -212,3 +214,35 @@ prompt 509 tokens, 256 generated tokens, both runs with bit-identical output tok
 | MTP 2 fixed | 17.7078 | 158 / 198 |
 
 These runs are tests of the plumbing: a head distilled on Bonsai itself should accept more drafts.
+
+## 5. T4 / local-GPU mode (precompute once, train without the teacher)
+
+`PRECOMPUTE_T4_DESIGN.md` carries the full audit and budgets; the short version:
+
+1. **Phase A, once, on a >= 48 GB session** (the fastest flow: the main notebook's cells 1-4, then cell 3 of
+   `train_bonsai_t4_student_colab.ipynb`):
+
+   ```bash
+   python3 tools/bonsai_mtp_train/precompute_teacher_targets.py \
+       --teacher /content/models/bonsai-hf-bf16 --corpus /content/drive/MyDrive/bonsai_mtp/corpus \
+       --out /content/drive/MyDrive/bonsai_mtp/targets --samples 8000 --seq-len 1024 --max-gb 100
+   ```
+
+   Stores INT4 group-64 teacher hidden + sparse top-64 logits + logsumexp per position (~25 GB for 8.2M tokens)
+   plus the frozen FP16 `lm_head_embed_frozen.safetensors` (4.7 GiB). Auto-resumes per shard.
+
+2. **Phase B, unlimited, on a T4 16 GB / L4 / local GPU** — `train_bonsai_t4_student_colab.ipynb` cell 4, or:
+
+   ```bash
+   python3 tools/bonsai_mtp_train/train_bonsai_mtp.py --from-targets /content/drive/MyDrive/bonsai_mtp/targets \
+       --out /content/drive/MyDrive/bonsai_mtp/run_t4 --drafter mtp --steps 2000 --seq-len 1024 \
+       --batch 2 --grad-accum 8 --epochs 3 --optim adamw8bit --stage-dir /content/target_cache
+   ```
+
+   No teacher is loaded; the loss is a sparse top-K KL (the student logits are the K gathered lm_head rows,
+   renormalized, teacher probabilities from the stored top-K + logsumexp) plus the same cosine feature loss.
+   sm_75 cards train FP16 + `GradScaler` automatically (no BF16 tensor cores there); `--frozen-device cpu` keeps
+   the 4.7 GiB of frozen rows out of a small card when the student grows past 500M parameters (a future 2-layer
+   DFlash head). Expected step time on a T4: ~2-6 s at 16-32K tokens/step, vs 52 s for a live teacher on the same
+   card and 24.19 s on the A100 — verify with your own run and record it.
+
