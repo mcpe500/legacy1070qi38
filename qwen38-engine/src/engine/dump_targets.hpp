@@ -22,8 +22,9 @@ struct DumpConfig {
     int samples = 0;               // 0 = every plan entry
     int seq_len = 0;               // 0 = plan.json seq_len
     int top_k = 64;
-    const char * hidden_dtype = "int4g64";   // int4g64 | int8
-    int shard_samples = 128;
+    std::string hidden_dtype = "int4g64";  // int4g64 | int8 (std::string: a const char* here held a dangling
+                                           // next().c_str() from main.cpp and corrupted the dtype check)
+    int shard_samples = 64;
     double max_gb = 0;             // 0 = unlimited; stop with a consistent manifest when the package hits it
     bool dump_f32_hidden = false;  // extra hf32.npy per shard (smoke parity checks; 20 KB/token)
 };

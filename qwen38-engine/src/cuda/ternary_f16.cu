@@ -14,6 +14,13 @@
 #include "../common/f16bits.hpp"
 #include "../common/ternary_spec.hpp"
 
+struct TernaryF16 {
+    uint16_t * w16 = nullptr;    // FP16 weight chunk scratch
+    uint16_t * xf = nullptr;     // FP16 rotated activations [t_max][in]
+    int64_t w16_cap = 0, xf_cap = 0;
+    cublasHandle_t handle = nullptr;
+};
+
 namespace {
 
 constexpr int64_t kChunkRows = 32768;   // lm_head rows per dequant+GEMM chunk (~320 MiB of FP16 scratch)
@@ -34,6 +41,15 @@ constexpr int64_t kChunkRows = 32768;   // lm_head rows per dequant+GEMM chunk (
 #define F16_BODY_OK 1
 #else
 #define F16_BODY_OK 0
+#endif
+
+// cuBLAS algo choice: force the legacy Tensor Core path where the enum still exists (pre-CUDA-13 cuBLAS;
+// CUDA 13 dropped sm_61 and retired some legacy spellings). FP16 inputs with COMPUTE_32F select tensor
+// core kernels automatically on every cuBLAS >= 11, so the fallback stays correct either way.
+#ifdef CUBLAS_GEMM_DEFAULT_TENSOR_OP
+constexpr cublasGemmAlgo_t kGemmAlgo = CUBLAS_GEMM_DEFAULT_TENSOR_OP;
+#else
+constexpr cublasGemmAlgo_t kGemmAlgo = CUBLAS_GEMM_DEFAULT;
 #endif
 
 // Same butterfly as ternary_gemv.cu rotate_q8_kernel, FP32 in shared memory, FP16-bit store, no Q8 part.
@@ -69,7 +85,7 @@ __global__ void rotate_f16_kernel(const float * __restrict__ x, const float * __
 #endif
 }
 
-__constant__ uint8_t c_ptq1_code[256];   // uploaded once by ternary_f16_init from ternary::kPtq1Code
+__constant__ uint8_t c_ptq1_code[256];   // uploaded once by the init paths from ternary::kPtq1Code
 
 // One PTQ1_0 group (28 bytes -> 128 FP16 weights). Digit layout copied from the CPU reference
 // (ternary_cpu.cpp ptq1_0_dot): bytes 0..15 carry 5 digits each for indices 16s+j, bytes 16..23 for
@@ -102,24 +118,30 @@ __global__ void dequant_ptq1_f16_kernel(const uint8_t * __restrict__ W, int64_t 
 #endif
 }
 
-}  // namespace
-
-struct TernaryF16 {
-    uint16_t * w16 = nullptr;    // FP16 weight chunk scratch
-    uint16_t * xf = nullptr;     // FP16 rotated activations [t_max][in]
-    int64_t w16_cap = 0, xf_cap = 0;
-    cublasHandle_t handle = nullptr;
-};
-
-bool ternary_f16_supported() {
-    int dev = 0, major = 0;
-    if (cudaGetDevice(&dev) != cudaSuccess) return false;
-    if (cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) != cudaSuccess) return false;
-    return major >= 7;
+// The one cublas call of a chunk. w_chunk holds `rows` FP16 weight rows; y_chunk is the DISJOINT output
+// slice, so beta is always 0: a beta of 1 here accumulates whatever the buffer already held into
+// rows 32768..out-1 (the vocabulary corruption fixed 2026-11-24).
+cudaError_t gemm_chunk(TernaryF16 * f, const uint16_t * w_chunk, int64_t rows, int64_t in, int64_t T,
+                       int64_t ld_out, float * y_chunk, cudaStream_t s) {
+    const float alpha = 1.0f, beta0 = 0.0f;
+    return cublasGemmEx(f->handle, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(rows), static_cast<int>(T),
+                        static_cast<int>(in), &alpha, w_chunk, CUDA_R_16F, static_cast<int>(in), f->xf,
+                        CUDA_R_16F, static_cast<int>(in), &beta0, y_chunk, CUDA_R_32F,
+                        static_cast<int>(ld_out), CUBLAS_COMPUTE_32F, kGemmAlgo) == CUBLAS_STATUS_SUCCESS
+               ? cudaSuccess
+               : cudaErrorUnknown;
 }
 
-TernaryF16 * ternary_f16_init(int64_t w16_bytes, int64_t xf_bytes) {
-    if (!ternary_f16_supported()) return nullptr;
+int dequant_launch(const uint8_t * W, int64_t groups, int64_t groups_per_row, int64_t in, uint16_t * out,
+                   cudaStream_t s) {
+    const int threads = 256;
+    dequant_ptq1_f16_kernel<<<static_cast<unsigned>((groups + threads - 1) / threads), threads, 0, s>>>(
+        W, groups_per_row, in, out);
+    return cudaGetLastError() == cudaSuccess ? 0 : -1;
+}
+
+TernaryF16 * init_common(int64_t w16_bytes, int64_t xf_bytes, bool need_75) {
+    if (need_75 && !ternary_f16_supported()) return nullptr;
     CKF_HOST(cudaMemcpyToSymbol(c_ptq1_code, ternary::kPtq1Code, 256));
     TernaryF16 * f = new TernaryF16();
     f->w16_cap = w16_bytes;
@@ -133,9 +155,37 @@ TernaryF16 * ternary_f16_init(int64_t w16_bytes, int64_t xf_bytes) {
         ternary_f16_free(f);
         return nullptr;
     }
-    std::fprintf(stderr, "f16 gemm: sm_75+ path active (w16 scratch %.0f MiB, act scratch %.0f MiB)\n",
-                 static_cast<double>(w16_bytes) / 1048576.0, static_cast<double>(xf_bytes) / 1048576.0);
+#ifdef CUBLAS_GEMM_DEFAULT_TENSOR_OP
+    // Legacy Tensor Core force; the modern heuristics reach the same kernels, so a refusal is not fatal.
+    if (cublasSetMathMode(f->handle, CUBLAS_TENSOR_OP_MATH) != CUBLAS_STATUS_SUCCESS)
+        std::fprintf(stderr, "ternary_f16: TENSOR_OP math mode refused, cublas heuristics stay\n");
+#endif
+    if (!need_75)
+        std::fprintf(stderr, "ternary_f16: pre-only context (cublas FP16 emulation, no >= 750 kernels)\n");
     return f;
+}
+
+}  // namespace
+
+bool ternary_f16_supported() {
+    int dev = 0, major = 0, minor = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess) return false;
+    if (cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev) != cudaSuccess ||
+        cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev) != cudaSuccess)
+        return false;
+    return major > 7 || (major == 7 && minor >= 5);   // sm_75+: the kernel bodies exist only there
+}
+
+TernaryF16 * ternary_f16_init(int64_t w16_bytes, int64_t xf_bytes) {
+    TernaryF16 * f = init_common(w16_bytes, xf_bytes, true);
+    if (f)
+        std::fprintf(stderr, "f16 gemm: sm_75+ path active (w16 scratch %.0f MiB, act scratch %.0f MiB)\n",
+                     static_cast<double>(w16_bytes) / 1048576.0, static_cast<double>(xf_bytes) / 1048576.0);
+    return f;
+}
+
+TernaryF16 * ternary_f16_init_pre(int64_t w16_bytes, int64_t xf_bytes) {
+    return init_common(w16_bytes, xf_bytes, false);
 }
 
 void ternary_f16_free(TernaryF16 * f) {
@@ -146,6 +196,12 @@ void ternary_f16_free(TernaryF16 * f) {
     delete f;
 }
 
+cudaError_t ternary_f16_set_activations(TernaryF16 * f, const uint16_t * xf_host, int64_t T, int64_t in) {
+    if (!f || in < 1 || T < 1 || static_cast<int64_t>(T) * in > f->xf_cap) return cudaErrorInvalidValue;
+    return cudaMemcpy(f->xf, xf_host, sizeof(uint16_t) * static_cast<size_t>(T) * static_cast<size_t>(in),
+                      cudaMemcpyHostToDevice);
+}
+
 cudaError_t ternary_f16_rotate(TernaryF16 * f, const float * x, const float * signs, int64_t in, int64_t T,
                                cudaStream_t s) {
     if (!f || in % 1024 || static_cast<int64_t>(T) * in > f->xf_cap) return cudaErrorInvalidValue;
@@ -154,30 +210,39 @@ cudaError_t ternary_f16_rotate(TernaryF16 * f, const float * x, const float * si
     return cudaGetLastError();
 }
 
+cudaError_t ternary_f16_dequant(TernaryF16 * f, const uint8_t * W, int64_t in, int64_t out, uint16_t * dst16,
+                                cudaStream_t s) {
+    if (!f || !dst16 || in % ternary::kPtqGroup || out < 1) return cudaErrorInvalidValue;
+    const int64_t groups = out * (in / ternary::kPtqGroup);
+    return dequant_launch(W, groups, in / ternary::kPtqGroup, in, dst16, s) == 0 ? cudaSuccess
+                                                                                 : cudaErrorUnknown;
+}
+
 cudaError_t ternary_f16_gemm(TernaryF16 * f, const uint8_t * W, int64_t in, int64_t out, int64_t T, float * y,
                              cudaStream_t s) {
     if (!f || in % ternary::kPtqGroup) return cudaErrorInvalidValue;
     if (static_cast<int64_t>(T) * in > f->xf_cap) return cudaErrorInvalidValue;
+    if (cublasSetStream(f->handle, s) != CUBLAS_STATUS_SUCCESS) return cudaErrorUnknown;
     const int64_t groups_per_row = in / ternary::kPtqGroup;
     const int64_t row_bytes = groups_per_row * ternary::kPtqGroupBytes;
-    if (cublasSetStream(f->handle, s) != CUBLAS_STATUS_SUCCESS) return cudaErrorUnknown;
-    const float alpha = 1.0f, beta0 = 0.0f;
-    float beta_acc = 1.0f;
     for (int64_t r0 = 0; r0 < out; r0 += kChunkRows) {
         const int64_t rows = std::min(kChunkRows, out - r0);
         if (rows * in * 2 > f->w16_cap) return cudaErrorInvalidValue;
-        const int64_t groups = rows * groups_per_row;
-        const int threads = 256;
-        dequant_ptq1_f16_kernel<<<static_cast<unsigned>((groups + threads - 1) / threads), threads, 0, s>>>(
-            W + r0 * row_bytes, groups_per_row, in, f->w16);
-        CKF(cudaGetLastError());
-        // C [rows][T] (column-major view of y[r0..][T] row-major) = W_chunk^T . xf, FP32 accumulate
-        const cublasStatus_t st = cublasGemmEx(f->handle, CUBLAS_OP_T, CUBLAS_OP_N, static_cast<int>(rows),
-                                               static_cast<int>(T), static_cast<int>(in), &alpha, f->w16, CUDA_R_16F,
-                                               static_cast<int>(in), f->xf, CUDA_R_16F, static_cast<int>(in),
-                                               r0 == 0 ? &beta0 : &beta_acc, y + r0, CUDA_R_32F, static_cast<int>(out),
-                                               CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
-        if (st != CUBLAS_STATUS_SUCCESS) return cudaErrorUnknown;
+        if (dequant_launch(W + r0 * row_bytes, rows * groups_per_row, groups_per_row, in, f->w16, s) != 0)
+            return cudaErrorUnknown;
+        CKF(gemm_chunk(f, f->w16, rows, in, T, out, y + r0, s));
+    }
+    return cudaSuccess;
+}
+
+cudaError_t ternary_f16_gemm_pre(TernaryF16 * f, const uint16_t * w16, int64_t in, int64_t out, int64_t T,
+                                 float * y, cudaStream_t s) {
+    if (!f || in % ternary::kPtqGroup) return cudaErrorInvalidValue;
+    if (static_cast<int64_t>(T) * in > f->xf_cap) return cudaErrorInvalidValue;
+    if (cublasSetStream(f->handle, s) != CUBLAS_STATUS_SUCCESS) return cudaErrorUnknown;
+    for (int64_t r0 = 0; r0 < out; r0 += kChunkRows) {
+        const int64_t rows = std::min(kChunkRows, out - r0);
+        CKF(gemm_chunk(f, w16 + r0 * in, rows, in, T, out, y + r0, s));
     }
     return cudaSuccess;
 }

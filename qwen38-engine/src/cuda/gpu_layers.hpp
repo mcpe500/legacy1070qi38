@@ -106,6 +106,9 @@ public:
     // GPU LM head on already-normed host rows h_host [n][5120] (n <= 8): the CPU MTP block uses it for its draft logits,
     // so a CPU draft step does not read the 1 GiB LM head from DDR4.
     void head_host(const float * h_host, int n, float * logits);
+    // head_host + on-device top-K/logsumexp reduction over the full vocabulary: copies back only ids[n][K]
+    // (int32, descending like torch.topk), vals[n][K] (FP16) and lse[n] (FP16). K <= 256. Requires has_head().
+    void head_topk(const float * h_host, int n, int K, int32_t * ids, uint16_t * vals, uint16_t * lse_out);
     // MTP block on the GPU (cfg.mtp). concat_host [T][10240] = [rmsnorm(emb, enorm) | rmsnorm(h, hnorm)] (built on the host).
     // Fills the MTP KV at positions pos0 .. pos0+T-1; h_out (optional) receives shared_head_norm of the last row and logits
     // (optional) its logits through the GPU LM head.

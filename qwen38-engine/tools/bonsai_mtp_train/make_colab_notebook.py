@@ -520,7 +520,7 @@ all 64 layers + the LM head resident, ~5.7 GiB VRAM) and runs Phase A directly:
 
 | Phase | What | Cost |
 |---|---|---|
-| A (once) | `./build/qwen38-engine --dump-targets`: per sample a clean DeltaNet/KV state, one full prefill, the output-normed hidden of every position captured, top-64 logits + FP16 logsumexp computed chunked on the GPU, hidden stored INT4 group-64 — the exact math the home engine runs, so parity is by construction. Plus `export_frozen_head.py`: only 3 tensors (embed, output_norm, lm_head — unrotated) -> `lm_head_embed_frozen.safetensors` in ~2-4 min, never touching the other ~850 tensors | ~5.8 GB Drive per 2000 samples (4000 samples ~11.6 GB); speed recorded by the first run |
+| A (once) | `./build/qwen38-engine --dump-targets`: per sample a clean DeltaNet/KV state, one full prefill, the output-normed hidden of every position captured, top-64 logits + FP16 logsumexp reduced ON the GPU (only ~0.4 MB of ids/vals/lse crosses D2H per sample), hidden stored INT4 group-64, the FP16-dequantized LM head cached in VRAM — the exact math the home engine runs, so parity is by construction. Every shard logs a timing breakdown (prefill/head/quant/io ms + head GFLOPS). Plus `export_frozen_head.py`: only 3 tensors (embed, output_norm, lm_head — unrotated) -> `lm_head_embed_frozen.safetensors` in ~2-4 min, never touching the other ~850 tensors | ~5.8 GB Drive per 2000 samples (4000 samples ~11.6 GB); speed recorded by the first run |
 | B (any number of times) | `train_bonsai_mtp.py --from-targets`: the same blk.64 student (mtp unroll-4 or df3 block-16), **renormalized top-K KL (mathematically >= 0)** + cosine loss, FP16 + GradScaler on pre-Ampere cards, 8-bit AdamW, warm start from your r3 sidecar | T4; ~2-6 s/step at 16K tokens/step is the estimate until the first run measures it |
 
 Notes:
@@ -528,8 +528,9 @@ Notes:
   engine's own BPE (the exact tokenizer the dump uses), balanced over the sources of the `prepare_corpus.py`
   shards (OpenCodeInstruct / OpenThoughts / UltraChat / Wikipedia-ID / Aya).
 - On sm_75+ the dump dequantizes one weight matrix at a time into a small FP16 VRAM scratch (~170-335 MiB) and
-  multiplies through `cublasGemmEx` (FP16 in, FP32 accumulate); sm_61 (the local GTX 1070 Ti) keeps the
-  FP32/dp4a path untouched (SASS gate: zero half arithmetic).
+  multiplies through `cublasGemmEx` (FP16 in, FP32 accumulate, Tensor Core path forced); the LM head sits in
+  VRAM as a one-time FP16 cache (2.4 GiB, budget-guarded). sm_61 (the local GTX 1070 Ti) keeps the
+  FP32/dp4a path untouched (SASS gate: zero half arithmetic) and runs the same GPU top-K reduction.
 - Shards are plain `.npy` directories (the Python tool writes `.npz`) — `--from-targets` reads both. Every shard
   is written atomically and auto-resumed; `--max-gb` stops with a consistent manifest.
 - Phase B warms from `procreations_r3` by default (the `INIT_MODE` dropdown in cell 4).
@@ -611,7 +612,7 @@ print(f"DRIVE_OUT = {DRIVE_OUT} ({shutil.disk_usage(DRIVE_OUT).free / 1e9:.1f} G
 print("preflight OK")
 '''
 
-T4CELL2 = r'''#@title 2. Clone, build qwen38-engine for sm_75, light pip packages, CPU self-tests
+T4CELL2 = r'''#@title 2. Clone, build qwen38-engine (sm_75), ggml/llama libs, pip, CPU self-tests
 REPO_URL = "https://github.com/mcpe500/legacy1070qi38.git"  #@param {type:"string"}
 BRANCH = "main"  #@param {type:"string"}
 LLAMA_REPO = "https://github.com/mcpe500/llama.cpp.git"  #@param {type:"string"}
@@ -619,33 +620,70 @@ LLAMA_BRANCH = "feat/iso3-kv"  #@param {type:"string"}
 INSTALL_BITSANDBYTES = True  #@param {type:"boolean"}
 RUN_SELFTESTS = True  #@param {type:"boolean"}
 
-# The engine links the ggml CPU libraries of the mcpe500 fork (iso3/PTQ1_0 row sizes); no CUDA ggml needed —
-# the engine carries its own CUDA kernels (this build targets sm_75 for the T4; sm_61 stays untouched).
+# The engine links the ggml CPU libraries of the mcpe500 fork AND the llama/llama-common libs (the CMake
+# configure find_library()es them). No CUDA ggml: the engine carries its own kernels, built here for sm_75
+# (CMAKE_CUDA_ARCHITECTURES=75; CUDA 13 on Colab dropped sm_61 and the CMake default no longer fights -D).
+import glob as _glob
+import re as _re
+
 LLAMA_DIR = "/content/llama.cpp"
 LLAMA_BUILD = f"{LLAMA_DIR}/build-iso3"
+BUILD_DIR = f"{REPO_DIR}/qwen38-engine/build"
+NCPU = str(os.cpu_count() or 2)
 
 if not os.path.isdir(REPO_DIR):
     run(["git", "clone", "--filter=blob:none", REPO_URL, REPO_DIR], "clone_repo")
 run(["git", "-C", REPO_DIR, "fetch", "origin", BRANCH], "fetch_repo")
 run(["git", "-C", REPO_DIR, "checkout", BRANCH], "checkout_repo")
 run(["git", "-C", REPO_DIR, "pull", "--ff-only"], "pull_repo")
+
 if not os.path.isdir(LLAMA_DIR):
     run(["git", "clone", "--filter=blob:none", "-b", LLAMA_BRANCH, LLAMA_REPO, LLAMA_DIR], "clone_llama")
-if not os.path.exists(f"{LLAMA_BUILD}/bin/libggml-cpu.so"):
+if not _glob.glob(f"{LLAMA_BUILD}/**/libllama-common.so*", recursive=True):
     run(["cmake", "-S", LLAMA_DIR, "-B", LLAMA_BUILD, "-DCMAKE_BUILD_TYPE=Release", "-DGGML_CUDA=OFF",
-         "-DLLAMA_BUILD_TESTS=OFF", "-DLLAMA_BUILD_EXAMPLES=OFF", "-DLLAMA_BUILD_SERVER=OFF"], "cmake_llama")
-    run(["cmake", "--build", LLAMA_BUILD, "--target", "ggml", "-j", str(os.cpu_count() or 2)], "build_ggml")
-run(["cmake", "-S", f"{REPO_DIR}/qwen38-engine", "-B", f"{REPO_DIR}/qwen38-engine/build",
-     "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_CUDA_ARCHITECTURES=75"], "cmake_engine",
-    env={"LLAMA_SRC": LLAMA_DIR, "LLAMA_BUILD": LLAMA_BUILD})
-run(["ninja", "-C", f"{REPO_DIR}/qwen38-engine/build", "-j", str(os.cpu_count() or 2), "qwen38-engine"], "build_engine",
-    env={"LLAMA_SRC": LLAMA_DIR, "LLAMA_BUILD": LLAMA_BUILD})
-run([ENGINE], "engine_link_check", ok_codes=(2,))   # prints its usage line (exit 2 = expected): proves the binary links and runs
+         "-DLLAMA_BUILD_COMMON=ON", "-DLLAMA_CURL=OFF", "-DLLAMA_BUILD_TESTS=OFF",
+         "-DLLAMA_BUILD_EXAMPLES=OFF", "-DLLAMA_BUILD_SERVER=OFF"], "cmake_llama")
+    run(["cmake", "--build", LLAMA_BUILD, "--target", "ggml", "llama", "llama-common", "-j", NCPU], "build_llama_all")
 
+# Collect every built library location: -D overrides for find_library + RPATH/LD_LIBRARY_PATH so the binary
+# finds libggml-cpu regardless of where the fork dropped it.
+all_libs = _glob.glob(f"{LLAMA_BUILD}/**/*.so", recursive=True) + _glob.glob(f"{LLAMA_BUILD}/**/*.a", recursive=True)
+lib_dirs = sorted({os.path.dirname(p) for p in all_libs})
+so_dirs = sorted({os.path.dirname(p) for p in all_libs if p.endswith(".so")})
+rpath = ":".join(so_dirs)
+os.environ["LD_LIBRARY_PATH"] = rpath + (":" + os.environ["LD_LIBRARY_PATH"] if os.environ.get("LD_LIBRARY_PATH") else "")
+
+
+def pick_lib(*patterns):
+    for pat in patterns:
+        hits = sorted(_glob.glob(f"{LLAMA_BUILD}/**/{pat}", recursive=True))
+        if hits:
+            return hits[0]
+    return ""
+
+
+extra_cmake = [f"-DCMAKE_LIBRARY_PATH={';'.join(lib_dirs)}", f"-DCMAKE_BUILD_RPATH={';'.join(so_dirs)}"]
+for var, pats in [("GGML_LIB", ("libggml.so", "libggml.a")),
+                  ("LLAMA_LIB", ("libllama.so", "libllama.a")),
+                  ("LLAMA_COMMON_LIB", ("libllama-common.so", "libllama-common.a", "libcommon.so", "libcommon.a"))]:
+    found = pick_lib(*pats)
+    if found:
+        extra_cmake.append(f"-D{var}={found}")
+
+if os.path.isdir(BUILD_DIR):
+    shutil.rmtree(BUILD_DIR)   # stale caches (an old CMAKE_CUDA_ARCHITECTURES) must not survive a runtime change
+
+cmake_env = {"LLAMA_SRC": LLAMA_DIR, "LLAMA_BUILD": LLAMA_BUILD, "LD_LIBRARY_PATH": os.environ["LD_LIBRARY_PATH"]}
+run(["cmake", "-S", f"{REPO_DIR}/qwen38-engine", "-B", BUILD_DIR, "-DCMAKE_BUILD_TYPE=Release",
+     "-DCMAKE_CUDA_ARCHITECTURES=75", f"-DLLAMA_SRC={LLAMA_DIR}", f"-DLLAMA_BUILD={LLAMA_BUILD}", *extra_cmake],
+    "cmake_engine", env=cmake_env)
+run(["cmake", "--build", BUILD_DIR, "--target", "qwen38-engine", "-j", NCPU], "build_engine", env=cmake_env)
+run([ENGINE], "engine_link_check", ok_codes=(2,))   # usage line, exit 2 = expected: links + runs
+
+run([PY, "-m", "pip", "install", "-q", "gguf", "safetensors", "huggingface_hub"], "pip_core")
 if INSTALL_BITSANDBYTES:
     try:
         run([PY, "-m", "pip", "install", "-q", "bitsandbytes"], "pip_bitsandbytes")
-        run([PY, "-c", "import bitsandbytes; print('bitsandbytes', bitsandbytes.__version__)"], "check_bnb")
     except RuntimeError as e:
         print(f"WARNING: bitsandbytes unavailable, --optim adamw8bit falls back to Adafactor.\n{e}")
 if RUN_SELFTESTS:
@@ -657,58 +695,77 @@ print("cell 2 OK (engine built for sm_75)")
 
 T4CELL3 = r'''#@title 3. Phase A (once): native PTQ1_0 dump on the T4 -> target package on Drive
 RUN_PHASE_A = True  #@param {type:"boolean"}
-HF_REPO = "mcpe500/bonsai-ptq10"  #@param {type:"string"}
+HF_REPO = "prism-ml/Ternary-Bonsai-2-27B-gguf"  #@param {type:"string"}
 GGUF_NAME = "Ternary-Bonsai-2-27B-PTQ1_0.gguf"  #@param {type:"string"}
 SAMPLES = 4000  #@param {type:"integer"}
 SEQ_LEN = 1024  #@param {type:"integer"}
 TOP_K = 64  #@param {type:"integer"}
 HIDDEN_DTYPE = "int4g64"  #@param ["int4g64", "int8"]
-SHARD_SAMPLES = 128  #@param {type:"integer"}
+SHARD_SAMPLES = 64  #@param {type:"integer"}
 MAX_GB = 40  #@param {type:"number"}
 VRAM_BUDGET_MIB = 14000  #@param {type:"integer"}
 DUMP_F32_HIDDEN = False  #@param {type:"boolean"}
 
-# All-resident native dump: ~5.7 GiB VRAM for the quantized 27B + a small FP16 dequant scratch, NO BF16 copy,
-# NO layer streaming. Auto-resume per shard; re-running with the same TARGETS_DIR continues where it stopped.
+# Native all-resident dump: ~5.7 GiB VRAM for the quantized 27B + the FP16 head cache (~2.4 GiB), NO BF16,
+# NO layer streaming, top-K/lse reduced on the GPU. Auto-resume per shard; the per-shard log prints a
+# timing breakdown (prefill/head/quant/io ms) and an honest ETA (remaining tokens / measured rate).
+from huggingface_hub import hf_hub_download
 import json as _json
 
-def manifest_done():
+
+def ensure_gguf():
+    gguf_path = f"/content/models/{GGUF_NAME}"
+    os.makedirs("/content/models", exist_ok=True)
+    if not os.path.exists(gguf_path) or os.path.getsize(gguf_path) < 5_000_000_000:
+        print(f"Downloading {HF_REPO}/{GGUF_NAME} -> /content/models ...", flush=True)
+        hf_hub_download(repo_id=HF_REPO, filename=GGUF_NAME, local_dir="/content/models")
+    print(f"GGUF ready: {gguf_path} ({os.path.getsize(gguf_path) / 1e9:.2f} GB)", flush=True)
+    return gguf_path
+
+
+def manifest_done(target_n):
     p = os.path.join(TARGETS_DIR, "manifest.json")
     if not os.path.exists(p):
         return False
     try:
-        return _json.load(open(p)).get("total_samples", 0) >= SAMPLES
+        return _json.load(open(p)).get("total_samples", 0) >= target_n
     except (ValueError, OSError):
         return False
 
+
+gguf = f"/content/models/{GGUF_NAME}"
+tok_bin = "/content/tok/tokens.bin"
+
 if not RUN_PHASE_A:
-    print(f"RUN_PHASE_A = False: skipped (frozen-head file still exported below if missing)")
+    print("RUN_PHASE_A = False: skipped (frozen-head file still exported below if missing)")
 else:
-    if manifest_done():
-        print(f"manifest at {TARGETS_DIR} already covers {SAMPLES} samples - Phase A skipped")
-    else:
-        if not os.path.isdir(CORPUS_DIR) or not os.listdir(CORPUS_DIR):
-            raise RuntimeError(f"no corpus at {CORPUS_DIR}: run the main notebook's corpus step once "
-                               f"(prepare_corpus.py) or point CORPUS_DIR at your prepared corpus")
-        gguf = f"/content/models/{GGUF_NAME}"
-        os.makedirs("/content/models", exist_ok=True)
-        if not os.path.exists(gguf):
-            run([PY, "-m", "huggingface_hub.commands.huggingface_cli", "download", HF_REPO, GGUF_NAME,
-                 "--local-dir", "/content/models"], "hf_download_gguf")
-        if not os.path.getsize(gguf) == 5946648928:
-            print(f"WARNING: {gguf} is {os.path.getsize(gguf)} bytes, expected 5946648928")
+    if not os.path.isdir(CORPUS_DIR) or not os.listdir(CORPUS_DIR):
+        raise RuntimeError(f"no corpus at {CORPUS_DIR}: run prepare_corpus.py once (main notebook) or "
+                           f"point CORPUS_DIR at your prepared corpus")
+    gguf = ensure_gguf()
+    if not os.path.exists(tok_bin) or os.path.getsize(tok_bin) == 0:
         run([PY, f"{TOOLS}/tokenize_for_engine.py", "--corpus", CORPUS_DIR, "--gguf", gguf, "--engine", ENGINE,
              "--out", "/content/tok", "--samples", str(SAMPLES), "--seq-len", str(SEQ_LEN)], "tokenize")
-        cmd = [ENGINE, "-m", gguf, "--dump-targets", TARGETS_DIR, "--tokens-bin", "/content/tok/tokens.bin",
-               "--dump-samples", str(SAMPLES), "--dump-seq-len", str(SEQ_LEN), "--dump-top-k", str(TOP_K),
+    else:
+        print(f"Using existing {tok_bin} ({os.path.getsize(tok_bin) // (4 * SEQ_LEN)} samples x {SEQ_LEN} tok)")
+
+    avail_samples = os.path.getsize(tok_bin) // (4 * SEQ_LEN)
+    dump_samples = min(SAMPLES, avail_samples) if avail_samples > 0 else SAMPLES
+
+    if manifest_done(dump_samples):
+        print(f"manifest at {TARGETS_DIR} already covers {dump_samples} samples - Phase A skipped")
+    else:
+        cmd = [ENGINE, "-m", gguf, "--dump-targets", TARGETS_DIR, "--tokens-bin", tok_bin,
+               "--dump-samples", str(dump_samples), "--dump-seq-len", str(SEQ_LEN), "--dump-top-k", str(TOP_K),
                "--dump-hidden-dtype", HIDDEN_DTYPE, "--shard-samples", str(SHARD_SAMPLES),
                "--max-gb", str(MAX_GB), "--vram-budget-mib", str(VRAM_BUDGET_MIB)]
         if DUMP_F32_HIDDEN:
             cmd.append("--dump-f32-hidden")
         run(cmd, "dump_targets")
+
 frozen = os.path.join(TARGETS_DIR, "lm_head_embed_frozen.safetensors")
 if not os.path.exists(frozen):
-    run([PY, f"{TOOLS}/export_frozen_head.py", "--gguf", f"/content/models/{GGUF_NAME}", "--out", frozen],
+    run([PY, f"{TOOLS}/export_frozen_head.py", "--gguf", gguf, "--out", frozen],
         "export_frozen_head", env={"CUDA_VISIBLE_DEVICES": ""})
 man_p = os.path.join(TARGETS_DIR, "manifest.json")
 if os.path.exists(man_p):
@@ -723,9 +780,9 @@ T4CELL4 = r'''#@title 4. Phase B: teacher-free student training from the package
 RUN_PHASE_B = True  #@param {type:"boolean"}
 DRAFTER = "mtp"  #@param ["mtp", "df3"]
 INIT_MODE = "procreations_r3"  #@param ["procreations_r3", "drive_safetensors", "qwen_blk64", "random"]
-INIT_HF_REPO = "mcpe500/bonsai-mtp"  #@param {type:"string"}
+INIT_HF_REPO = "ProCreations/Ternary-Bonsai-2-27B-MTP"  #@param {type:"string"}
 INIT_HF_FILE = "model_mtp.safetensors"  #@param {type:"string"}
-INIT_DRIVE_PATH = "/content/drive/MyDrive/bonsai_mtp/final_t4/mtp_blk64.safetensors"  #@param {type:"string"}
+INIT_DRIVE_PATH = "/content/drive/MyDrive/bonsai_mtp/final/mtp_blk64.safetensors"  #@param {type:"string"}
 STEPS = 2000  #@param {type:"integer"}
 BATCH = 2  #@param {type:"integer"}
 GRAD_ACCUM = 8  #@param {type:"integer"}
@@ -741,9 +798,10 @@ STAGE_DIR = "/content/target_cache"  #@param {type:"string"}
 RUN_DIR = "/content/drive/MyDrive/bonsai_mtp/run_t4"  #@param {type:"string"}
 RESUME_FROM = "auto"  #@param ["auto", "none"]
 
-# TOP_K / HIDDEN_DTYPE come from the package manifest (never from a skipped cell), so this cell is safe to run
-# on its own after Phase A produced the package once.
+# TOP_K / HIDDEN_DTYPE come from the package manifest (never from a skipped cell), so this cell is safe to
+# run on its own after Phase A produced the package once.
 import json as _json
+from huggingface_hub import hf_hub_download
 
 man_p = os.path.join(TARGETS_DIR, "manifest.json")
 if not os.path.exists(man_p):
@@ -761,15 +819,19 @@ else:
         init_st = f"/content/models/{INIT_HF_FILE}"
         if not os.path.exists(init_st):
             os.makedirs("/content/models", exist_ok=True)
-            run([PY, "-m", "huggingface_hub.commands.huggingface_cli", "download", INIT_HF_REPO, INIT_HF_FILE,
-                 "--local-dir", "/content/models"], "hf_download_init")
+            print(f"Downloading {INIT_HF_REPO}/{INIT_HF_FILE} -> /content/models ...", flush=True)
+            hf_hub_download(repo_id=INIT_HF_REPO, filename=INIT_HF_FILE, local_dir="/content/models")
         init_args = ["--init-mtp-safetensors", init_st]
     elif INIT_MODE == "drive_safetensors":
         if not os.path.exists(INIT_DRIVE_PATH):
             raise RuntimeError(f"--init safetensors not found: {INIT_DRIVE_PATH}")
         init_args = ["--init-mtp-safetensors", INIT_DRIVE_PATH]
     elif INIT_MODE == "qwen_blk64":
-        init_args = ["--init", f"gguf:/content/models/{GGUF_NAME}"]
+        blk64 = "/content/drive/MyDrive/bonsai_mtp/init/mtp_init_qwen_blk64.safetensors"
+        if not os.path.exists(blk64):
+            raise RuntimeError(f"{blk64} missing: export blk.64 of the qwen GGUF once with "
+                               f"train_bonsai_mtp.py --export-init and put it there")
+        init_args = ["--init-mtp-safetensors", blk64]
     run([PY, f"{TOOLS}/train_bonsai_mtp.py", "--from-targets", TARGETS_DIR,
          "--lm-head-file", os.path.join(TARGETS_DIR, "lm_head_embed_frozen.safetensors"),
          "--out", RUN_DIR, "--drafter", str(DRAFTER), "--unroll", str(UNROLL), "--df3-block", str(DF3_BLOCK),
@@ -820,6 +882,37 @@ Sidecar GGFs on Drive: {FINAL}. On your PC (engine built with ./scripts/setup.sh
       --mtp-adaptive 1 --gen-mtp-steps 2 -f bench/prompt512.txt -n 256
 """)
 '''
+
+TROUBLE_T4 = """## Troubleshooting (T4 notebook)
+
+- **Before re-running Phase A on a Drive that saw the old corrupted run:** delete
+  `/content/drive/MyDrive/bonsai_mtp/targets` — shards written by the pre-fix engine carry a corrupted
+  top-64 (beta accumulation bug) and the auto-resume would keep them.
+- **Cell 2 build fails:** the engine needs the ggml CPU libs plus `llama`/`llama-common` of the
+  `mcpe500/llama.cpp` fork (`feat/iso3-kv`); the cell clones and builds them (~5-12 min once per session on
+  the T4's 2 vCPUs). Library locations are passed to CMake explicitly (`-DGGML_LIB=`/`-DLLAMA_LIB=`/
+  `-DLLAMA_COMMON_LIB=` + `CMAKE_LIBRARY_PATH` + `CMAKE_BUILD_RPATH` + `LD_LIBRARY_PATH`), so a fork layout
+  change cannot break the configure silently — a failure means the fork build itself failed: open
+  `logs/build_llama_all.log` on Drive. The engine targets `CMAKE_CUDA_ARCHITECTURES=75` directly (CUDA 13 on
+  Colab dropped sm_61; the CMake default no longer fights the -D flag).
+- **Phase A says "no corpus":** Phase A tokenizes from the `prepare_corpus.py` shards on Drive (balanced over
+  OpenCodeInstruct / OpenThoughts / UltraChat / Wikipedia-ID / Aya). Run the main notebook's corpus step once;
+  it lands in `DRIVE_OUT/corpus`.
+- **HF download fails:** set `HF_REPO` / `INIT_HF_REPO` to the repos that hold your
+  `Ternary-Bonsai-2-27B-PTQ1_0.gguf` (5,946,648,928 bytes) and your warm-start `model_mtp.safetensors`.
+- **CUDA out of memory in cell 3:** the resident 27B needs ~5.7 GiB plus the FP16 head cache (~2.4 GiB);
+  keep `VRAM_BUDGET_MIB >= 14000` on a full T4, or lower `SEQ_LEN` on a smaller runtime. If the cache does
+  not fit, the engine prints `LM head cache skipped` and keeps the (slower) per-chunk dequant.
+- **Reading the dump progress:** every shard ends with a breakdown line
+  (`prefill/head/quant/io` ms + effective head GFLOPS). The ETA is remaining tokens / measured rate — if the
+  head GFLOPS number is far below the T4's ~65 TFLOPS fp16 roofline, tensor-core kernels are not engaging
+  and `logs/dump_targets.log` is the evidence to attach to a bug report.
+- **Slow steps in cell 4 with Drive shards:** keep `STAGE_DIR` at local SSD (`/content/target_cache`), not Drive.
+- **`bitsandbytes` WARNING in cell 2:** `--optim adamw8bit` falls back to Adafactor automatically.
+- **KL is >= 0:** the sparse top-K loss is the renormalized teacher distribution
+  (`softmax(topk_vals)` vs the student's renormalized K logits) — a true KL divergence. `top1_agree` is the
+  number to watch (the engine's acceptance proxy), then the real engine race.
+"""
 
 TROUBLE_T4 = """## Troubleshooting (T4 notebook)
 

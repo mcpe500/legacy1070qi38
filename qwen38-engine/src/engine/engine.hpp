@@ -96,6 +96,11 @@ public:
     void head_rows(const float * rows, int n, float * logits);
     bool head_ready() const { return head_on_; }
 
+    // head_rows + on-device top-K/logsumexp reduction (dump-targets fast path): writes ids[n][K] (int32,
+    // descending), vals[n][K] (FP16) and lse[n] (FP16) and returns true. False when the head is not on the
+    // GPU (caller falls back to head_rows + a CPU reduction). n <= 8, K <= 256.
+    bool head_rows_topk(const float * rows, int n, int K, int32_t * ids, uint16_t * vals, uint16_t * lse);
+
     // MTP draft head (block 64). Batch of T tokens at positions pos0.. with the hidden rows h_in[T][5120] of the previous
     // positions (see src/engine/main.cpp for the pairing). Fills the MTP KV; the last row's hidden state (after the head norm)
     // goes to h_out and its logits to logits (either may be null).
