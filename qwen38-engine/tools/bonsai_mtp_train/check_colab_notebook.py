@@ -20,7 +20,8 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = ["convert_gguf_to_hf_bf16.py", "prepare_corpus.py", "train_bonsai_mtp.py", "inject_mtp_gguf.py"]
+SCRIPTS = ["precompute_teacher_targets.py", "convert_gguf_to_hf_bf16.py", "prepare_corpus.py",
+           "train_bonsai_mtp.py", "inject_mtp_gguf.py"]
 
 
 def script_options(script):
