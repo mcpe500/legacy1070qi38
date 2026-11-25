@@ -951,6 +951,12 @@ void Engine::head_rows(const float * rows, int n, float * logits) {
     }
 }
 
+bool Engine::head_rows_topk(const float * rows, int n, int K, int32_t * ids, uint16_t * vals, uint16_t * lse) {
+    if (!head_ready()) return false;
+    gpu_->head_topk(rows, n, K, ids, vals, lse);
+    return true;
+}
+
 void Engine::forward(const int32_t * tokens, int T, int pos0, float * logits) { forward_ex(tokens, T, pos0, logits, logits ? 1 : 0, nullptr); }
 
 // Runs layers cfg_.gpu_layers .. 63 on the GPU for a large first batch (prefill). x_ holds the stream after the resident GPU

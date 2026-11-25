@@ -184,7 +184,8 @@ int main(int argc, char ** argv) {
         else if (a == "--dump-samples") dcfg.samples = std::atoi(next().c_str());
         else if (a == "--dump-seq-len") dcfg.seq_len = std::atoi(next().c_str());
         else if (a == "--dump-top-k") dcfg.top_k = std::atoi(next().c_str());
-        else if (a == "--dump-hidden-dtype") dcfg.hidden_dtype = next().c_str();
+        else if (a == "--dump-hidden-dtype") dcfg.hidden_dtype = next();   // store the string: .c_str() of the
+                                                                           // temporary dangled (PR fix)
         else if (a == "--shard-samples") dcfg.shard_samples = std::atoi(next().c_str());
         else if (a == "--max-gb") dcfg.max_gb = std::atof(next().c_str());
         else if (a == "--dump-f32-hidden") dcfg.dump_f32_hidden = true;

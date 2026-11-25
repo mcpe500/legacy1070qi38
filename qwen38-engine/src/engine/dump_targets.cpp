@@ -3,10 +3,15 @@
 // the INT4 group-64 (or INT8) output-normed hidden, the sparse top-K logit ids/vals (FP16) and the FP16
 // logsumexp over the full vocabulary. Engine shards are plain .npy directories (the Python loader accepts
 // the old .npz shards and these), one meta.json per shard, one atomic manifest.json for the package.
+//
+// Per sample: reset() -> one full prefill (forward_ex, the output-normed hidden of every position lands in
+// host h_buf) -> head in kHeadChunk-row batches: on a GPU head the top-K/lse reduce ON DEVICE (head_topk
+// kernel; only K*6+2 bytes per row cross D2H) and the hidden quantizes inline on the CPU (41K ops per
+// 8-row chunk — negligible); a CPU head falls back to head_rows + a host heap reduction. Per shard the
+// timing breakdown (prefill/head/quant/io ms) is printed so a slow component is visible at a glance.
 #include "dump_targets.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -17,7 +22,6 @@
 #include <numeric>
 #include <queue>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "../common/f16bits.hpp"
@@ -30,7 +34,7 @@ using Clk = std::chrono::steady_clock;
 
 constexpr int64_t kGroup = 64;   // hidden quantization group: 5120 / 64 = 80 scales per token (GROUP in the Python tools)
 constexpr float kScaleFloor = 1e-4f;   // INT4_SCALE_FLOOR of the Python tools
-constexpr int kHeadChunk = 8;    // rows per head_rows() call (GPU head cap)
+constexpr int kHeadChunk = 8;    // rows per head_rows/head_rows_topk call (GPU head cap)
 
 std::string base_name(const std::string & p) {
     const size_t k = p.find_last_of('/');
@@ -140,7 +144,8 @@ void quant_row(const float * x, bool int4, uint8_t * hq, uint16_t * hs) {
     }
 }
 
-// Full-vocabulary logsumexp (FP32 math, FP16 out) + top-K ids/vals descending, for one row of head logits.
+// CPU fallback only (the GPU head path reduces on-device): full-vocabulary logsumexp (FP32 math, FP16 out)
+// + top-K ids/vals descending, for one row of head logits.
 void topk_row(const float * z, int64_t V, int K, int32_t * ids, uint16_t * vals, uint16_t * lse_out) {
     float m = -INFINITY;
     for (int64_t i = 0; i < V; ++i) m = std::fmax(m, z[i]);
@@ -160,48 +165,24 @@ void topk_row(const float * z, int64_t V, int K, int32_t * ids, uint16_t * vals,
     lse_out[0] = f32_to_f16(lse);
 }
 
-// Persistent row workers (spawned once per head chunk; the chunk boundary is the barrier): pull the next row
-// index and do topk + quantize + optional FP32 hidden copy. No allocation inside a worker.
-class RowWorkers {
-public:
-    RowWorkers(const float * lg, int64_t V, int K, const float * h, bool int4, bool dump_f32,
-               uint8_t * hq, uint16_t * hs, int32_t * tk_ids, uint16_t * tk_vals, uint16_t * tk_lse,
-               float * hf32, int64_t row_base, std::atomic<int64_t> & next, int64_t rows)
-        : next_(next), rows_(rows) {
-        const unsigned hc = std::thread::hardware_concurrency();
-        const int n = static_cast<int>(std::min<unsigned>(hc ? hc : 2, 8));
-        const int64_t hq_row = kHidden / (int4 ? 2 : 1), hs_row = kHidden / kGroup;
-        for (int t = 0; t < n; ++t)
-            th_.emplace_back([=, this] {
-                for (;;) {
-                    const int64_t r = next_.fetch_add(1);
-                    if (r >= rows_) return;
-                    const int64_t dst = row_base + r;
-                    topk_row(lg + r * V, V, K, tk_ids + dst * K, tk_vals + dst * K, tk_lse + dst);
-                    quant_row(h + r * kHidden, int4, hq + dst * hq_row, hs + dst * hs_row);
-                    if (dump_f32)
-                        std::memcpy(hf32 + dst * kHidden, h + r * kHidden, sizeof(float) * static_cast<size_t>(kHidden));
-                }
-            });
-    }
-    ~RowWorkers() { for (auto & t : th_) t.join(); }
-    RowWorkers(const RowWorkers &) = delete;
-    RowWorkers & operator=(const RowWorkers &) = delete;
-
-private:
-    std::atomic<int64_t> & next_;
-    int64_t rows_;
-    std::vector<std::thread> th_;
+// Per-shard timing breakdown (ms) — printed at every shard end so a slow component is immediately visible.
+struct ShardProf {
+    double prefill_ms = 0, head_ms = 0, quant_ms = 0, io_ms = 0;
+    double total_ms() const { return prefill_ms + head_ms + quant_ms + io_ms; }
 };
+
+double ms_since(Clk::time_point t0) {
+    return std::chrono::duration<double, std::milli>(Clk::now() - t0).count();
+}
 
 }  // namespace
 
 int run_dump(EngineConfig cfg, const DumpConfig & dc) {
     if (dc.tokens_bin.empty() || dc.targets_out.empty())
         throw std::runtime_error("--dump-targets needs --tokens-bin and --targets-out");
-    if (std::strcmp(dc.hidden_dtype, "int4g64") != 0 && std::strcmp(dc.hidden_dtype, "int8") != 0)
+    if (dc.hidden_dtype != "int4g64" && dc.hidden_dtype != "int8")
         throw std::runtime_error("--hidden-dtype must be int4g64 or int8");
-    const bool int4 = std::strcmp(dc.hidden_dtype, "int4g64") == 0;
+    const bool int4 = dc.hidden_dtype == "int4g64";
 
     // Plan first: it fixes seq_len, which fixes ctx_max / t_max BEFORE the engine allocates anything.
     const std::string plan = dc.plan_json.empty()
@@ -215,7 +196,7 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
     for (const PlanItem & it : plan_items)
         if (it.len < seq_len) throw std::runtime_error("plan sample shorter than seq_len (re-run tokenize_for_engine.py)");
     std::fprintf(stderr, "dump: plan %s -> %d samples x %d tokens, top_k %d, hidden %s\n",
-                 plan.c_str(), n_samples, seq_len, dc.top_k, dc.hidden_dtype);
+                 plan.c_str(), n_samples, seq_len, dc.top_k, dc.hidden_dtype.c_str());
 
     // Native residency: every layer and the LM head on the GPU (the PTQ1_0 27B is 5.54 GiB — it sits whole in a
     // T4 15 GiB; a card that does not fit it needs a higher --vram-budget-mib, not layer streaming).
@@ -233,7 +214,7 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
                  eng.config().gpu_layers, eng.head_ready() ? 1 : 0,
                  eng.config().gpu_layers > 0 ? eng.vram_used_mib() : 0.0);
     if (!eng.head_ready())
-        std::fprintf(stderr, "WARNING: LM head not on the GPU - the dump runs the slow CPU head\n");
+        std::fprintf(stderr, "WARNING: LM head not on the GPU - the dump runs the slow CPU head + host top-K\n");
 
     std::string tok_bytes;
     if (!read_file(dc.tokens_bin, tok_bytes)) throw std::runtime_error("cannot read tokens bin " + dc.tokens_bin);
@@ -248,6 +229,7 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
     // package layout: shard dirs target-shard-XXXXX/ with ids/hq/hs/tk_ids/tk_vals/tk_lse (+hf32) .npy + meta.json
     const int SS = dc.shard_samples;
     const int64_t L = seq_len, V = eng.n_vocab, K = dc.top_k;
+    if (K < 1 || K > 256) throw std::runtime_error("--dump-top-k must be 1..256 (head_topk staging)");
     if (SS < 1 || SS > n_samples) throw std::runtime_error("--shard-samples out of range");
     const int64_t tok_per_shard = static_cast<int64_t>(SS) * L;
     std::vector<int32_t> sh_ids(tok_per_shard);
@@ -257,7 +239,9 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
     std::vector<uint16_t> sh_tv(tok_per_shard * K), sh_tl(tok_per_shard);
     std::vector<float> sh_f32(dc.dump_f32_hidden ? tok_per_shard * kHidden : 0);
     std::vector<float> h_buf(static_cast<int64_t>(L) * kHidden);
-    std::vector<float> lg(static_cast<int64_t>(kHeadChunk) * V);
+    std::vector<float> lg(static_cast<int64_t>(kHeadChunk) * V);   // CPU-head fallback only
+    std::vector<int32_t> tk_buf(static_cast<int64_t>(kHeadChunk) * K);
+    std::vector<uint16_t> tv_buf(static_cast<int64_t>(kHeadChunk) * K), tl_buf(kHeadChunk);
 
     if (std::system(("mkdir -p " + dc.targets_out).c_str()) != 0)
         throw std::runtime_error("cannot create " + dc.targets_out);
@@ -290,8 +274,9 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
     double bytes = 0;
     const auto t0 = Clk::now();
     int64_t done_tok = 0;
+    ShardProf all_prof;
     for (int shard = done_shards; shard < total_shards; ++shard) {
-        const int64_t rows_all = static_cast<int64_t>(total_shards - shard - 1) * tok_per_shard + tok_per_shard;
+        const int64_t rows_all = static_cast<int64_t>(total_shards - shard) * tok_per_shard;
         const double est = npy_bytes({tok_per_shard}, "<i4") + npy_bytes({tok_per_shard, kHidden / (int4 ? 2 : 1)}, "|u1") +
                            npy_bytes({tok_per_shard, kHidden / kGroup}, "<f2") + npy_bytes({tok_per_shard, K}, "<i4") +
                            npy_bytes({tok_per_shard, K}, "<f2") + npy_bytes({tok_per_shard}, "<f2") +
@@ -308,28 +293,60 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
             std::memcpy(sh_ids.data() + static_cast<int64_t>(r) * L, toks + plan_items[s0 + r].off,
                         sizeof(int32_t) * static_cast<size_t>(L));
         const auto shard_t0 = Clk::now();
+        ShardProf prof;
         for (int r = 0; r < rows_n; ++r) {
             const PlanItem & it = plan_items[s0 + r];
+            const auto tp0 = Clk::now();
             eng.reset();   // clean KV/DeltaNet state per sample (positions restart at 0)
             eng.forward_ex(toks + it.off, static_cast<int>(L), 0, nullptr, 0, h_buf.data());
+            prof.prefill_ms += ms_since(tp0);
+
+            const int64_t dst_row0 = static_cast<int64_t>(r) * L;
             for (int c0 = 0; c0 < L; c0 += kHeadChunk) {
                 const int n = static_cast<int>(std::min<int64_t>(kHeadChunk, L - c0));
-                eng.head_rows(h_buf.data() + static_cast<int64_t>(c0) * kHidden, n, lg.data());
-                std::atomic<int64_t> next{0};   // fresh per chunk: rows are chunk-local 0..n-1
-                RowWorkers w(lg.data(), V, K, h_buf.data() + static_cast<int64_t>(c0) * kHidden, int4,
-                             dc.dump_f32_hidden, sh_hq.data(), sh_hs.data(), sh_tk.data(), sh_tv.data(),
-                             sh_tl.data(), sh_f32.data(), static_cast<int64_t>(r) * L + c0, next, n);
+                float * hc = h_buf.data() + static_cast<int64_t>(c0) * kHidden;
+                const int64_t dst0 = dst_row0 + c0;
+                const auto th0 = Clk::now();
+                const bool gpu_topk = eng.head_rows_topk(hc, n, static_cast<int>(K), tk_buf.data(),
+                                                         tv_buf.data(), tl_buf.data());
+                if (!gpu_topk) {
+                    eng.head_rows(hc, n, lg.data());
+                    for (int i = 0; i < n; ++i)
+                        topk_row(lg.data() + static_cast<int64_t>(i) * V, V, static_cast<int>(K),
+                                 tk_buf.data() + static_cast<int64_t>(i) * K,
+                                 tv_buf.data() + static_cast<int64_t>(i) * K, tl_buf.data() + i);
+                }
+                prof.head_ms += ms_since(th0);
+                const auto tq0 = Clk::now();
+                std::memcpy(sh_tk.data() + dst0 * K, tk_buf.data(), sizeof(int32_t) * static_cast<size_t>(n) * static_cast<size_t>(K));
+                std::memcpy(sh_tv.data() + dst0 * K, tv_buf.data(), sizeof(uint16_t) * static_cast<size_t>(n) * static_cast<size_t>(K));
+                std::memcpy(sh_tl.data() + dst0, tl_buf.data(), sizeof(uint16_t) * static_cast<size_t>(n));
+                const int64_t hq_row = kHidden / (int4 ? 2 : 1), hs_row = kHidden / kGroup;
+                for (int i = 0; i < n; ++i)
+                    quant_row(hc + static_cast<int64_t>(i) * kHidden, int4,
+                              sh_hq.data() + (dst0 + i) * hq_row, sh_hs.data() + (dst0 + i) * hs_row);
+                if (dc.dump_f32_hidden)
+                    std::memcpy(sh_f32.data() + dst0 * kHidden, hc, sizeof(float) * static_cast<size_t>(n) * static_cast<size_t>(kHidden));
+                prof.quant_ms += ms_since(tq0);
             }
             done_tok += L;
+            // Fixed ETA: remaining tokens / measured rate (the old line divided tokens by elapsed seconds).
             if ((r + 1) % 16 == 0 || r + 1 == rows_n) {
                 const double dt = std::chrono::duration<double>(Clk::now() - shard_t0).count();
-                std::fprintf(stderr, "shard %d/%d sample %d/%d: %.1f tok/s (shard window), eta %.1f min\n",
-                             shard + 1, total_shards, r + 1, rows_n,
-                             static_cast<int64_t>(r + 1) * L / std::max(dt, 1e-9),
-                             dt > 0 ? static_cast<double>(rows_n - r - 1) * L / dt / 60.0 : 0.0);
+                const double rate = static_cast<double>(r + 1) * static_cast<double>(L) / std::max(dt, 1e-9);
+                const double remain_shard = static_cast<double>(rows_n - r - 1) * static_cast<double>(L);
+                const double all_dt = std::chrono::duration<double>(Clk::now() - t0).count();
+                const double rate_all = static_cast<double>(done_tok) / std::max(all_dt, 1e-9);
+                const double remain_all = static_cast<double>(rows_all - done_tok);
+                std::fprintf(stderr,
+                             "shard %d/%d sample %d/%d: %.1f tok/s (shard window), eta %.1f min (shard), "
+                             "%.1f tok/s (all), eta %.1f min (all)\n",
+                             shard + 1, total_shards, r + 1, rows_n, rate, rate > 0 ? remain_shard / rate / 60.0 : 0.0,
+                             rate_all, rate_all > 0 ? std::max(remain_all, 0.0) / rate_all / 60.0 : 0.0);
             }
         }
         // write the shard directory atomically: target-shard-XXXXX.tmp -> target-shard-XXXXX
+        const auto tio0 = Clk::now();
         char dir[512];
         std::snprintf(dir, sizeof dir, "%s/target-shard-%05d", dc.targets_out.c_str(), shard);
         const std::string tmpd = std::string(dir) + ".tmp";
@@ -354,13 +371,14 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
                           "{\"version\": 1, \"format\": \"engine-npy-dir-1\", \"hidden_dtype\": \"%s\", "
                           "\"top_k\": %d, \"hidden\": %lld, \"seq_len\": %lld, \"samples\": %d, \"group\": %lld, "
                           "\"index\": %d, \"model\": \"%s\"}",
-                          dc.hidden_dtype, static_cast<int>(K), static_cast<long long>(kHidden),
+                          dc.hidden_dtype.c_str(), static_cast<int>(K), static_cast<long long>(kHidden),
                           static_cast<long long>(L), rows_n, static_cast<long long>(kGroup), shard,
                           base_name(cfg.gguf).c_str());
             write_file_atomic(std::string(tmpd) + "/meta.json", meta);
         }
         if (std::rename(tmpd.c_str(), dir) != 0) throw std::runtime_error("shard rename failed for " + std::string(dir));
         bytes += sh_bytes;
+        prof.io_ms = ms_since(tio0);
         {
             char man[1024];
             std::snprintf(man, sizeof man,
@@ -368,7 +386,7 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
                           "\"hidden_dtype\": \"%s\", \"top_k\": %d, \"hidden\": %lld, \"seq_len\": %lld, "
                           "\"plan_samples\": %d, \"shards\": %d, \"total_samples\": %d, \"total_tokens\": %lld, "
                           "\"total_bytes\": %.0f}",
-                          base_name(cfg.gguf).c_str(), dc.hidden_dtype, static_cast<int>(K),
+                          base_name(cfg.gguf).c_str(), dc.hidden_dtype.c_str(), static_cast<int>(K),
                           static_cast<long long>(kHidden), static_cast<long long>(L), n_samples, shard + 1,
                           std::min<int>((shard + 1) * SS, n_samples),
                           static_cast<long long>(std::min<int64_t>((shard + 1) * SS, n_samples)) * L, bytes);
@@ -377,19 +395,30 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
         const double dt = std::chrono::duration<double>(Clk::now() - shard_t0).count();
         const double all_dt = std::chrono::duration<double>(Clk::now() - t0).count();
         const double all_rate = done_tok / std::max(all_dt, 1e-9);
+        all_prof.prefill_ms += prof.prefill_ms;
+        all_prof.head_ms += prof.head_ms;
+        all_prof.quant_ms += prof.quant_ms;
+        all_prof.io_ms += prof.io_ms;
+        // Head GEMM throughput estimate: rows_tok * 2 * V * kHidden FLOPs through the head path.
+        const double head_gflops = static_cast<double>(rows_tok) * 2.0 * static_cast<double>(V) *
+                                   static_cast<double>(kHidden) / (prof.head_ms * 1e6);
         std::fprintf(stderr,
-                     "[dump] shard %d/%d done: %d samples, %.0f tok/s (shard), %.0f tok/s (all), eta %.1f min, %.2f GB\n",
+                     "[dump] shard %d/%d done: %d samples, %.0f tok/s (shard), %.0f tok/s (all), eta %.1f min, %.2f GB\n"
+                     "       breakdown: prefill %.0f ms, head %.0f ms (~%.0f GFLOPS), quant %.0f ms, io %.0f ms\n",
                      shard + 1, total_shards, rows_n, rows_tok / std::max(dt, 1e-9), all_rate,
-                     all_rate > 0 ? static_cast<double>(rows_all) / all_rate / 60.0 : 0.0, bytes / 1e9);
+                     all_rate > 0 ? std::max(static_cast<double>(rows_all) - static_cast<double>(done_tok), 0.0) / all_rate / 60.0 : 0.0,
+                     bytes / 1e9,
+                     prof.prefill_ms, prof.head_ms, head_gflops, prof.quant_ms, prof.io_ms);
     }
 
     const double total_s = std::chrono::duration<double>(Clk::now() - t0).count();
     std::printf("{\"dump_targets\": \"%s\", \"samples\": %d, \"shards\": %d, \"tokens\": %lld, \"tok_s\": %.1f, "
                 "\"elapsed_s\": %.1f, \"load_s\": %.2f, \"package_gb\": %.2f, \"vram_used_mib\": %.1f, "
-                "\"gpu_layers\": %d, \"top_k\": %d, \"hidden_dtype\": \"%s\"}\n",
+                "\"gpu_layers\": %d, \"top_k\": %d, \"hidden_dtype\": \"%s\", "
+                "\"prefill_ms\": %.0f, \"head_ms\": %.0f, \"quant_ms\": %.0f, \"io_ms\": %.0f}\n",
                 dc.targets_out.c_str(), n_samples, total_shards, static_cast<long long>(done_tok),
                 done_tok / std::max(total_s, 1e-9), total_s, load_s, bytes / 1e9,
                 cfg.gpu_layers > 0 ? eng.vram_used_mib() : 0.0, eng.config().gpu_layers, static_cast<int>(K),
-                dc.hidden_dtype);
+                dc.hidden_dtype.c_str(), all_prof.prefill_ms, all_prof.head_ms, all_prof.quant_ms, all_prof.io_ms);
     return 0;
 }

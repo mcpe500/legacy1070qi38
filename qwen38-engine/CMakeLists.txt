@@ -1,11 +1,19 @@
 cmake_minimum_required(VERSION 3.20)
+# Default arch: the local GTX 1070 Ti (sm_61). An explicit -DCMAKE_CUDA_ARCHITECTURES (the T4/Colab
+# notebook passes 75; CUDA 13 dropped sm_61, so the old hard set() broke every Colab configure) wins.
+# Checked BEFORE project(): CUDA language enablement only seeds its own default into the cache when the
+# variable is still undefined, so this guard runs ahead of it.
+if(NOT DEFINED CACHE{CMAKE_CUDA_ARCHITECTURES})
+    set(CMAKE_CUDA_ARCHITECTURES 61 CACHE STRING
+        "CUDA architectures (61 = local GTX 1070 Ti; pass 75 for the T4 / Colab)" FORCE)
+endif()
 project(qwen38_engine LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 # Pascal GP104 only (GTX 1070 Ti). PTX fallbacks are not built.
-set(CMAKE_CUDA_ARCHITECTURES 61)
+# (the default CMAKE_CUDA_ARCHITECTURES is set above, guarded: -D overrides it)
 
 # Host flags for the Ryzen 5 2400G (znver1, AVX2, FMA). CUDA host code gets the same flags via -Xcompiler.
 foreach(flag -O3 -march=znver1 -mavx2 -mfma -Wall -Wextra)
@@ -20,9 +28,9 @@ endforeach()
 set(LLAMA_SRC "$ENV{HOME}/llama.cpp" CACHE PATH "llama.cpp source tree (ggml headers)")
 set(LLAMA_BUILD "${LLAMA_SRC}/build-iso3" CACHE PATH "llama.cpp build tree with libggml")
 
-find_library(GGML_LIB ggml PATHS "${LLAMA_BUILD}/bin" REQUIRED)
-find_library(GGML_BASE_LIB ggml-base PATHS "${LLAMA_BUILD}/bin" REQUIRED)
-find_library(GGML_CPU_LIB ggml-cpu PATHS "${LLAMA_BUILD}/bin" REQUIRED)
+find_library(GGML_LIB ggml PATHS "${LLAMA_BUILD}/bin" HINTS ENV LD_LIBRARY_PATH REQUIRED)
+find_library(GGML_BASE_LIB ggml-base PATHS "${LLAMA_BUILD}/bin" HINTS ENV LD_LIBRARY_PATH REQUIRED)
+find_library(GGML_CPU_LIB ggml-cpu PATHS "${LLAMA_BUILD}/bin" HINTS ENV LD_LIBRARY_PATH REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 
 add_library(gguf_index STATIC src/packer/gguf_index.cpp)
@@ -38,9 +46,11 @@ target_link_libraries(layer01_parity PRIVATE cpu_ref pthread)
 set_target_properties(layer01_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
 
 
-# Reference tensor dumper (test tool, built against the baseline llama.cpp tree).
-find_library(LLAMA_LIB llama PATHS "${LLAMA_BUILD}/bin" REQUIRED)
-find_library(LLAMA_COMMON_LIB llama-common PATHS "${LLAMA_BUILD}/bin" REQUIRED)
+# Reference tensor dumper (test tool, built against the baseline llama.cpp tree). An explicit
+# -DLLAMA_LIB / -DLLAMA_COMMON_LIB (the T4/Colab notebook globs them out of ${LLAMA_BUILD}) wins over the
+# search; the HINTS keep a plain configure working when the fork put the libs elsewhere in the tree.
+find_library(LLAMA_LIB llama PATHS "${LLAMA_BUILD}/bin" HINTS ENV LD_LIBRARY_PATH REQUIRED)
+find_library(LLAMA_COMMON_LIB llama-common PATHS "${LLAMA_BUILD}/bin" HINTS ENV LD_LIBRARY_PATH REQUIRED)
 add_executable(dump_ref_tensors tests/tools/dump_ref_tensors.cpp)
 target_include_directories(dump_ref_tensors PRIVATE "${LLAMA_SRC}/common" "${LLAMA_SRC}/include"
                            "${LLAMA_SRC}/ggml/include" "${LLAMA_SRC}/vendor")
@@ -90,7 +100,7 @@ set_target_properties(foundation_test PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin
 
 # Stage 3 CUDA kernels (sm_61): quantized GEMV, FP32 operators, iso3 KV store, and the GPU layer runner.
 add_library(gpu_cuda STATIC
-  src/cuda/gemv.cu src/cuda/dp4a_gemv.cu src/cuda/ops.cu src/cuda/iso3_quant.cu src/cuda/q8_gemv.cu src/cuda/gpu_layers.cu src/cuda/ternary_gemv.cu
+  src/cuda/gemv.cu src/cuda/dp4a_gemv.cu src/cuda/ops.cu src/cuda/iso3_quant.cu src/cuda/q8_gemv.cu src/cuda/gpu_layers.cu src/cuda/ternary_gemv.cu src/cuda/head_topk.cu
   src/cuda/ternary_f16.cu)
 target_include_directories(gpu_cuda PUBLIC src/cuda src/common src/packer)
 target_link_libraries(gpu_cuda PUBLIC CUDA::cudart CUDA::cublas)
@@ -110,6 +120,17 @@ set_target_properties(gemv_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
 add_executable(gpu_layers_parity tests/cuda/gpu_layers_parity.cpp)
 target_link_libraries(gpu_layers_parity PRIVATE gpu_cuda gguf_index CUDA::cudart)
 set_target_properties(gpu_layers_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
+
+# Regression for the dump lm_head corruption (beta accumulated stale buffer contents into chunks 1..N-1 of
+# the 32768-row head GEMM): fills the output with garbage and requires idempotency + CPU-reference parity.
+# Runs on any GPU through ternary_f16_gemm_pre (pure cublas); the >= 750 dequant/Tensor Core path is
+# additionally exercised when the device supports it.
+add_executable(ternary_f16_test tests/cuda/ternary_f16_test.cu)
+target_link_libraries(ternary_f16_test PRIVATE gpu_cuda CUDA::cudart)
+
+# head_topk kernel vs a CPU reference (max/lse/top-K descending, ties to the lower id): runs on sm_61 too.
+add_executable(head_topk_test tests/cuda/head_topk_test.cu)
+target_link_libraries(head_topk_test PRIVATE gpu_cuda CUDA::cudart)
 
 add_executable(iso3_gpu_test tests/cuda/iso3_gpu_test.cu)
 target_link_libraries(iso3_gpu_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)

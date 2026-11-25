@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "dp4a_gemv.cuh"
+#include "head_topk.cuh"
 #include "ternary_f16.cuh"
 #include "gemv.cuh"
 #include "ops.cuh"
@@ -84,6 +85,10 @@ struct GpuLayers::Impl {
     // sm_75+ FP16 Tensor Core backend (cfg.f16_gemm): rotated FP16 activations + dequant-on-the-fly GEMM.
     TernaryF16 * f16_ = nullptr;
     bool f16_rot = false;             // quant_rot / the grouped ssm_out path prepared `f16_->xf` for the next ternary gemv
+    uint16_t * hd_w16 = nullptr;      // FP16-dequantized LM head cache (f16_ + head + VRAM budget), else per-call dequant
+    int32_t * hd_tk = nullptr;        // head_topk staging: ids [8][256], vals [8][256], lse [8] (device)
+    uint16_t * hd_tv = nullptr;
+    uint16_t * hd_tl = nullptr;
     int sidx_of(int64_t in) const { return in == kHidden ? 0 : (in == kInner ? 1 : 2); }
     float * xr5120 = nullptr, *xr6144 = nullptr, *xr17408 = nullptr;  // rotated activations [t_max][width]
     float * xr_of(int sidx) const { return sidx == 0 ? xr5120 : (sidx == 1 ? xr6144 : xr17408); }
@@ -388,6 +393,9 @@ struct GpuLayers::Impl {
             hd_w = mat(pl, "output.weight", upload);
             hd_v = hd_w.out;
             hd_lg = pl.take<float>(static_cast<size_t>(8) * static_cast<size_t>(hd_v));
+            hd_tk = pl.take<int32_t>(8 * 256);       // head_topk staging (K <= 256)
+            hd_tv = pl.take<uint16_t>(8 * 256);
+            hd_tl = pl.take<uint16_t>(8);
             hd_bytes = weights - w0;
         }
         // split-K decode attention: above 8192 positions, and at every context on the ternary path (where the shared-memory
@@ -429,6 +437,10 @@ struct GpuLayers::Impl {
         WMat W = W0;
         // f16_rot stays set across several gemv calls that share one rotated input (ffn_gate + ffn_up);
         // the next quant()/quant_rot() decides what the following ternary gemv consumes.
+        if (f16_ && f16_rot && &W0 == &hd_w && hd_w16) {
+            CK(ternary_f16_gemm_pre(f16_, hd_w16, W0.in, W0.out, T, out, st));   // cached FP16 head, no dequant
+            return;
+        }
         if (f16_ && f16_rot && !W.src && W.type == ternary::kTypePtq1_0) {
             CK(ternary_f16_gemm(f16_, W.p, W.in, W.out, T, out, st));   // FP16 Tensor Core path, weights resident
             return;
@@ -619,6 +631,23 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
         m.f16_ = ternary_f16_init(static_cast<int64_t>(32768) * kHidden * 2, static_cast<int64_t>(m.cfg.t_max) * kFFN * 2);
         if (!m.f16_) m.cfg.f16_gemm = false;   // unsupported device or OOM: the dp4a path keeps running
     }
+    if (m.cfg.f16_gemm && m.f16_ && m.cfg.head) {
+        // One-time FP16 cache of the LM head (2.44 GiB at 248320x5120): the dump path hits it 128 times per
+        // sample with 8-row batches, and a per-call dequant of the whole head would dominate the step.
+        const int64_t bytes = m.hd_w.out * m.hd_w.in * 2;
+        size_t free_b = 0, total_b = 0;
+        if (cudaMemGetInfo(&free_b, &total_b) == cudaSuccess &&
+            static_cast<double>(total_b - free_b) + static_cast<double>(bytes) * 1.02 <=
+                static_cast<double>(m.cfg.vram_budget_mib) * 1048576.0 &&
+            cudaMalloc(reinterpret_cast<void **>(&m.hd_w16), static_cast<size_t>(bytes)) == cudaSuccess) {
+            CK(ternary_f16_dequant(m.f16_, m.hd_w.p, m.hd_w.in, m.hd_w.out, m.hd_w16, m.st));
+            CK(cudaStreamSynchronize(m.st));
+            std::fprintf(stderr, "f16 gemm: LM head cached in FP16 (%.0f MiB), GEMMs read the cache\n",
+                         static_cast<double>(bytes) / 1048576.0);
+        } else {
+            std::fprintf(stderr, "f16 gemm: LM head cache skipped (VRAM budget) - per-chunk dequant stays\n");
+        }
+    }
     if (!m.stage) m.pin_free();   // kept for the streamed prefill uploads otherwise
     if (m.stage) {
         CK(cudaStreamCreateWithFlags(&m.cp, cudaStreamNonBlocking));
@@ -667,6 +696,7 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
 
 GpuLayers::~GpuLayers() {
     if (!p_) return;
+    cudaFree(p_->hd_w16);
     ternary_f16_free(p_->f16_);
     p_->pin_free();
     for (cudaGraphExec_t g : p_->gexec) if (g) cudaGraphExecDestroy(g);
@@ -782,6 +812,25 @@ void GpuLayers::head_host(const float * h_host, int n, float * logits) {
     CK(cudaMemcpyAsync(m.h_lg, m.hd_lg, nb, cudaMemcpyDeviceToHost, m.st));
     CK(cudaStreamSynchronize(m.st));
     std::memcpy(logits, m.h_lg, nb);
+}
+
+// Full logits stay in VRAM: the head GEMM runs as usual, then head_topk reduces each row to the top-K
+// ids/vals (FP16, descending) + FP16 logsumexp on the device and only K*6+2 bytes per row cross D2H.
+void GpuLayers::head_topk(const float * h_host, int n, int K, int32_t * ids, uint16_t * vals, uint16_t * lse_out) {
+    Impl & m = *p_;
+    if (!m.cfg.head) throw std::runtime_error("GpuLayers::head_topk: no head on the GPU");
+    if (n < 1 || n > 8 || K < 1 || K > 256 || K > m.hd_v || n > m.cfg.t_max)
+        throw std::runtime_error("GpuLayers::head_topk: bad rows or K");
+    CK(cudaMemcpyAsync(m.xn, h_host, sizeof(float) * kHidden * static_cast<size_t>(n), cudaMemcpyHostToDevice, m.st));
+    m.quant_rot({&m.hd_w}, m.xn, kHidden, n, 0);
+    m.gemv(m.hd_w, m.xn, n, m.hd_lg);
+    CK(::head_topk(m.hd_lg, m.hd_v, n, K, m.hd_tk, m.hd_tv, m.hd_tl, m.st));
+    const size_t nb_i = sizeof(int32_t) * static_cast<size_t>(n) * static_cast<size_t>(K);
+    const size_t nb_v = sizeof(uint16_t) * static_cast<size_t>(n) * static_cast<size_t>(K);
+    CK(cudaMemcpyAsync(ids, m.hd_tk, nb_i, cudaMemcpyDeviceToHost, m.st));
+    CK(cudaMemcpyAsync(vals, m.hd_tv, nb_v, cudaMemcpyDeviceToHost, m.st));
+    CK(cudaMemcpyAsync(lse_out, m.hd_tl, sizeof(uint16_t) * static_cast<size_t>(n), cudaMemcpyDeviceToHost, m.st));
+    CK(cudaStreamSynchronize(m.st));
 }
 
 void GpuLayers::set_snapshot(bool on) {

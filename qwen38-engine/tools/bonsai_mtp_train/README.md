@@ -238,12 +238,14 @@ layer-by-layer streaming, no big-GPU session:
        --out /content/drive/MyDrive/bonsai_mtp/targets/lm_head_embed_frozen.safetensors
    ```
 
-   The whole quantized 27B (~5.54 GiB) sits resident in VRAM with the LM head; per sample the engine resets the
-   DeltaNet/KV state, prefills 1024 tokens, captures the output-normed hidden of every position, reduces the
-   top-64 logits + FP16 logsumexp chunked on the GPU, and writes atomic `.npy` shard directories (auto-resume,
-   `--max-gb` quota). ~11.6 GB on Drive for 4000 samples. On sm_75+ the matmuls run on FP16 Tensor Cores with
-   FP32 accumulation (one matrix dequantized at a time into a small VRAM scratch); sm_61 keeps the FP32/dp4a
-   path bit-for-bit.
+   The whole quantized 27B (~5.54 GiB) sits resident in VRAM with the LM head (FP16-dequantized once into a
+   budget-guarded 2.4 GiB cache); per sample the engine resets the DeltaNet/KV state, prefills 1024 tokens,
+   captures the output-normed hidden of every position, reduces the top-64 logits + FP16 logsumexp ON the GPU
+   (~0.4 MB per sample crosses D2H), and writes atomic `.npy` shard directories (auto-resume, `--max-gb`
+   quota, per-shard timing breakdown). ~11.6 GB on Drive for 4000 samples. On sm_75+ the matmuls run on FP16
+   Tensor Cores with FP32 accumulation; sm_61 keeps the FP32/dp4a path bit-for-bit (the same GPU top-K
+   kernel runs there). The Colab notebook builds the engine with `-DCMAKE_CUDA_ARCHITECTURES=75` — the CMake
+   default (61, the local card) no longer overrides it, which is what broke CUDA 13 sessions before.
 
 2. **Phase B, unlimited, on the same T4 / L4 / local GPU** — `train_bonsai_t4_student_colab.ipynb` cell 4, or:
 
