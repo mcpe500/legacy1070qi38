@@ -1,0 +1,10 @@
+2026-11-25 15:54:50	download	both files verified
+2026-11-25 15:55:34	probe	probe.json / probe.txt written
+2026-11-25 15:55:35	head-extract	ok 238984352 bytes
+2026-11-25 15:55:35	build	ok
+2026-11-25 15:56:12	sass_gate	PASS
+2026-11-25 15:56:13	ternary_ab_test	ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS
+2026-11-25 15:56:58	run-failed	b25_sanity rc=1 (see raw/b25_sanity.fail.txt)
+2026-11-25 15:56:58	load-FAILED	Bonsai 2.5 did not load; dependent 2.5 stages are skipped, see raw/b25_sanity.fail.txt
+2026-11-25 16:31:32	intel-bin	Bonsai 2.5 evaluated with /home/ivan/llama-prism/llama-prism-b12128-d7b2896
+2026-11-25 16:58:19	report	REPORT.md and figure written

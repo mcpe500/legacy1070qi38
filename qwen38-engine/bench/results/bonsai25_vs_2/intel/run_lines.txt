@@ -1,0 +1,8 @@
+b25_ppl: task=ppl n=40 ngl=99 score=[PPL = 10.2445 +/- 0.30288] peak_vram=5749 MiB wall=396 s OK
+b25_kld: task=kld n=40 ngl=99 score=[Mean KLD: 0.547608 ± 0.008241;Same top p: 72.010 ± 0.445 %] peak_vram=5749 MiB wall=391 s OK
+b25_hellaswag: task=hellaswag n=100 ngl=99 score=[acc_norm 71.00000000% CI95 [61.4611%, 78.9852%]] peak_vram=6243 MiB wall=323 s OK
+b25_winogrande: task=winogrande n=200 ngl=99 score=[Final Winogrande score(200 tasks): 75.5000 +/- 3.0488] peak_vram=6243 MiB wall=124 s OK
+b25_arc: task=arc n=100 ngl=99 score=[Final result: 50.0000 +/- 5.0252] peak_vram=6409 MiB wall=110 s OK
+b25_mmlu: task=mmlu n=150 ngl=99 score=[Final result: 43.3333 +/- 4.0596] peak_vram=6243 MiB wall=260 s OK
+b2_ptq1_arc: task=arc n=100 ngl=99 score=[Final result: 50.0000 +/- 5.0252] peak_vram=6351 MiB wall=139 s OK
+b2_ptq1_mmlu: task=mmlu n=150 ngl=99 score=[Final result: 46.0000 +/- 4.0830] peak_vram=6185 MiB wall=257 s OK

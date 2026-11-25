@@ -1,0 +1,21 @@
+[
+ {
+  "file": "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+  "size": 5946648928,
+  "error": "GGUFReader: np.uint32(143) is not a valid GGMLQuantizationType"
+ },
+ {
+  "file": "Ternary-Bonsai-2.5-27B-PTQ1_0.gguf",
+  "size": 5993834848,
+  "error": "GGUFReader: np.uint32(143) is not a valid GGMLQuantizationType",
+  "only_in_this_vs_bonsai2": [],
+  "only_in_bonsai2_vs_this": []
+ },
+ {
+  "file": "Ternary-Bonsai-2.5-27B-PTQ1_0-mtp.gguf",
+  "size": 6232818944,
+  "error": "GGUFReader: np.uint32(143) is not a valid GGMLQuantizationType",
+  "only_in_this_vs_bonsai2": [],
+  "only_in_bonsai2_vs_this": []
+ }
+]
