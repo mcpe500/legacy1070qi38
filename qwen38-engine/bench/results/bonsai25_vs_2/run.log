@@ -1193,3 +1193,38 @@ To https://github.com/mcpe500/legacy1070qi38.git
 Branch 'exp/bonsai-2.5-vs-2' set up to track remote branch 'exp/bonsai-2.5-vs-2' from 'origin'.
 [2026-11-26 12:57:29] PR #69 already exists: updating its body with the new REPORT.md (REST)
 [2026-11-26 12:57:30] finished. results: /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/bonsai25_vs_2
+[2026-11-26 15:49:05] bonsai25_vs_2 started, STAGES=[build real] ROOT=/home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine WORK=/home/ivan/kiro-tmp/bonsai25
+
+==================================================================
+[2026-11-26 15:49:05] STAGE build: taskset -c 0-3 ninja -C build -j4
+==================================================================
+ninja: Entering directory `build'
+ninja: no work to do.
+[2026-11-26 15:49:05] frozen engine copy: /home/ivan/kiro-tmp/bonsai25/qwen38-engine.frozen (be5effd)
+[2026-11-26 15:49:05] build: ok
+paused 124320 SCREEN -S opencode 
+paused 145050 opencode --auto 
+paused 457253 /home/ivan/.opencode/bin/opencode serve --service 
+paused 457336 /home/ivan/.cache/opencode/bin/opencode-pty/0.6.0-3a781ac5ff8bc189/opencode-pty daemon --runtime-dir
+paused 458275 opencode --auto 
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 2269 MiB (budget 14541)
+
+==================================================================
+[2026-11-26 15:49:05] STAGE real: one long ChatML request at ctx 102400, as a user would send it
+==================================================================
+/home/ivan/kiro-tmp/bonsai25/p/realfull102000.txt: 102000 tokens (prefix 101957, question 43)
+[2026-11-26 15:49:14] run real_b2_s0_c102400
+[2026-11-26 16:32:10] done real_b2_s0_c102400 rc=0: {"tag":"real_b2_s0_c102400","rc":0,"wall_s":2575,"peak_vram_mib":7219,"vram_cap_ok":true,"max_rss_kb":798904}
+[2026-11-26 16:32:10] run real_b25_s0_c102400
+[2026-11-26 17:15:18] done real_b25_s0_c102400 rc=0: {"tag":"real_b25_s0_c102400","rc":0,"wall_s":2588,"peak_vram_mib":7263,"vram_cap_ok":true,"max_rss_kb":800920}
+[2026-11-26 17:15:18] run real_b2_uq4_s2_c102400
+[2026-11-26 19:02:45] done real_b2_uq4_s2_c102400 rc=0: {"tag":"real_b2_uq4_s2_c102400","rc":0,"wall_s":6446,"peak_vram_mib":7367,"vram_cap_ok":true,"max_rss_kb":2015112}
+[2026-11-26 19:02:45] run real_b25mtp_s2_c102400
+WARNING real_b25mtp_s2_c102400: peak VRAM 7411 MiB > cap 7373 MiB
+[2026-11-26 20:56:09] done real_b25mtp_s2_c102400 rc=0: {"tag":"real_b25mtp_s2_c102400","rc":0,"wall_s":6803,"peak_vram_mib":7411,"vram_cap_ok":false,"max_rss_kb":1967188}
+resumed 124320
+resumed 145050
+resumed 457253
+resumed 457336
+resumed 458275
+[2026-11-26 20:56:09] finished. results: /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/bonsai25_vs_2

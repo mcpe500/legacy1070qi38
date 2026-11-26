@@ -12,7 +12,7 @@
 #   STAGES="build gates load depth needle mtp report pr" bench/bonsai25_vs_2.sh   # rerun on the existing branch (no branch stage; failed runs are retried,
 #                                                  finished ones skipped; a stale frozen engine is rebuilt; an existing PR body is updated)
 #
-# Stages (in this order): branch download probe build gates load depth needle mtp intel report pr
+# Stages (in this order): branch download probe build gates load depth needle real mtp intel report pr
 #   branch    git fetch, then git checkout -b exp/bonsai-2.5-vs-2 origin/main (never touches main); the script and the summarizer are carried over
 #   download  hf download both Bonsai 2.5 GGUFs into ~/models/27b-bonsai-2.5, verify size and LFS sha256
 #   probe     gguf tensor/metadata probe (bench/gguf_probe.py, standalone parser, includes a type diff Bonsai 2 vs 2.5) (blk.64 / nextn tensors, block_count, tokenizer hash), try to extract the 2.5 head as a sidecar (CPU only)
@@ -21,6 +21,7 @@
 #   load      does the engine load Bonsai 2.5 and give sane greedy output (versus Bonsai 2, same prompt)
 #   depth     decode tok/s, peak VRAM, RSS at 512..131072 (depth probe, protocol of bonsai_overnight_v2/depth_matrix.md) + real 4K generation
 #   needle    128K-class needle prompts + state round trip (prefill tok/s, answer, VRAM); Bonsai 2 only up to 32K unless B2_LONG=1
+#   real      one long ChatML request at REAL_CTX (default 102400) as a user sends it: TTFT, prefill, decode, wall; no MTP and best head
 #   mtp       MTP race (protocol of bonsai_overnight_v2/mtp_race): 2.5 built-in head, r3 sidecar, user head, extracted 2.5 head; lossless check
 #   intel     llama-perplexity: WikiText-2 PPL, KLD vs Qwen Q4_K_M, HellaSwag/Winogrande/ARC/MMLU subsets (same commands as bench/results/bonsai/intel)
 #   report    bench/bonsai25_vs_2_summary.py -> REPORT.md, figure
@@ -63,7 +64,7 @@ STOCK="$HOME/llama.cpp/build-iso3/bin"
 PRISM="${PRISM_DIR:-$HOME/llama-prism/llama-prism-b12128-d7b2896}"
 KLD_BASE="${KLD_BASE:-$HOME/kiro-tmp/qwen_q4km_wiki40.kld}"
 ENG="$WORK/qwen38-engine.frozen"
-ALL_STAGES="branch download probe build gates load depth needle mtp intel report pr"
+ALL_STAGES="branch download probe build gates load depth needle real mtp intel report pr"
 STAGES="${STAGES:-$ALL_STAGES}"
 DEPTH_CTXS="${DEPTH_CTXS:-512 4096 16384 32768 65536 98304 114688 131072}"
 NEEDLE_CTXS="${NEEDLE_CTXS:-4096 32768 65536 131072}"
@@ -260,7 +261,7 @@ main() {
   [ -x "$ENG" ] || die "no engine binary ($ENG); run the build stage"
 
   # ------------------------------------------------------------------------------------------------------------ gates
-  if want gates || want load || want depth || want needle || want mtp || want intel; then gpu_begin; fi
+  if want gates || want load || want depth || want needle || want real || want mtp || want intel; then gpu_begin; fi
 
   if want gates; then
     banner "gates: SASS gate and ternary_ab_test"
@@ -383,6 +384,27 @@ PY
         fi
       fi
     done
+  fi
+
+  # ------------------------------------------------------------------------------------------------------------ real
+  # What a user feels at a long context: ONE ChatML request of about REAL_CTX tokens (needle + source listing + a task that asks for a
+  # long answer), prefill of the whole prompt, then up to 256 generated tokens. No depth probe, no saved state. Reported: time to first
+  # token, prefill tok/s, decode tok/s, total wall time, peak VRAM, RSS; without MTP and with each model's best head.
+  if want real; then
+    banner "real: one long ChatML request at ctx ${REAL_CTX:-102400}, as a user would send it"
+    rc_="${REAL_CTX:-102400}"; rn=$(( rc_ - 400 )); rp="$WORK/p/real$rc_.txt"
+    mkdir -p "$WORK/p"
+    if [ ! -s "$rp" ]; then
+      python3 bench/make_long_prompt.py "$M2" "$rn" "$WORK/p/realfull$rn.txt" --prefix-out "$WORK/p/realpre$rn.txt" || status "prompt-failed" "real $rn"
+      { cat "$WORK/p/realpre$rn.txt"
+        printf '\n\nEnd of the source listing.\nTask: explain in detail, in English, what this program does and how its main parts (GGUF packer, CUDA kernels, CPU path, engine, HTTP server) work together. Write at least 300 words.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n'
+      } > "$rp"
+    fi
+    RA=(--ctx "$rc_" --parse-special -f "$rp" -n 256 --temp 0 --seed 42)
+    run "real_b2_s0_c$rc_"  -m "$M2"  "${COMMON[@]}" "${RA[@]}" --gen-mtp-steps 0
+    b25_ok && run "real_b25_s0_c$rc_" -m "$M25" "${COMMON[@]}" "${RA[@]}" --gen-mtp-steps 0
+    run "real_b2_uq4_s2_c$rc_" -m "$M2" "${COMMON[@]}" "${RA[@]}" --mtp-gguf "$UQ4" --mtp-adaptive 1 --gen-mtp-steps 2
+    b25_ok && [ -f "$M25MTP" ] && run "real_b25mtp_s2_c$rc_" -m "$M25MTP" "${COMMON[@]}" "${RA[@]}" --mtp-adaptive 1 --gen-mtp-steps 2
   fi
 
   # ------------------------------------------------------------------------------------------------------------ mtp

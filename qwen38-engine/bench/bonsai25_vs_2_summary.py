@@ -59,7 +59,7 @@ def head_line(tag):
     out = []
     try:
         for l in open(os.path.join(RAW, tag + ".err"), encoding="utf-8", errors="replace"):
-            if l.startswith("LM head:") or l.startswith("--fit-ctx-for-gpu-head") or l.startswith("verify batch lowered"):
+            if l.startswith("LM head:") or l.startswith("MTP block:") or l.startswith("--fit-ctx-for-gpu-head") or l.startswith("verify batch lowered"):
                 out.append(l.strip())
     except OSError:
         pass
@@ -265,6 +265,51 @@ for c, src, dec in old_used:
       "Its decode tok/s is **not comparable** with the Bonsai 2.5 row or with the depth probe in section 3 (later optimisations; compare prefill, answer and round trip only). "
       "Set `B2_LONG=1` to rerun Bonsai 2 here with the current build." % (c, src, f(dec)))
 P("")
+
+# ------------------------------------------------------------------------------------------------ real long request
+REAL = sorted({int(m.group(1)) for fn in (os.listdir(RAW) if os.path.isdir(RAW) else []) for m in [re.match(r"real_.*_c(\d+)\.txt$", fn)] if m})
+real_rows = {}
+for c in REAL:
+    P("## 4b. One long request as a user sends it (ctx %d)\n" % c)
+    P("One ChatML request: needle + source listing + a task that asks for a long answer (thinking closed, `--parse-special`), the whole prompt "
+      "is prefilled, then up to 256 tokens are generated. This is the wait a user sees: time to first token, then the streaming speed. "
+      "No depth probe, no saved state.\n")
+    P("| model | MTP | prompt tokens | generated | time to first token s | prefill tok/s | decode tok/s | acceptance | total wall s | peak VRAM MiB | RSS MiB | same ids as no MTP |")
+    P("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
+    for lab, mtp, key, base in (("Bonsai 2", "no", "b2_s0", None), ("Bonsai 2.5", "no", "b25_s0", None),
+                                ("Bonsai 2", "uq4 head, 2 steps", "b2_uq4_s2", "b2_s0"), ("Bonsai 2.5 (-mtp file)", "built-in head, 2 steps", "b25mtp_s2", "b25_s0")):
+        tag = "real_%s_c%d" % (key, c)
+        e, w, _ = get(tag)
+        if not e:
+            if failed(tag):
+                P("| %s | %s | %s |%s" % (lab, mtp, failed(tag), " |" * 9))
+            continue
+        real_rows[key] = e
+        acc = "-" if not e.get("draft_n") else "%.1f %%" % (100.0 * e["draft_n_accepted"] / e["draft_n"])
+        same = "n/a"
+        if base:
+            b = get("real_%s_c%d" % (base, c))[0]
+            same = "-" if not b else ("yes" if b.get("ids") == e.get("ids") else "no (first %d ids equal)" % next((i for i, (x, y) in enumerate(zip(b["ids"], e["ids"])) if x != y), min(len(b["ids"]), len(e["ids"]))))
+        P("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (lab, mtp, e.get("prompt_tokens", "-"), e.get("generated_tokens", "-"), f(e.get("ttft_s"), 1),
+                                                                         f(e.get("prefill_tok_s"), 1), speed(e), acc, (w or {}).get("wall_s", "-"), vram(w), rss(w, e), same))
+    for key in ("b2_s0", "b25_s0", "b2_uq4_s2", "b25mtp_s2"):
+        hl = head_line("real_%s_c%d" % (key, c))
+        if hl:
+            P("\n`%s` engine placement: %s" % (key, " / ".join(hl)[:300]))
+    P("\nFor the Bonsai 2.5 MTP row the baseline is the 2.5 no-MTP run of the plain file (same trunk weights, different file).")
+    if any(x.startswith("MTP block: CPU") for k in ("b2_uq4_s2", "b25mtp_s2") for x in head_line("real_%s_c%d" % (k, c))):
+        P("\n**MTP at this context.** The MTP block does not fit next to 64 layers and the %d-position KV cache, so the engine runs it on the CPU. "
+          "Its prefill over the whole prompt then runs on the CPU too, which is why time to first token grows and decode is slower than without MTP. "
+          "At this context MTP should stay off." % c)
+    if any("| no (first" in l for l in L[-12:]):
+        P("\n**Ids differ between MTP and no MTP here.** With MTP the engine lowered the prefill chunk from 512 to 256 tokens to keep the LM head on the GPU, "
+          "so the 102K-token prefill is computed in a different order and the greedy tokens differ early (both answers are coherent, see the raw text). "
+          "This is NOT a verified lossless result at this context; the short-context lossless check of section 5 is unaffected. "
+          "A no-MTP run with the same 256-token chunk would separate chunk-order effects from an MTP bug; it has not been run.")
+    if any(not (get("real_%s_c%d" % (k, c))[1] or {}).get("vram_cap_ok", True) for k in ("b2_s0", "b25_s0", "b2_uq4_s2", "b25mtp_s2")):
+        P("\n**Over the VRAM cap.** A run marked (over cap) peaked above 7373 MiB in nvidia-smi although the engine planned to stay under it; "
+          "the VRAM planner underestimates this configuration.")
+    P("")
 
 # ------------------------------------------------------------------------------------------------ mtp
 P("## 5. MTP race (256 tokens, ctx 4096; acceptance = draft_n_accepted / draft_n; lossless = same ids as the no-draft run)\n")
@@ -475,7 +520,7 @@ try:
     nolossless = any("NO or missing" in l for l in L)
     S.append("- **MTP.** Best ChatML coding run: Bonsai 2 %.2f tok/s (%s), Bonsai 2.5 %.2f tok/s (%s). The uq4 head was trained for Bonsai 2 and accepts "
              "fewer drafts on 2.5; on 2.5 its own head (built-in or extracted as a sidecar) is the fastest choice. %s"
-             % (b2c[0], b2c[1], b5c[0], b5c[1], "Some MTP rows are NOT lossless, see section 5." if nolossless else "Every MTP row with output is lossless (same ids as without MTP)."))
+             % (b2c[0], b2c[1], b5c[0], b5c[1], "Some MTP rows are NOT lossless, see section 5." if nolossless else "Every MTP row with output in 5a (ctx 4096) is lossless (same ids as without MTP); for the 102K request see section 4b."))
 except Exception as ex:
     sys.stderr.write("summary mtp skipped: %s\n" % ex)
 try:
@@ -493,6 +538,19 @@ try:
              "These numbers come from llama.cpp (`%s` build), not from qwen38-engine, so the difference belongs to the model weights, not to this engine." % (ppl5, ppl2, k5, k2, ", ".join(dd), binc))
 except Exception as ex:
     sys.stderr.write("summary quality skipped: %s\n" % ex)
+try:
+    for c in REAL:
+        a, b = real_rows.get("b2_s0"), real_rows.get("b25_s0")
+        if a and b:
+            t = "- **One %d-token request (section 4b).** Time to first token: Bonsai 2 %.0f s, Bonsai 2.5 %.0f s. Decode without MTP: %s vs %s tok/s." % (
+                b.get("prompt_tokens", 0), a["ttft_s"], b["ttft_s"], speed(a), speed(b))
+            m2, m5 = real_rows.get("b2_uq4_s2"), real_rows.get("b25mtp_s2")
+            if m2 and m5:
+                t += (" With MTP it is worse (%s vs %s tok/s, time to first token %.0f s vs %.0f s): at this context the MTP block runs on the CPU, so MTP should stay off."
+                      % (speed(m2), speed(m5), m2["ttft_s"], m5["ttft_s"]))
+            S.append(t)
+except Exception as ex:
+    sys.stderr.write("summary real skipped: %s\n" % ex)
 S.append("- **Behaviour.** Bonsai 2.5 is chat tuned: on raw text prompts it often ends at once with EOS (5b), so the ChatML rows (5a) are the fair comparison.")
 S.append("")
 L[2:2] = S
