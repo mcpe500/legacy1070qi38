@@ -86,15 +86,15 @@ Every cell is `decode tok/s (acceptance) [generated tokens]`. **5a** uses ChatML
 
 | config | steps | prompt512 | coding (LRU cache) | Indonesian | lossless |
 |---|---|---:|---:|---:|---|
-| B2, no MTP | - | 17.12 [256] | 17.33 [256] | 17.06 [256] | n/a |
-| B2 + r3 sidecar | 2 | 28.72 (91.7 %) [149] | 27.83 (90.2 %) [256] | 24.61 (87.8 %) [256] | NO or missing |
-| B2 + user head (uq4) | 2 | 29.95 (94.8 %) [149] | 28.45 (91.3 %) [256] | 25.60 (93.6 %) [256] | NO or missing |
-| B2.5, no MTP | - | 16.87 [91] | 17.15 [256] | 17.07 [256] | n/a |
-| B2.5 + r3 sidecar | 2 | 26.87 (91.9 %) [50] | 28.03 (91.0 %) [256] | 24.11 (85.2 %) [256] | NO or missing |
-| B2.5 + uq4 sidecar | 2 | 26.49 (85.4 %) [50] | 27.99 (89.2 %) [256] | 23.80 (81.8 %) [256] | NO or missing |
+| B2, no MTP | - | 17.28 [149] | 17.33 [256] | 17.06 [256] | n/a |
+| B2 + r3 sidecar | 2 | 28.72 (91.7 %) [149] | 27.83 (90.2 %) [256] | 24.61 (87.8 %) [256] | yes |
+| B2 + user head (uq4) | 2 | 29.95 (94.8 %) [149] | 28.45 (91.3 %) [256] | 25.60 (93.6 %) [256] | yes |
+| B2.5, no MTP | - | 16.96 [50] | 17.15 [256] | 17.07 [256] | n/a |
+| B2.5 + r3 sidecar | 2 | 26.87 (91.9 %) [50] | 28.03 (91.0 %) [256] | 24.11 (85.2 %) [256] | yes |
+| B2.5 + uq4 sidecar | 2 | 26.49 (85.4 %) [50] | 27.99 (89.2 %) [256] | 23.80 (81.8 %) [256] | yes |
 | B2.5-mtp file, no MTP | - | 16.80 [50] | 17.06 [256] | 16.88 [256] | n/a |
 | B2.5-mtp file, built-in head (Q4_0) | 2 | 27.25 (85.7 %) [50] | 28.56 (91.5 %) [256] | 25.04 (87.2 %) [256] | yes |
-| B2.5 + its head extracted as sidecar | 2 | 27.12 (85.7 %) [50] | 28.62 (91.5 %) [256] | 25.08 (87.2 %) [256] | NO or missing |
+| B2.5 + its head extracted as sidecar | 2 | 27.12 (85.7 %) [50] | 28.62 (91.5 %) [256] | 25.08 (87.2 %) [256] | yes |
 
 **5b. Raw text prompts (no chat template)**
 
@@ -165,4 +165,6 @@ Status log (`status.tsv`):
 2026-11-26 09:31:22	q4_0_parity	q4_0_parity: 16 cases, 0 fail, worst r/bar 0.037 -> PASS
 2026-11-26 09:31:22	load	Bonsai 2.5 loads and generates
 2026-11-26 09:32:55	fit-ctx	Bonsai 2.5 LM head stays on the GPU up to ctx 126976
+2026-11-26 12:11:43	report	REPORT.md and figure written
+2026-11-26 12:55:38	build	frozen engine refreshed (sources changed)
 ```

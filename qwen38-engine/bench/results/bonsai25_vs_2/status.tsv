@@ -33,3 +33,5 @@
 2026-11-26 09:31:22	load	Bonsai 2.5 loads and generates
 2026-11-26 09:32:55	fit-ctx	Bonsai 2.5 LM head stays on the GPU up to ctx 126976
 2026-11-26 12:11:43	report	REPORT.md and figure written
+2026-11-26 12:55:38	build	frozen engine refreshed (sources changed)
+2026-11-26 12:57:25	report	REPORT.md and figure written
