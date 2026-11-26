@@ -958,7 +958,13 @@ void op_attention_set_tiled_ref(bool on) { g_attn_tiled_ref = on; }
 int g_verify_t = kSplitTMax;
 void op_attention_set_verify_t(int t) { g_verify_t = t < 1 ? kSplitTMax : t; }
 int op_attention_verify_t() { return g_verify_t; }
-size_t op_attention_part_floats() { return static_cast<size_t>(g_verify_t) * NH * kVerifySlices * (HD + 2); }
+// Rows per head: the decode v2 kernel writes T x nsl <= verify_t x kVerifySlices, and the split-K kernel (verify_t < T <= kSplitTMax)
+// writes T x kSplits <= kSplitTMax x kSplits = 512, more than 5 x 100 = 500 when there is no MTP block (verify_t 5): a prefill tail
+// chunk of exactly 8 tokens overflowed the buffer, so the buffer holds the larger of the two.
+size_t op_attention_part_floats() {
+    const size_t rows = std::max(static_cast<size_t>(g_verify_t) * kVerifySlices, static_cast<size_t>(kSplitTMax) * kSplits);
+    return rows * NH * (HD + 2);
+}
 
 cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s) {
     rmsnorm_rows_kernel<<<rows, 256, 0, s>>>(x, w, y, n, eps);
