@@ -1102,7 +1102,7 @@ uint32_t parse_dp4a_mask(const char * list) {
     const std::string s = list ? list : "";
     if (s.empty() || s == "none") return 0;
     struct Name { const char * n; int id; };
-    static const Name names[] = {{"q3_k", 11}, {"q4_k", 12}, {"q5_k", 13}, {"q6_k", 14}, {"iq4_nl", 20}, {"iq3_s", 21}, {"iq4_xs", 23}};
+    static const Name names[] = {{"q4_0", 2}, {"q3_k", 11}, {"q4_k", 12}, {"q5_k", 13}, {"q6_k", 14}, {"iq4_nl", 20}, {"iq3_s", 21}, {"iq4_xs", 23}};
     uint32_t m = 0;
     if (s == "all") {
         for (const Name & n : names) m |= 1u << n.id;

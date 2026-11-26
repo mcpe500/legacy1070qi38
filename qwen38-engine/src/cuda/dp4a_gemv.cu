@@ -207,6 +207,27 @@ template <> struct Prep<GT_IQ4_NL> {
     }
 };
 
+// Q4_0 (ggml type 2, 32 values in 18 bytes, ggml-common.h block_q4_0): fp16 d, then qs[16] where the low nibble of
+// byte j is value j and the high nibble is value 16 + j. value = d * (nibble - 8). The unit is one block. The -8
+// is folded into the activation block sum like the minimum of Q4_K: sum(w*x) = d * (sum(nibble*x) - 8 * sum(x)),
+// so mn = 8 d multiplies s_x. The nibble dot is an exact integer, so only the FP32 scaling differs from the reference.
+template <> struct Prep<GT_Q4_0> {
+    static constexpr bool TWO_MIN = false;
+    static constexpr int BLOCK_BYTES = 18, UPB = 1;
+    static __device__ __forceinline__ void run(const uint8_t * blk, int, UnitW & u) {
+        const float d = half_at(blk);
+        u.s0 = u.s1 = d;
+        u.mn = 8.0f * d;
+        const uint8_t * qs = blk + 2;   // 2-byte aligned only
+#pragma unroll
+        for (int g = 0; g < 4; ++g) {
+            const uint32_t q = rd32(qs + 4 * g);
+            u.w[g] = lop3_and(q, 0x0F0F0F0Fu);          // low nibbles -> positions 4g .. 4g+3
+            u.w[4 + g] = lop3_and(q >> 4, 0x0F0F0F0Fu); // high nibbles -> positions 16+4g ..
+        }
+    }
+};
+
 // Q2_K (ggml type 10, 256 values in 84 bytes, ggml-common.h block_q2_K): scales[16] at offset 0 (one byte per
 // 16 values: low nibble = scale, high nibble = min), qs[64] at 16 (4 two-bit codes per byte), then the fp16 d
 // at 80 and dmin at 82. A unit is 32 values = one shift s & 3 over 32 payload bytes of one 128-value half
@@ -401,7 +422,7 @@ cudaError_t actq8_quantize(const float * x, int64_t in, int64_t T, const ActQ8 &
 bool gemv_dp4a_supported(int type) {
     switch (type) {
         case GT_Q4_K: case GT_Q5_K: case GT_Q6_K: case GT_Q3_K: case GT_IQ4_NL: case GT_IQ3_S: case GT_IQ4_XS:
-        case GT_Q2_K: return true;
+        case GT_Q2_K: case GT_Q4_0: return true;
         default: return false;
     }
 }
@@ -412,6 +433,7 @@ cudaError_t gemv_dp4a(int type, const uint8_t * W, int64_t in, int64_t out, cons
     switch (type) {
         case GT_Q4_K: return launch<GT_Q4_K>(W, in, out, a, T, y, s);
         case GT_Q2_K: return launch<GT_Q2_K>(W, in, out, a, T, y, s);
+        case GT_Q4_0: return launch<GT_Q4_0>(W, in, out, a, T, y, s);
         case GT_Q5_K: return launch<GT_Q5_K>(W, in, out, a, T, y, s);
         case GT_Q6_K: return launch<GT_Q6_K>(W, in, out, a, T, y, s);
         case GT_Q3_K: return launch<GT_Q3_K>(W, in, out, a, T, y, s);

@@ -14,7 +14,7 @@ struct GpuConfig {
     int ctx_max = 2048;    // KV cache positions
     int t_max = 512;       // largest token batch per call
     bool kv_iso3 = true;   // iso3 (IsoQuant 3-bit) KV cache for the attention layers on the GPU; false keeps FP32
-    // Quantization types whose GEMV uses Q8_1 activations and __dp4a. Bit n is ggml type id n (Q4_K = 12, Q5_K = 13,
+    // Quantization types whose GEMV uses Q8_1 activations and __dp4a. Bit n is ggml type id n (Q4_0 = 2, Q4_K = 12, Q5_K = 13,
     // Q6_K = 14, Q3_K = 11, IQ4_NL = 20, IQ3_S = 21, IQ4_XS = 23). A type whose bit is clear dequantizes to FP32 in the
     // kernel (option A). Q8_0 always uses its own __dp4a kernel.
     uint32_t dp4a_mask = 0;

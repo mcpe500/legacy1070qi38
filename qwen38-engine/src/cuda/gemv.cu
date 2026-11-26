@@ -141,6 +141,19 @@ template <> struct Deq<GT_IQ4_NL> {  // block 18 bytes: d, qs[16]; one block is 
     }
 };
 
+template <> struct Deq<GT_Q4_0> {  // block 18 bytes: d, qs[16]; value = d * ((q & 0xF) - 8), low nibbles = 0..15, high = 16..31
+    static constexpr int BLOCK_BYTES = 18, UPB = 1;
+    static __device__ __forceinline__ void run(const uint8_t * blk, int, float * w) {
+        const float d = half_at(blk);
+        const uint8_t * qs = blk + 2;
+#pragma unroll
+        for (int j = 0; j < 16; ++j) {
+            w[j] = d * static_cast<float>(static_cast<int>(qs[j] & 0xF) - 8);
+            w[16 + j] = d * static_cast<float>(static_cast<int>(qs[j] >> 4) - 8);
+        }
+    }
+};
+
 template <> struct Deq<GT_IQ3_S> {  // block 110 bytes: d, qs[64], qh[8], signs[32], scales[4]
     static constexpr int BLOCK_BYTES = 110, UPB = 8;
     static __device__ __forceinline__ void run(const uint8_t * blk, int ib32, float * w) {
@@ -272,7 +285,8 @@ int64_t gemv_row_bytes(int type, int64_t in) {
         case GT_Q6_K: return in / 256 * 210;
         case GT_Q3_K: return in / 256 * 110;
         case GT_IQ4_XS: return in / 256 * 136;
-        case GT_IQ4_NL: return in / 32 * 18;
+        case GT_IQ4_NL: return in % 32 == 0 ? in / 32 * 18 : 0;
+        case GT_Q4_0: return in % 32 == 0 ? in / 32 * 18 : 0;
         case GT_IQ3_S: return in / 256 * 110;
         case GT_Q8_0: return in / 32 * 34;
         case GT_BF16: return static_cast<int64_t>(in) * 2;
@@ -290,6 +304,7 @@ cudaError_t gemv_fp32(int type, const uint8_t * W, int64_t in, int64_t out, cons
         case GT_Q3_K: return launch<GT_Q3_K>(W, in, out, x, T, y, s);
         case GT_IQ4_XS: return launch<GT_IQ4_XS>(W, in, out, x, T, y, s);
         case GT_IQ4_NL: return launch<GT_IQ4_NL>(W, in, out, x, T, y, s);
+        case GT_Q4_0: return launch<GT_Q4_0>(W, in, out, x, T, y, s);
         case GT_IQ3_S: return launch<GT_IQ3_S>(W, in, out, x, T, y, s);
         case GT_Q8_0: return launch<GT_Q8_0>(W, in, out, x, T, y, s);
         case GT_BF16: return launch<GT_BF16>(W, in, out, x, T, y, s);

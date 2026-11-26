@@ -11,6 +11,7 @@
 // ssm_alpha/ssm_beta packing of Ternary Bonsai 2 and 2.5).
 enum GemvType : int {
     GT_F32 = 0,  // ssm_alpha/ssm_beta of Ternary Bonsai 2.5
+    GT_Q4_0 = 2,  // built-in MTP head of Ternary Bonsai 2.5 (blk.64)
     GT_Q8_0 = 8,
     GT_Q2_K = 10,
     GT_BF16 = 30,
@@ -27,7 +28,7 @@ bool gemv_fp32_supported(int type);
 int64_t gemv_row_bytes(int type, int64_t in);  // bytes of one weight row; 0 if the type is unsupported
 
 // y[t][o] = sum_i W[o][i] * x[t][i], t < T, o < out. W: device pointer to `out` rows of gemv_row_bytes(type, in) bytes.
-// x: device [T][in] FP32. y: device [T][out] FP32. `in` must be a multiple of 256 (32 for IQ4_NL and Q8_0).
+// x: device [T][in] FP32. y: device [T][out] FP32. `in` must be a multiple of 256 (32 for IQ4_NL, Q4_0 and Q8_0).
 cudaError_t gemv_fp32(int type, const uint8_t * W, int64_t in, int64_t out, const float * x, int64_t T, float * y,
                       cudaStream_t stream);
 // Two GEMVs with the same input and shape in one launch (BF16 or F32: ssm_alpha / ssm_beta of Ternary Bonsai 2 / 2.5). Per row the

@@ -155,6 +155,12 @@ target_include_directories(q2_k_parity PRIVATE "${LLAMA_SRC}/ggml/include")
 target_link_libraries(q2_k_parity PRIVATE gpu_cuda ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart)
 set_target_properties(q2_k_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
 
+# Q4_0 (ggml type 2, Bonsai 2.5 built-in MTP head) GPU GEMV parity against the libggml dequantizer, T = 1/3/16/64.
+add_executable(q4_0_parity tests/cuda/q4_0_parity.cu)
+target_include_directories(q4_0_parity PRIVATE "${LLAMA_SRC}/ggml/include")
+target_link_libraries(q4_0_parity PRIVATE gpu_cuda ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart)
+set_target_properties(q4_0_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
+
 # Verification batch T = 17: lossless identity (T=17 vs T=5 vs single rows), FP64 parity, and latency.
 add_executable(verify_t17_test tests/cuda/verify_t17_test.cu)
 target_link_libraries(verify_t17_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
