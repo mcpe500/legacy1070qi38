@@ -618,3 +618,353 @@ Real 4K prompt (`bench/prompt4k.txt`, 128 tokens, no MTP):
 ==================================================================
 [2026-11-26 07:15:20] STAGE pr: commit, push, gh pr create
 ==================================================================
+[exp/bonsai-2.5-vs-2 4793065] exp: Bonsai 2.5 vs 2 rerun results (speed, VRAM, RAM, MTP, quality)
+ 64 files changed, 1252 insertions(+), 40 deletions(-)
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_c131072_statetest.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_c32768_statetest.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_c4096_statetest.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_c65536_statetest.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_d114688_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_d131072_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_d16384_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_d32768_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_d4096_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_d512_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_d65536_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_d98304_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_p4k_s0.txt
+ delete mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_sanity.fail.txt
+ rewrite qwen38-engine/bench/results/bonsai25_vs_2/raw/b25_sanity.txt (100%)
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtp_d114688_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtp_d131072_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtp_d32768_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtp_d4096_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtp_d65536_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d114688_depth.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d114688_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d131072_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d32768_depth.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d32768_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d4096_depth.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d4096_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d65536_depth.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/b25mtpon_d65536_depth.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_base_coding.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_base_id.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_base_p512.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_r3_s2_coding.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_r3_s2_id.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_r3_s2_p512.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_uq4_s2_coding.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_uq4_s2_id.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_uq4_s2_p512.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25head_s2_coding.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25head_s2_coding.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25head_s2_id.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25head_s2_id.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25head_s2_p512.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25head_s2_p512.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_base_coding.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_base_coding.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_base_id.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_base_id.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_base_p512.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_base_p512.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_builtin_s2_coding.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_builtin_s2_coding.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_builtin_s2_id.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_builtin_s2_id.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_builtin_s2_p512.fail.txt
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25mtp_builtin_s2_p512.txt
+To https://github.com/mcpe500/legacy1070qi38.git
+   5bae7ff..4793065  exp/bonsai-2.5-vs-2 -> exp/bonsai-2.5-vs-2
+Branch 'exp/bonsai-2.5-vs-2' set up to track remote branch 'exp/bonsai-2.5-vs-2' from 'origin'.
+[2026-11-26 07:15:24] PR already exists (https://github.com/mcpe500/legacy1070qi38/pull/69): updating its body with the new REPORT.md
+GraphQL: Projects (classic) is being deprecated in favor of the new Projects experience, see: https://github.blog/changelog/2024-05-23-sunset-notice-projects-classic/. (repository.pullRequests.nodes.0.projectCards)
+[2026-11-26 07:15:25] WARNING: gh pr edit failed (gh auth?); the branch is pushed
+[2026-11-26 07:15:25] finished. results: /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/bonsai25_vs_2
+[2026-11-26 09:30:42] bonsai25_vs_2 started, STAGES=[build gates load depth needle mtp report pr] ROOT=/home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine WORK=/home/ivan/kiro-tmp/bonsai25
+
+==================================================================
+[2026-11-26 09:30:42] STAGE build: taskset -c 0-3 ninja -C build -j4
+==================================================================
+ninja: Entering directory `build'
+ninja: no work to do.
+[2026-11-26 09:30:42] frozen engine copy: /home/ivan/kiro-tmp/bonsai25/qwen38-engine.frozen (d2ddb92)
+[2026-11-26 09:30:42] build: ok
+paused 124320 SCREEN -S opencode 
+paused 145050 opencode --auto 
+paused 457253 /home/ivan/.opencode/bin/opencode serve --service 
+paused 457336 /home/ivan/.cache/opencode/bin/opencode-pty/0.6.0-3a781ac5ff8bc189/opencode-pty daemon --runtime-dir
+paused 458275 opencode --auto 
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 2325 MiB (budget 14541)
+
+==================================================================
+[2026-11-26 09:30:42] STAGE gates: SASS gate and ternary_ab_test
+==================================================================
+[PASS] ternary_gemv: IDP.4A x4005, half arithmetic x0
+[PASS] build/qwen38-engine (linked): IDP.4A x6437, half arithmetic x0
+
+SASS gate: PASS
+[2026-11-26 09:31:17] sass_gate: PASS
+canonicalize in=17408 out=1027: 360802 of 3631472 payload bytes rewritten
+ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS
+[2026-11-26 09:31:19] ternary_ab_test: ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS
+[PASS] Q4_0 fp32 in 10240 out 1741 T 64: rel_rms vs libggml q4_0 dequant 1.319e-07 (bar 1.0e-05)
+q4_0_parity: 16 cases, 0 fail, worst r/bar 0.037 -> PASS
+[2026-11-26 09:31:22] q4_0_parity: q4_0_parity: 16 cases, 0 fail, worst r/bar 0.037 -> PASS
+
+==================================================================
+[2026-11-26 09:31:22] STAGE load: does the engine load Bonsai 2.5 (greedy sanity versus Bonsai 2)
+==================================================================
+[2026-11-26 09:31:22] skip b2_sanity (done)
+[2026-11-26 09:31:22] skip b25_sanity (done)
+# Greedy sanity (prompt `The capital of France is`, 48 tokens, temp 0)
+
+- Bonsai 2: 48 tokens, 19 distinct ids, decode 17.33 tok/s, text: ` Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Portugal is Lisbon. The capital of the Un`
+- Bonsai 2.5: 2 tokens, 2 distinct ids, decode 15.73 tok/s, text: ` Paris.`
+
+First 2 of 48 generated ids are identical between the two models (different weights, so a divergence is expected).
+
+Verdict: SUSPICIOUS output (degenerate or empty)
+[2026-11-26 09:31:22] load: Bonsai 2.5 loads and generates
+
+==================================================================
+[2026-11-26 09:31:22] STAGE depth: decode tok/s, VRAM, RSS versus context
+==================================================================
+[2026-11-26 09:31:22] skip b2_d512_depth (done)
+[2026-11-26 09:31:22] skip b25_d512_depth (done)
+[2026-11-26 09:31:22] skip b2_d4096_depth (done)
+[2026-11-26 09:31:22] skip b25_d4096_depth (done)
+[2026-11-26 09:31:22] skip b2_d16384_depth (done)
+[2026-11-26 09:31:22] skip b25_d16384_depth (done)
+[2026-11-26 09:31:22] skip b2_d32768_depth (done)
+[2026-11-26 09:31:22] skip b25_d32768_depth (done)
+[2026-11-26 09:31:22] skip b2_d65536_depth (done)
+[2026-11-26 09:31:22] skip b25_d65536_depth (done)
+[2026-11-26 09:31:22] skip b2_d98304_depth (done)
+[2026-11-26 09:31:22] skip b25_d98304_depth (done)
+[2026-11-26 09:31:22] skip b2_d114688_depth (done)
+[2026-11-26 09:31:22] skip b25_d114688_depth (done)
+[2026-11-26 09:31:22] skip b2_d131072_depth (done)
+[2026-11-26 09:31:22] rerun b25_d131072_depth: its LM head was on the CPU with an older engine
+[2026-11-26 09:31:22] run b25_d131072_depth
+[2026-11-26 09:32:12] done b25_d131072_depth rc=0: {"tag":"b25_d131072_depth","rc":0,"wall_s":50,"peak_vram_mib":7347,"vram_cap_ok":true,"max_rss_kb":713860}
+[2026-11-26 09:32:12] Bonsai 2.5: LM head on the CPU at ctx 131072; repeating the depth probe at the largest context that keeps it on the GPU
+[2026-11-26 09:32:12] run b25fit_dmax_depth
+[2026-11-26 09:32:55] done b25fit_dmax_depth rc=0: {"tag":"b25fit_dmax_depth","rc":0,"wall_s":43,"peak_vram_mib":7343,"vram_cap_ok":true,"max_rss_kb":712704}
+[2026-11-26 09:32:55] fit-ctx: Bonsai 2.5 LM head stays on the GPU up to ctx 126976
+[2026-11-26 09:32:55] skip b25mtp_d4096_depth (done)
+[2026-11-26 09:32:55] run b25mtpon_d4096_depth
+[2026-11-26 09:33:38] done b25mtpon_d4096_depth rc=0: {"tag":"b25mtpon_d4096_depth","rc":0,"wall_s":43,"peak_vram_mib":6499,"vram_cap_ok":true,"max_rss_kb":922180}
+[2026-11-26 09:33:38] skip b25mtp_d32768_depth (done)
+[2026-11-26 09:33:38] run b25mtpon_d32768_depth
+[2026-11-26 09:34:21] done b25mtpon_d32768_depth rc=0: {"tag":"b25mtpon_d32768_depth","rc":0,"wall_s":43,"peak_vram_mib":6877,"vram_cap_ok":true,"max_rss_kb":929228}
+[2026-11-26 09:34:21] skip b25mtp_d65536_depth (done)
+[2026-11-26 09:34:21] run b25mtpon_d65536_depth
+[2026-11-26 09:35:04] done b25mtpon_d65536_depth rc=0: {"tag":"b25mtpon_d65536_depth","rc":0,"wall_s":43,"peak_vram_mib":7311,"vram_cap_ok":true,"max_rss_kb":937284}
+[2026-11-26 09:35:04] skip b25mtp_d114688_depth (done)
+[2026-11-26 09:35:04] run b25mtpon_d114688_depth
+[2026-11-26 09:35:49] done b25mtpon_d114688_depth rc=0: {"tag":"b25mtpon_d114688_depth","rc":0,"wall_s":45,"peak_vram_mib":7355,"vram_cap_ok":true,"max_rss_kb":1831556}
+[2026-11-26 09:35:49] rerun b25mtp_d131072_depth: its LM head was on the CPU with an older engine
+[2026-11-26 09:35:49] run b25mtp_d131072_depth
+[2026-11-26 09:36:39] done b25mtp_d131072_depth rc=0: {"tag":"b25mtp_d131072_depth","rc":0,"wall_s":50,"peak_vram_mib":7347,"vram_cap_ok":true,"max_rss_kb":713768}
+[2026-11-26 09:36:39] rerun b25mtpon_d131072_depth: its LM head was on the CPU with an older engine
+[2026-11-26 09:36:39] run b25mtpon_d131072_depth
+[2026-11-26 09:37:30] done b25mtpon_d131072_depth rc=0: {"tag":"b25mtpon_d131072_depth","rc":0,"wall_s":51,"peak_vram_mib":7301,"vram_cap_ok":true,"max_rss_kb":1960044}
+[2026-11-26 09:37:30] real 4K prompt, ChatML (primary rows), no MTP
+[2026-11-26 09:37:30] run b2_p4k_chat_s0
+[2026-11-26 09:38:49] done b2_p4k_chat_s0 rc=0: {"tag":"b2_p4k_chat_s0","rc":0,"wall_s":78,"peak_vram_mib":6045,"vram_cap_ok":true,"max_rss_kb":712680}
+[2026-11-26 09:38:49] run b25_p4k_chat_s0
+[2026-11-26 09:40:36] done b25_p4k_chat_s0 rc=0: {"tag":"b25_p4k_chat_s0","rc":0,"wall_s":106,"peak_vram_mib":6089,"vram_cap_ok":true,"max_rss_kb":713636}
+[2026-11-26 09:40:36] real 4K prompt, raw text (no chat template), no MTP
+[2026-11-26 09:40:36] skip b2_p4k_s0 (done)
+[2026-11-26 09:40:36] skip b25_p4k_s0 (done)
+
+==================================================================
+[2026-11-26 09:40:36] STAGE needle: long prompts and state round trip
+==================================================================
+[2026-11-26 09:40:36] skip b2_c4096_statetest (done)
+[2026-11-26 09:40:36] skip b25_c4096_statetest (done)
+[2026-11-26 09:40:36] skip b2_c32768_statetest (done)
+[2026-11-26 09:40:36] skip b25_c32768_statetest (done)
+[2026-11-26 09:40:36] Bonsai 2 at ctx 65536: not rerun; the report shows an OLDER-BUILD recorded run (bench/results/bonsai_local_10h or bonsai128k_v2, decode not comparable). B2_LONG=1 reruns it with the current build, about 1 h per 128K
+[2026-11-26 09:40:36] skip b25_c65536_statetest (done)
+[2026-11-26 09:40:36] Bonsai 2 at ctx 131072: not rerun; the report shows an OLDER-BUILD recorded run (bench/results/bonsai_local_10h or bonsai128k_v2, decode not comparable). B2_LONG=1 reruns it with the current build, about 1 h per 128K
+[2026-11-26 09:40:36] rerun b25_c131072_statetest: its LM head was on the CPU with an older engine
+[2026-11-26 09:40:36] run b25_c131072_statetest
+[2026-11-26 10:41:45] done b25_c131072_statetest rc=0: {"tag":"b25_c131072_statetest","rc":0,"wall_s":3669,"peak_vram_mib":7347,"vram_cap_ok":true,"max_rss_kb":826860}
+[2026-11-26 10:41:46] skip b25fit_dmax_depth (done)
+[2026-11-26 10:41:46] Bonsai 2.5 LM head on the CPU at 131072: needle + state round trip at ctx 126976 (largest context with the head on the GPU)
+[2026-11-26 10:41:46] make_long_prompt 126912 tokens (tokenizer of Bonsai 2, shared by both models)
+/home/ivan/kiro-tmp/bonsai25/p/p126912.txt: 126912 tokens (prefix 126869, question 43)
+[2026-11-26 10:41:56] run b25_c126976_statetest
+[2026-11-26 11:41:29] done b25_c126976_statetest rc=0: {"tag":"b25_c126976_statetest","rc":0,"wall_s":3573,"peak_vram_mib":7343,"vram_cap_ok":true,"max_rss_kb":798396}
+
+==================================================================
+[2026-11-26 11:41:29] STAGE mtp: race (lossless: same ids as the no-draft baseline of the same model)
+==================================================================
+[2026-11-26 11:41:29] run race_b2_base_chat_p512
+[2026-11-26 11:42:30] done race_b2_base_chat_p512 rc=0: {"tag":"race_b2_base_chat_p512","rc":0,"wall_s":60,"peak_vram_mib":5993,"vram_cap_ok":true,"max_rss_kb":694032}
+[2026-11-26 11:42:30] run race_b2_base_chat_coding
+[2026-11-26 11:43:25] done race_b2_base_chat_coding rc=0: {"tag":"race_b2_base_chat_coding","rc":0,"wall_s":54,"peak_vram_mib":5993,"vram_cap_ok":true,"max_rss_kb":682056}
+[2026-11-26 11:43:25] run race_b2_base_chat_id
+[2026-11-26 11:44:19] done race_b2_base_chat_id rc=0: {"tag":"race_b2_base_chat_id","rc":0,"wall_s":54,"peak_vram_mib":5993,"vram_cap_ok":true,"max_rss_kb":683288}
+[2026-11-26 11:44:19] skip race_b2_base_p512 (done)
+[2026-11-26 11:44:19] skip race_b2_base_coding (done)
+[2026-11-26 11:44:19] skip race_b2_base_id (done)
+[2026-11-26 11:44:19] run race_b2_r3_s2_chat_p512
+[2026-11-26 11:45:12] done race_b2_r3_s2_chat_p512 rc=0: {"tag":"race_b2_r3_s2_chat_p512","rc":0,"wall_s":52,"peak_vram_mib":6555,"vram_cap_ok":true,"max_rss_kb":1042080}
+[2026-11-26 11:45:12] run race_b2_r3_s2_chat_coding
+[2026-11-26 11:46:02] done race_b2_r3_s2_chat_coding rc=0: {"tag":"race_b2_r3_s2_chat_coding","rc":0,"wall_s":50,"peak_vram_mib":6555,"vram_cap_ok":true,"max_rss_kb":1014172}
+[2026-11-26 11:46:02] run race_b2_r3_s2_chat_id
+[2026-11-26 11:46:52] done race_b2_r3_s2_chat_id rc=0: {"tag":"race_b2_r3_s2_chat_id","rc":0,"wall_s":50,"peak_vram_mib":6555,"vram_cap_ok":true,"max_rss_kb":1010968}
+[2026-11-26 11:46:52] skip race_b2_r3_s2_p512 (done)
+[2026-11-26 11:46:52] skip race_b2_r3_s2_coding (done)
+[2026-11-26 11:46:52] skip race_b2_r3_s2_id (done)
+[2026-11-26 11:46:52] run race_b2_uq4_s2_chat_p512
+[2026-11-26 11:47:45] done race_b2_uq4_s2_chat_p512 rc=0: {"tag":"race_b2_uq4_s2_chat_p512","rc":0,"wall_s":51,"peak_vram_mib":6555,"vram_cap_ok":true,"max_rss_kb":1041948}
+[2026-11-26 11:47:45] run race_b2_uq4_s2_chat_coding
+[2026-11-26 11:48:35] done race_b2_uq4_s2_chat_coding rc=0: {"tag":"race_b2_uq4_s2_chat_coding","rc":0,"wall_s":50,"peak_vram_mib":6555,"vram_cap_ok":true,"max_rss_kb":1013708}
+[2026-11-26 11:48:35] run race_b2_uq4_s2_chat_id
+[2026-11-26 11:49:25] done race_b2_uq4_s2_chat_id rc=0: {"tag":"race_b2_uq4_s2_chat_id","rc":0,"wall_s":50,"peak_vram_mib":6555,"vram_cap_ok":true,"max_rss_kb":1011028}
+[2026-11-26 11:49:25] skip race_b2_uq4_s2_p512 (done)
+[2026-11-26 11:49:25] skip race_b2_uq4_s2_coding (done)
+[2026-11-26 11:49:25] skip race_b2_uq4_s2_id (done)
+[2026-11-26 11:49:25] run race_b25_base_chat_p512
+[2026-11-26 11:50:17] done race_b25_base_chat_p512 rc=0: {"tag":"race_b25_base_chat_p512","rc":0,"wall_s":52,"peak_vram_mib":6039,"vram_cap_ok":true,"max_rss_kb":695864}
+[2026-11-26 11:50:17] run race_b25_base_chat_coding
+[2026-11-26 11:51:12] done race_b25_base_chat_coding rc=0: {"tag":"race_b25_base_chat_coding","rc":0,"wall_s":55,"peak_vram_mib":6039,"vram_cap_ok":true,"max_rss_kb":682164}
+[2026-11-26 11:51:12] run race_b25_base_chat_id
+[2026-11-26 11:52:08] done race_b25_base_chat_id rc=0: {"tag":"race_b25_base_chat_id","rc":0,"wall_s":55,"peak_vram_mib":6039,"vram_cap_ok":true,"max_rss_kb":682120}
+[2026-11-26 11:52:08] skip race_b25_base_p512 (done)
+[2026-11-26 11:52:08] skip race_b25_base_coding (done)
+[2026-11-26 11:52:08] skip race_b25_base_id (done)
+[2026-11-26 11:52:08] run race_b25_r3_s2_chat_p512
+[2026-11-26 11:52:57] done race_b25_r3_s2_chat_p512 rc=0: {"tag":"race_b25_r3_s2_chat_p512","rc":0,"wall_s":49,"peak_vram_mib":6601,"vram_cap_ok":true,"max_rss_kb":1042756}
+[2026-11-26 11:52:57] run race_b25_r3_s2_chat_coding
+[2026-11-26 11:53:48] done race_b25_r3_s2_chat_coding rc=0: {"tag":"race_b25_r3_s2_chat_coding","rc":0,"wall_s":50,"peak_vram_mib":6601,"vram_cap_ok":true,"max_rss_kb":1013360}
+[2026-11-26 11:53:48] run race_b25_r3_s2_chat_id
+[2026-11-26 11:54:39] done race_b25_r3_s2_chat_id rc=0: {"tag":"race_b25_r3_s2_chat_id","rc":0,"wall_s":51,"peak_vram_mib":6601,"vram_cap_ok":true,"max_rss_kb":1011548}
+[2026-11-26 11:54:39] skip race_b25_r3_s2_p512 (done)
+[2026-11-26 11:54:40] skip race_b25_r3_s2_coding (done)
+[2026-11-26 11:54:40] skip race_b25_r3_s2_id (done)
+[2026-11-26 11:54:40] run race_b25_uq4_s2_chat_p512
+[2026-11-26 11:55:29] done race_b25_uq4_s2_chat_p512 rc=0: {"tag":"race_b25_uq4_s2_chat_p512","rc":0,"wall_s":49,"peak_vram_mib":6591,"vram_cap_ok":true,"max_rss_kb":1035620}
+[2026-11-26 11:55:29] run race_b25_uq4_s2_chat_coding
+[2026-11-26 11:56:19] done race_b25_uq4_s2_chat_coding rc=0: {"tag":"race_b25_uq4_s2_chat_coding","rc":0,"wall_s":50,"peak_vram_mib":6601,"vram_cap_ok":true,"max_rss_kb":1013184}
+[2026-11-26 11:56:19] run race_b25_uq4_s2_chat_id
+[2026-11-26 11:57:10] done race_b25_uq4_s2_chat_id rc=0: {"tag":"race_b25_uq4_s2_chat_id","rc":0,"wall_s":51,"peak_vram_mib":6601,"vram_cap_ok":true,"max_rss_kb":1011464}
+[2026-11-26 11:57:10] skip race_b25_uq4_s2_p512 (done)
+[2026-11-26 11:57:10] skip race_b25_uq4_s2_coding (done)
+[2026-11-26 11:57:10] skip race_b25_uq4_s2_id (done)
+[2026-11-26 11:57:10] run race_b25mtp_base_chat_p512
+[2026-11-26 11:58:02] done race_b25mtp_base_chat_p512 rc=0: {"tag":"race_b25mtp_base_chat_p512","rc":0,"wall_s":51,"peak_vram_mib":6499,"vram_cap_ok":true,"max_rss_kb":939660}
+[2026-11-26 11:58:02] run race_b25mtp_base_chat_coding
+[2026-11-26 11:59:00] done race_b25mtp_base_chat_coding rc=0: {"tag":"race_b25mtp_base_chat_coding","rc":0,"wall_s":58,"peak_vram_mib":6499,"vram_cap_ok":true,"max_rss_kb":926516}
+[2026-11-26 11:59:00] run race_b25mtp_base_chat_id
+[2026-11-26 11:59:57] done race_b25mtp_base_chat_id rc=0: {"tag":"race_b25mtp_base_chat_id","rc":0,"wall_s":57,"peak_vram_mib":6499,"vram_cap_ok":true,"max_rss_kb":927528}
+[2026-11-26 11:59:57] run race_b25mtp_base_p512
+[2026-11-26 12:00:48] done race_b25mtp_base_p512 rc=0: {"tag":"race_b25mtp_base_p512","rc":0,"wall_s":51,"peak_vram_mib":6499,"vram_cap_ok":true,"max_rss_kb":939228}
+[2026-11-26 12:00:48] run race_b25mtp_base_coding
+[2026-11-26 12:01:31] done race_b25mtp_base_coding rc=0: {"tag":"race_b25mtp_base_coding","rc":0,"wall_s":43,"peak_vram_mib":6489,"vram_cap_ok":true,"max_rss_kb":916176}
+[2026-11-26 12:01:31] run race_b25mtp_base_id
+[2026-11-26 12:02:12] done race_b25mtp_base_id rc=0: {"tag":"race_b25mtp_base_id","rc":0,"wall_s":41,"peak_vram_mib":6489,"vram_cap_ok":true,"max_rss_kb":915432}
+[2026-11-26 12:02:12] run race_b25mtp_builtin_s2_chat_p512
+[2026-11-26 12:03:02] done race_b25mtp_builtin_s2_chat_p512 rc=0: {"tag":"race_b25mtp_builtin_s2_chat_p512","rc":0,"wall_s":50,"peak_vram_mib":6537,"vram_cap_ok":true,"max_rss_kb":989696}
+[2026-11-26 12:03:02] run race_b25mtp_builtin_s2_chat_coding
+[2026-11-26 12:03:54] done race_b25mtp_builtin_s2_chat_coding rc=0: {"tag":"race_b25mtp_builtin_s2_chat_coding","rc":0,"wall_s":52,"peak_vram_mib":6547,"vram_cap_ok":true,"max_rss_kb":967508}
+[2026-11-26 12:03:54] run race_b25mtp_builtin_s2_chat_id
+[2026-11-26 12:04:46] done race_b25mtp_builtin_s2_chat_id rc=0: {"tag":"race_b25mtp_builtin_s2_chat_id","rc":0,"wall_s":52,"peak_vram_mib":6547,"vram_cap_ok":true,"max_rss_kb":965080}
+[2026-11-26 12:04:46] run race_b25mtp_builtin_s2_p512
+[2026-11-26 12:05:36] done race_b25mtp_builtin_s2_p512 rc=0: {"tag":"race_b25mtp_builtin_s2_p512","rc":0,"wall_s":50,"peak_vram_mib":6537,"vram_cap_ok":true,"max_rss_kb":988648}
+[2026-11-26 12:05:36] run race_b25mtp_builtin_s2_coding
+[2026-11-26 12:06:18] done race_b25mtp_builtin_s2_coding rc=0: {"tag":"race_b25mtp_builtin_s2_coding","rc":0,"wall_s":42,"peak_vram_mib":6489,"vram_cap_ok":true,"max_rss_kb":921824}
+[2026-11-26 12:06:18] run race_b25mtp_builtin_s2_id
+[2026-11-26 12:07:00] done race_b25mtp_builtin_s2_id rc=0: {"tag":"race_b25mtp_builtin_s2_id","rc":0,"wall_s":41,"peak_vram_mib":6489,"vram_cap_ok":true,"max_rss_kb":917684}
+[2026-11-26 12:07:00] run race_b25head_s2_chat_p512
+[2026-11-26 12:07:51] done race_b25head_s2_chat_p512 rc=0: {"tag":"race_b25head_s2_chat_p512","rc":0,"wall_s":51,"peak_vram_mib":6537,"vram_cap_ok":true,"max_rss_kb":989716}
+[2026-11-26 12:07:51] run race_b25head_s2_chat_coding
+[2026-11-26 12:08:41] done race_b25head_s2_chat_coding rc=0: {"tag":"race_b25head_s2_chat_coding","rc":0,"wall_s":50,"peak_vram_mib":6547,"vram_cap_ok":true,"max_rss_kb":967832}
+[2026-11-26 12:08:41] run race_b25head_s2_chat_id
+[2026-11-26 12:09:32] done race_b25head_s2_chat_id rc=0: {"tag":"race_b25head_s2_chat_id","rc":0,"wall_s":51,"peak_vram_mib":6547,"vram_cap_ok":true,"max_rss_kb":964992}
+[2026-11-26 12:09:32] run race_b25head_s2_p512
+[2026-11-26 12:10:21] done race_b25head_s2_p512 rc=0: {"tag":"race_b25head_s2_p512","rc":0,"wall_s":49,"peak_vram_mib":6537,"vram_cap_ok":true,"max_rss_kb":988948}
+[2026-11-26 12:10:21] run race_b25head_s2_coding
+[2026-11-26 12:11:02] done race_b25head_s2_coding rc=0: {"tag":"race_b25head_s2_coding","rc":0,"wall_s":41,"peak_vram_mib":6489,"vram_cap_ok":true,"max_rss_kb":922212}
+[2026-11-26 12:11:02] run race_b25head_s2_id
+[2026-11-26 12:11:43] done race_b25head_s2_id rc=0: {"tag":"race_b25head_s2_id","rc":0,"wall_s":41,"peak_vram_mib":6489,"vram_cap_ok":true,"max_rss_kb":917772}
+resumed 124320
+resumed 145050
+resumed 457253
+resumed 457336
+resumed 458275
+
+==================================================================
+[2026-11-26 12:11:43] STAGE report
+==================================================================
+[2026-11-26 12:11:43] report: REPORT.md and figure written
+# Ternary Bonsai 2.5 27B vs Ternary Bonsai 2 27B on the GTX 1070 Ti
+
+Generated by `bench/bonsai25_vs_2.sh` (summary: `bench/bonsai25_vs_2_summary.py`). Engine runs: temp 0, seed 42, `taskset -c 0-3`, one GPU program at a time, VRAM cap 7373 MiB. Peak VRAM = highest `nvidia-smi` sample, RSS = max resident set of the engine process. A dagger marks a Bonsai 2 number taken from an earlier recorded run (other session) instead of this run.
+
+## 1. Files and head tensors
+
+| file | size (B) | block_count | tensors | tokenizer tokens | tokenizer sha256 (first 12) | blk.64/nextn tensors | blk.0 ssm_alpha / ssm_beta |
+|---|---:|---|---:|---:|---|---:|---|
+| `Ternary-Bonsai-2-27B-PTQ1_0.gguf` | 5,946,648,928 | 64 | 851 | 248320 | 49930cc8a751 | 0 | BF16 / BF16 |
+| `Ternary-Bonsai-2.5-27B-PTQ1_0.gguf` | 5,993,834,848 | 64 | 851 | 248320 | 49930cc8a751 | 0 | F32 / F32 |
+| `Ternary-Bonsai-2.5-27B-PTQ1_0-mtp.gguf` | 6,232,818,944 | 65 | 866 | 248320 | 49930cc8a751 | 15 | F32 / F32 |
+
+Full tensor names, types and shapes: `probe.txt`. Same tokenizer hash on both models means the shared long prompts are valid for both.
+
+**Type diff, Bonsai 2 versus each Bonsai 2.5 file** (tensors present in both whose ggml type differs):
+
+- `Ternary-Bonsai-2.5-27B-PTQ1_0.gguf`: BF16 -> F32 for 96 tensors (e.g. `blk.0.ssm_alpha.weight`, `blk.0.ssm_beta.weight`)
+- `Ternary-Bonsai-2.5-27B-PTQ1_0-mtp.gguf`: BF16 -> F32 for 96 tensors (e.g. `blk.0.ssm_alpha.weight`, `blk.0.ssm_beta.weight`)
+
+## 2. Gates and load check
+
+- SASS gate: `SASS gate: PASS`
+- ternary_ab_test: `ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS`
+
+- Bonsai 2: 48 tokens, 19 distinct ids, decode 17.33 tok/s, text: ` Paris. The capital of Germany is Berlin. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Portugal is Lisbon. The capital of the Un`
+- Bonsai 2.5: 2 tokens, 2 distinct ids, decode 15.73 tok/s, text: ` Paris.`
+
+First 2 of 48 generated ids are identical between the two models (different weights, so a divergence is expected).
+
+Verdict: SUSPICIOUS output (degenerate or empty)
+
+## 3. Decode speed, VRAM and RSS versus context (depth probe, 32 steps at the end of the context)
+
+| ctx | B2 tok/s | B2.5 tok/s | B2.5 / B2 | B2 VRAM MiB | B2.5 VRAM MiB | B2 RSS MiB | B2.5 RSS MiB | B2.5-mtp file (no MTP) tok/s / VRAM | B2.5-mtp file (MTP 2) tok/s / VRAM |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 512 | 16.88 | 16.86 | 0.999 | 5993 | 6039 | 665 | 666 | - | - |
+| 4096 | 16.00 | 15.54 | 0.971 | 5993 | 6039 | 666 | 666 | 15.33 / 6039 | 15.97 / 6499 |
+| 16384 | 14.81 | 14.38 | 0.971 | 6147 | 6191 | 668 | 669 | - | - |
+| 32768 | 13.96 | 13.72 | 0.983 | 6351 | 6395 | 673 | 673 | 13.33 / 6395 | 13.81 / 6877 |
+| 65536 | 11.82 | 11.64 | 0.984 | 6759 | 6803 | 680 | 681 | 11.49 / 6803 | 11.63 / 7311 |
+| 98304 | 10.13 | 9.96 | 0.983 | 7167 | 7211 | 688 | 689 | - | - |
+| 114688 | 9.46 | 9.34 | 0.987 | 7371 | 7287 | 693 | 693 | 9.36 / 7287 | 9.34 / 7355 |
+| 131072 | 8.90 | 3.29 | 0.370 | 7349 | 7347 | 696 | 697 | 3.31 / 7347 | 3.30 / 7301 |
+
+The probe measures the attention cost at depth, not a real prefill. A row `122880` is the fallback when 131072 was refused.
+
+**128K and the LM head (Bonsai 2.5).** The engine keeps the LM head on the GPU when it fits the 7373 MiB cap next to 64 layers; it tries prefill chunks 256, 128, 64, 32, 16 before giving up. When the head still does not fit, the engine prints the largest context that keeps it on the GPU, and `--fit-ctx-for-gpu-head 1` lowers `--ctx` to it (an explicit `--ctx` is never changed otherwise).
+
+| run | ctx | decode tok/s | peak VRAM MiB | LM head placement (engine log) |
+|---|---:|---:|---:|---|
+| `--ctx 131072` | 131072 | 3.29 | 7347 | LM head: stays off the GPU only because of ctx 131072; the largest context that keeps it on the GPU is 126976 (use --ctx 126976 or --fit-ctx-for-gpu-head 1) / LM head: CPU (does not fit the VRAM budget next to 64 layers) |
+| `--ctx 131072 --fit-ctx-for-gpu-head 1` | 126976 | 8.93 | 7343 | LM head: stays off the GPU only because of ctx 131072; the largest context that keeps it on the GPU is 126976 (use --ctx 126976 or --fit-ctx-for-gpu-head 1) / LM head: prefill chunk lowered from 512 to 64 tokens so the head fits in VRAM / --fit-ctx-for-gpu-head: ctx lowered from 131072 to 126976, LM |
+
+Real 4K prompt (`bench/prompt4k.txt`, up to 128 tokens, no MTP). **ChatML** rows wrap the prompt as one user turn with thinking closed (`--parse-special`, same template as the needle prompts); **raw** rows are the plain text, which the chat-tuned Bonsai 2.5 ends at once. The chat rows are the ones to compare. A run that generates nothing shows `0 tokens (stopped)`, never a speed.
+
+| model | prompt | prompt tokens | generated tokens | finish | prefill tok/s | decode tok/s | peak VRAM MiB | RSS MiB | load s |
+|---|---|---:|---:|---|---:|---:|---:|---:|---:|
+| Bonsai 2 | ChatML | 3936 | 128 | length | 68.3 | 16.42 | 6045 | 695 | 12.9 |
+| Bonsai 2.5 | ChatML | 3936 | 128 | length | 66.4 | 15.75 | 6089 | 696 | 38.6 |
+| Bonsai 2 | raw | 3924 | 128 | length | 67.4 | 16.66 | 6045 | 695 | 37.6 |
+
+==================================================================
+[2026-11-26 12:11:43] STAGE pr: commit, push, gh pr create
+==================================================================

@@ -1,0 +1,7 @@
+<|im_start|>user
+Implement a thread-safe LRU cache in Python with O(1) get and put. Provide the full class `LRUCache` with `__init__(self, capacity: int)`, `get(self, key: str) -> object`, and `put(self, key: str, value: object) -> None`, using `collections.OrderedDict` and a `threading.Lock`. Then explain the eviction policy in one sentence and state the time complexity of each method.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+

@@ -34,22 +34,31 @@ Verdict: SUSPICIOUS output (degenerate or empty)
 | ctx | B2 tok/s | B2.5 tok/s | B2.5 / B2 | B2 VRAM MiB | B2.5 VRAM MiB | B2 RSS MiB | B2.5 RSS MiB | B2.5-mtp file (no MTP) tok/s / VRAM | B2.5-mtp file (MTP 2) tok/s / VRAM |
 |---:|---:|---:|---:|---:|---:|---:|---:|---|---|
 | 512 | 16.88 | 16.86 | 0.999 | 5993 | 6039 | 665 | 666 | - | - |
-| 4096 | 16.00 | 15.54 | 0.971 | 5993 | 6039 | 666 | 666 | 15.33 / 6039 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 |
+| 4096 | 16.00 | 15.54 | 0.971 | 5993 | 6039 | 666 | 666 | 15.33 / 6039 | 15.97 / 6499 |
 | 16384 | 14.81 | 14.38 | 0.971 | 6147 | 6191 | 668 | 669 | - | - |
-| 32768 | 13.96 | 13.72 | 0.983 | 6351 | 6395 | 673 | 673 | 13.33 / 6395 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 |
-| 65536 | 11.82 | 11.64 | 0.984 | 6759 | 6803 | 680 | 681 | 11.49 / 6803 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 |
+| 32768 | 13.96 | 13.72 | 0.983 | 6351 | 6395 | 673 | 673 | 13.33 / 6395 | 13.81 / 6877 |
+| 65536 | 11.82 | 11.64 | 0.984 | 6759 | 6803 | 680 | 681 | 11.49 / 6803 | 11.63 / 7311 |
 | 98304 | 10.13 | 9.96 | 0.983 | 7167 | 7211 | 688 | 689 | - | - |
-| 114688 | 9.46 | 9.34 | 0.987 | 7371 | 7287 | 693 | 693 | 9.36 / 7287 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 |
-| 131072 | 8.90 | 3.32 | 0.373 | 7349 | 7347 | 696 | 697 | 3.32 / 7347 | 3.32 / 7301 |
+| 114688 | 9.46 | 9.34 | 0.987 | 7371 | 7287 | 693 | 693 | 9.36 / 7287 | 9.34 / 7355 |
+| 131072 | 8.90 | 3.29 | 0.370 | 7349 | 7347 | 696 | 697 | 3.31 / 7347 | 3.30 / 7301 |
 
 The probe measures the attention cost at depth, not a real prefill. A row `122880` is the fallback when 131072 was refused.
 
-Real 4K prompt (`bench/prompt4k.txt`, 128 tokens, no MTP):
+**128K and the LM head (Bonsai 2.5).** The engine keeps the LM head on the GPU when it fits the 7373 MiB cap next to 64 layers; it tries prefill chunks 256, 128, 64, 32, 16 before giving up. When the head still does not fit, the engine prints the largest context that keeps it on the GPU, and `--fit-ctx-for-gpu-head 1` lowers `--ctx` to it (an explicit `--ctx` is never changed otherwise).
 
-| model | prefill tok/s | decode tok/s | peak VRAM MiB | RSS MiB | load s |
-|---|---:|---:|---:|---:|---:|
-| Bonsai 2 | 67.4 | 16.66 | 6045 | 695 | 37.6 |
-| Bonsai 2.5 | 66.2 | 0.00 | 6079 | 684 | 38.8 |
+| run | ctx | decode tok/s | peak VRAM MiB | LM head placement (engine log) |
+|---|---:|---:|---:|---|
+| `--ctx 131072` | 131072 | 3.29 | 7347 | LM head: stays off the GPU only because of ctx 131072; the largest context that keeps it on the GPU is 126976 (use --ctx 126976 or --fit-ctx-for-gpu-head 1) / LM head: CPU (does not fit the VRAM budget next to 64 layers) |
+| `--ctx 131072 --fit-ctx-for-gpu-head 1` | 126976 | 8.93 | 7343 | LM head: stays off the GPU only because of ctx 131072; the largest context that keeps it on the GPU is 126976 (use --ctx 126976 or --fit-ctx-for-gpu-head 1) / LM head: prefill chunk lowered from 512 to 64 tokens so the head fits in VRAM / --fit-ctx-for-gpu-head: ctx lowered from 131072 to 126976, LM |
+
+Real 4K prompt (`bench/prompt4k.txt`, up to 128 tokens, no MTP). **ChatML** rows wrap the prompt as one user turn with thinking closed (`--parse-special`, same template as the needle prompts); **raw** rows are the plain text, which the chat-tuned Bonsai 2.5 ends at once. The chat rows are the ones to compare. A run that generates nothing shows `0 tokens (stopped)`, never a speed.
+
+| model | prompt | prompt tokens | generated tokens | finish | prefill tok/s | decode tok/s | peak VRAM MiB | RSS MiB | load s |
+|---|---|---:|---:|---|---:|---:|---:|---:|---:|
+| Bonsai 2 | ChatML | 3936 | 128 | length | 68.3 | 16.42 | 6045 | 695 | 12.9 |
+| Bonsai 2.5 | ChatML | 3936 | 128 | length | 66.4 | 15.75 | 6089 | 696 | 38.6 |
+| Bonsai 2 | raw | 3924 | 128 | length | 67.4 | 16.66 | 6045 | 695 | 37.6 |
+| Bonsai 2.5 | raw | 3924 | 0 | stop | 66.2 | 0 tokens (stopped) | 6079 | 684 | 38.8 |
 
 ## 4. Needle and state round trip (prefill of the whole prompt, then the question from saved state)
 
@@ -61,8 +70,9 @@ Real 4K prompt (`bench/prompt4k.txt`, 128 tokens, no MTP):
 | 32768 | Bonsai 2.5 | 54.1 | 12.60 | 6395 | 744 | 548 | yes | PASS |
 | 65536 | Bonsai 2 † (older build) | 45.5 | 6.40 † | 6759 | 654 | 948 | yes | PASS |
 | 65536 | Bonsai 2.5 | 46.6 | 10.93 | 6803 | 772 | 948 | yes | PASS |
+| 126976 | Bonsai 2.5 | 36.0 | 8.75 | 7343 | 779 | 1698 | yes | PASS |
 | 131072 | Bonsai 2 † (older build) | 36.0 | 8.73 † | 7349 | 658 | 1748 | yes | PASS |
-| 131072 | Bonsai 2.5 | 36.4 | 3.25 | 7347 | 806 | 1748 | yes | PASS |
+| 131072 | Bonsai 2.5 (LM head on the CPU) | 36.3 | 3.24 | 7347 | 807 | 1748 | yes | PASS |
 
 † ctx 65536, Bonsai 2: **not measured in this run.** Recorded run of an older engine build, source `bench/results/bonsai128k_v2/PTQ1_0_ctx65536_statetest.txt` (decode 6.40 tok/s). Its decode tok/s is **not comparable** with the Bonsai 2.5 row or with the depth probe in section 3 (later optimisations; compare prefill, answer and round trip only). Set `B2_LONG=1` to rerun Bonsai 2 here with the current build.
 
@@ -70,19 +80,37 @@ Real 4K prompt (`bench/prompt4k.txt`, 128 tokens, no MTP):
 
 ## 5. MTP race (256 tokens, ctx 4096; acceptance = draft_n_accepted / draft_n; lossless = same ids as the no-draft run)
 
-| config | steps | prompt512 tok/s (accept) | coding (LRU cache) tok/s (accept) | Indonesian tok/s (accept) | lossless |
-|---|---|---:|---:|---:|---|
-| B2, no MTP | - | 17.18 | 17.36 | 17.39 | n/a |
-| B2 + r3 sidecar | 2 | 27.70 (96.1 %) | 27.91 (90.1 %) | 25.85 (87.6 %) | yes |
-| B2 + user head (uq4) | 2 | 28.26 (94.3 %) | 28.42 (90.7 %) | 24.91 (86.7 %) | yes |
-| B2.5, no MTP | - | 16.78 | 0.00 | 0.00 | n/a |
-| B2.5 + r3 sidecar | 2 | 25.89 (97.1 %) | 0.00 | 0.00 | yes |
-| B2.5 + uq4 sidecar | 2 | 24.89 (91.7 %) | 0.00 | 0.00 | yes |
-| B2.5-mtp file, no MTP | - | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | n/a |
-| B2.5-mtp file, built-in head | 2 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | NO or missing |
-| B2.5 + its head extracted as sidecar | 2 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | FAILED: error: unsupported quantization in blk.64.ffn_gate.weight: type 2 | NO or missing |
+Every cell is `decode tok/s (acceptance) [generated tokens]`. **5a** uses ChatML prompts (thinking closed, `--parse-special`) and is the main table: Bonsai 2.5 is chat tuned and ends a raw text prompt at once, so only the chat rows compare the two models fairly. **5b** keeps the raw-text rows of the first run. A run that generates nothing shows `0 tokens (stopped)`, never a speed.
 
-Lossless compares each MTP run with the `--gen-mtp-steps 0` run of the same main model. A built-in head row that shows `FAILED` means the engine rejected the 2.5 head (see `probe.txt` for its tensor names); the extracted-sidecar row is the fallback.
+**5a. ChatML prompts (main table)**
+
+| config | steps | prompt512 | coding (LRU cache) | Indonesian | lossless |
+|---|---|---:|---:|---:|---|
+| B2, no MTP | - | 17.12 [256] | 17.33 [256] | 17.06 [256] | n/a |
+| B2 + r3 sidecar | 2 | 28.72 (91.7 %) [149] | 27.83 (90.2 %) [256] | 24.61 (87.8 %) [256] | NO or missing |
+| B2 + user head (uq4) | 2 | 29.95 (94.8 %) [149] | 28.45 (91.3 %) [256] | 25.60 (93.6 %) [256] | NO or missing |
+| B2.5, no MTP | - | 16.87 [91] | 17.15 [256] | 17.07 [256] | n/a |
+| B2.5 + r3 sidecar | 2 | 26.87 (91.9 %) [50] | 28.03 (91.0 %) [256] | 24.11 (85.2 %) [256] | NO or missing |
+| B2.5 + uq4 sidecar | 2 | 26.49 (85.4 %) [50] | 27.99 (89.2 %) [256] | 23.80 (81.8 %) [256] | NO or missing |
+| B2.5-mtp file, no MTP | - | 16.80 [50] | 17.06 [256] | 16.88 [256] | n/a |
+| B2.5-mtp file, built-in head (Q4_0) | 2 | 27.25 (85.7 %) [50] | 28.56 (91.5 %) [256] | 25.04 (87.2 %) [256] | yes |
+| B2.5 + its head extracted as sidecar | 2 | 27.12 (85.7 %) [50] | 28.62 (91.5 %) [256] | 25.08 (87.2 %) [256] | NO or missing |
+
+**5b. Raw text prompts (no chat template)**
+
+| config | steps | prompt512 | coding (LRU cache) | Indonesian | lossless |
+|---|---|---:|---:|---:|---|
+| B2, no MTP | - | 17.18 [256] | 17.36 [256] | 17.39 [256] | n/a |
+| B2 + r3 sidecar | 2 | 27.70 (96.1 %) [256] | 27.91 (90.1 %) [256] | 25.85 (87.6 %) [256] | yes |
+| B2 + user head (uq4) | 2 | 28.26 (94.3 %) [256] | 28.42 (90.7 %) [256] | 24.91 (86.7 %) [256] | yes |
+| B2.5, no MTP | - | 16.78 [48] | 0 tokens (stopped) [0] | 0 tokens (stopped) [0] | n/a |
+| B2.5 + r3 sidecar | 2 | 25.89 (97.1 %) [48] | 0 tokens (stopped) [0] | 0 tokens (stopped) [0] | n/a (0 tokens) |
+| B2.5 + uq4 sidecar | 2 | 24.89 (91.7 %) [48] | 0 tokens (stopped) [0] | 0 tokens (stopped) [0] | n/a (0 tokens) |
+| B2.5-mtp file, no MTP | - | 16.87 [48] | 0 tokens (stopped) [0] | 0 tokens (stopped) [0] | n/a |
+| B2.5-mtp file, built-in head (Q4_0) | 2 | 24.21 (85.4 %) [48] | 0 tokens (stopped) [0] | 0 tokens (stopped) [0] | n/a (0 tokens) |
+| B2.5 + its head extracted as sidecar | 2 | 24.27 (85.4 %) [48] | 0 tokens (stopped) [0] | 0 tokens (stopped) [0] | n/a (0 tokens) |
+
+Lossless compares each MTP run with the `--gen-mtp-steps 0` run of the same main model and the same prompt type (ids must match exactly). For the built-in head the baseline is the no-draft run of the same `-mtp` file. A built-in head row that shows `FAILED` means the engine rejected the head; the extracted-sidecar row is the fallback.
 
 ## 6. Intelligence (llama-perplexity, same commands as `bench/results/bonsai/intel`)
 
@@ -98,19 +126,7 @@ Bonsai 2 and Qwen rows are the earlier recorded runs (`bench/results/bonsai/inte
 
 ## 7. Recorded failures and notes
 
-- `b25mtpon_d114688_depth`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `b25mtpon_d32768_depth`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `b25mtpon_d4096_depth`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `b25mtpon_d65536_depth`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25head_s2_coding`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25head_s2_id`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25head_s2_p512`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25mtp_base_coding`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25mtp_base_id`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25mtp_base_p512`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25mtp_builtin_s2_coding`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25mtp_builtin_s2_id`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
-- `race_b25mtp_builtin_s2_p512`: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+none
 
 Status log (`status.tsv`):
 
@@ -142,4 +158,11 @@ Status log (`status.tsv`):
 2026-11-26 07:15:18	run-failed	race_b25head_s2_p512 rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
 2026-11-26 07:15:19	run-failed	race_b25head_s2_coding rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
 2026-11-26 07:15:20	run-failed	race_b25head_s2_id rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:20	report	REPORT.md and figure written
+2026-11-26 09:30:42	build	ok
+2026-11-26 09:31:17	sass_gate	PASS
+2026-11-26 09:31:19	ternary_ab_test	ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS
+2026-11-26 09:31:22	q4_0_parity	q4_0_parity: 16 cases, 0 fail, worst r/bar 0.037 -> PASS
+2026-11-26 09:31:22	load	Bonsai 2.5 loads and generates
+2026-11-26 09:32:55	fit-ctx	Bonsai 2.5 LM head stays on the GPU up to ctx 126976
 ```

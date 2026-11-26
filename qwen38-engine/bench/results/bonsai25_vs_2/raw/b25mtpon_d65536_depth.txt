@@ -1,1 +1,2 @@
-{"tag":"b25mtpon_d65536_depth","rc":1,"wall_s":1,"peak_vram_mib":107,"vram_cap_ok":true,"max_rss_kb":338392}
+{"depth_bench":65536,"steps":32,"decode_tok_s":11.6316,"ctx":65536,"gpu_layers":64,"load_s":39.97,"cpu_arena_mib":270.2,"gpu_arena_mib":7186.4,"gpu_kv_mib":850.0,"vram_used_mib":7310.2,"peak_rss_kb":937284}
+{"tag":"b25mtpon_d65536_depth","rc":0,"wall_s":43,"peak_vram_mib":7311,"vram_cap_ok":true,"max_rss_kb":937284}

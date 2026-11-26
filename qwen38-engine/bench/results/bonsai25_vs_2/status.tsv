@@ -26,3 +26,10 @@
 2026-11-26 07:15:19	run-failed	race_b25head_s2_coding rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
 2026-11-26 07:15:20	run-failed	race_b25head_s2_id rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
 2026-11-26 07:15:20	report	REPORT.md and figure written
+2026-11-26 09:30:42	build	ok
+2026-11-26 09:31:17	sass_gate	PASS
+2026-11-26 09:31:19	ternary_ab_test	ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS
+2026-11-26 09:31:22	q4_0_parity	q4_0_parity: 16 cases, 0 fail, worst r/bar 0.037 -> PASS
+2026-11-26 09:31:22	load	Bonsai 2.5 loads and generates
+2026-11-26 09:32:55	fit-ctx	Bonsai 2.5 LM head stays on the GPU up to ctx 126976
+2026-11-26 12:11:43	report	REPORT.md and figure written
