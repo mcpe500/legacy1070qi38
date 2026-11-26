@@ -9,7 +9,7 @@
 #   STAGES="download probe build" bench/bonsai25_vs_2.sh
 #   STAGES="depth mtp report" bench/bonsai25_vs_2.sh
 #   SKIP_PR=1 bench/bonsai25_vs_2.sh            # everything except push + gh pr create
-#   STAGES="probe load depth needle mtp report pr" bench/bonsai25_vs_2.sh   # rerun on the existing branch (no branch stage; failed runs are retried,
+#   STAGES="build gates load depth needle mtp report pr" bench/bonsai25_vs_2.sh   # rerun on the existing branch (no branch stage; failed runs are retried,
 #                                                  finished ones skipped; a stale frozen engine is rebuilt; an existing PR body is updated)
 #
 # Stages (in this order): branch download probe build gates load depth needle mtp intel report pr
@@ -24,15 +24,22 @@
 #   mtp       MTP race (protocol of bonsai_overnight_v2/mtp_race): 2.5 built-in head, r3 sidecar, user head, extracted 2.5 head; lossless check
 #   intel     llama-perplexity: WikiText-2 PPL, KLD vs Qwen Q4_K_M, HellaSwag/Winogrande/ARC/MMLU subsets (same commands as bench/results/bonsai/intel)
 #   report    bench/bonsai25_vs_2_summary.py -> REPORT.md, figure
-#   pr        git add (script, summarizer, probe, results dir only), commit, push -u origin, gh pr create --base main or gh pr edit when the PR exists
+#   pr        git add (script, summarizer, probe, results dir only), commit, push -u origin, gh pr create --base main or a REST PATCH of the body (gh api) when the PR exists
 #
 # Every stage is resumable: a run whose result file already has "rc":0 is skipped (a failed run is retried) (FORCE=1 reruns everything; delete a raw/<tag>.txt to rerun one).
 # A failed run (for example 128K not fitting) is recorded in raw/<tag>.fail.txt and the script goes on; nothing here aborts the whole run
 # except: no GPU, a failed download/sha256, a failed SASS gate, or a dirty tree at the branch step.
 #
-# Env: STAGES, SKIP_PR=1, FORCE=1, B2_LONG=1 (also run Bonsai 2 at 64K/128K needle+state, +2 h), NEEDLE_CTXS="4096 32768 65536 131072",
+# Prompts: the race prompts and the real 4K prompt exist in two forms. "chat_*" rows wrap the text in ChatML with thinking closed
+# (<|im_start|>user ... <|im_end|> <|im_start|>assistant <think></think>, run with --parse-special, as bench/make_long_prompt.py does):
+# these are the primary rows, because Bonsai 2.5 is chat tuned and emits the end token at once after a raw text prompt. The raw rows are
+# kept (RAW_RACE=0 skips the raw race rows of new configs). A run that generates 0 tokens is reported as "0 tokens (stopped)", not as 0 tok/s.
+# 128K: when the Bonsai 2.5 LM head lands on the CPU at ctx 131072, the depth probe and the needle run are repeated at the largest
+# context that keeps the head on the GPU (engine flag --fit-ctx-for-gpu-head 1, tags b25fit_*), and both rows are reported.
+#
+# Env: STAGES, RAW_RACE=0, SKIP_PR=1, FORCE=1, B2_LONG=1 (also run Bonsai 2 at 64K/128K needle+state, +2 h), NEEDLE_CTXS="4096 32768 65536 131072",
 #      DEPTH_CTXS, MTP_STEPS="2" (or "2 3"), B2_INTEL_FILL=0 (skip the Bonsai 2 PTQ1_0 ARC/MMLU fill-in runs), PRISM_DIR, WORK (scratch, default ~/kiro-tmp/bonsai25),
-#      BRANCH, PAUSE_OPENCODE=0 (do not SIGSTOP opencode), HF_TOKEN.
+#      BRANCH, FIT_CTX_FALLBACK=122880 (used when the engine cannot report the fitting context), PAUSE_OPENCODE=0 (do not SIGSTOP opencode), HF_TOKEN.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
@@ -103,7 +110,16 @@ engine_err() {   # engine_err FILE : the engine's own error lines of a .err (eve
 # with "rc":0; a run that failed earlier (rc != 0, raw/TAG.fail.txt) is retried.
 run() {
   local tag="$1"; shift
-  if [ -z "${FORCE:-}" ] && grep -qs "\"tag\":\"$tag\",\"rc\":0" "$RAW/$tag.txt"; then log "skip $tag (done)"; return 0; fi
+  if [ -z "${FORCE:-}" ] && grep -qs "\"tag\":\"$tag\",\"rc\":0" "$RAW/$tag.txt"; then
+    # a finished run whose LM head sat on the CPU because of the context, measured with an older engine than the current frozen copy
+    # (the chunk ladder / ctx report of this build may keep the head on the GPU now): keep the old result as .prev and rerun it
+    if grep -qs '^LM head: CPU' "$RAW/$tag.err" && [ "$ENG" -nt "$RAW/$tag.err" ]; then
+      log "rerun $tag: its LM head was on the CPU with an older engine"
+      mv -f "$RAW/$tag.txt" "$RAW/$tag.prev.txt"
+    else
+      log "skip $tag (done)"; return 0
+    fi
+  fi
   local rc try
   for try in 1 2 3 4 5 6; do
     log "run $tag"
@@ -129,6 +145,22 @@ run() {
 }
 
 COMMON=(--gpu-layers auto)
+
+# chatml FILE_IN FILE_OUT : the text of FILE_IN as one ChatML user turn with thinking closed (run the engine with --parse-special).
+chatml() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+t = open(sys.argv[1], encoding="utf-8").read().rstrip("\n")
+open(sys.argv[2], "w", encoding="utf-8").write("<|im_start|>user\n" + t + "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n")
+PY
+}
+
+# fit_ctx_run : Bonsai 2.5 at --ctx 131072 with --fit-ctx-for-gpu-head 1; prints the context the engine settled on (empty on failure).
+fit_ctx_run() {
+  run b25fit_dmax_depth -m "$M25" "${COMMON[@]}" --ctx 131072 --fit-ctx-for-gpu-head 1 --depth-bench max -n 33 >&2
+  grep -o '"ctx":[0-9]*' "$RAW/b25fit_dmax_depth.txt" 2> /dev/null | head -1 | cut -d: -f2
+}
+head_on_cpu() { grep -qs '^LM head: CPU' "$RAW/$1.err"; }
 
 # ================================================================================================================ main
 main() {
@@ -211,7 +243,7 @@ main() {
   # ------------------------------------------------------------------------------------------------------------ build
   if want build; then
     banner "build: taskset -c 0-3 ninja -C build -j4"
-    taskset -c 0-3 ninja -C build -j4 qwen38-engine ternary_ab_test || die "ninja build failed"
+    taskset -c 0-3 ninja -C build -j4 qwen38-engine ternary_ab_test q4_0_parity || die "ninja build failed"
     cp -f build/qwen38-engine "$ENG" && log "frozen engine copy: $ENG ($(git rev-parse --short HEAD))"
     echo "engine from $(git rev-parse HEAD)$(git diff --quiet -- src CMakeLists.txt || echo '+dirty') on $(git branch --show-current)" > "$RES/engine_build.txt"
     status "build" "ok"
@@ -219,7 +251,7 @@ main() {
   if ! want build && [ -x "$ENG" ] && [ -n "$(find src CMakeLists.txt -type f -newer "$ENG" -print -quit 2> /dev/null)" ]; then
     # the frozen copy predates the sources (for example the F32 ssm_alpha/ssm_beta fix): rebuild so the fix is really used
     log "engine sources are newer than the frozen copy $ENG: rebuilding"
-    taskset -c 0-3 ninja -C build -j4 qwen38-engine ternary_ab_test || die "ninja build failed"
+    taskset -c 0-3 ninja -C build -j4 qwen38-engine ternary_ab_test q4_0_parity || die "ninja build failed"
     cp -f build/qwen38-engine "$ENG" || die "cannot refresh $ENG"
     echo "engine from $(git rev-parse HEAD)$(git diff --quiet -- src CMakeLists.txt || echo '+dirty') on $(git branch --show-current)" > "$RES/engine_build.txt"
     status "build" "frozen engine refreshed (sources changed)"
@@ -239,6 +271,11 @@ main() {
     scripts/gpu_isolate.sh -- taskset -c 0-3 build/ternary_ab_test > "$RES/ternary_ab_test.txt" 2>&1; rc=$?
     tail -2 "$RES/ternary_ab_test.txt"
     [ "$rc" = 0 ] && status "ternary_ab_test" "$(tail -1 "$RES/ternary_ab_test.txt")" || status "ternary_ab_test-FAIL" "rc=$rc"
+    if [ -x build/q4_0_parity ]; then   # Q4_0 GEMV (Bonsai 2.5 built-in MTP head) against the libggml dequantizer
+      scripts/gpu_isolate.sh -- taskset -c 0-3 build/q4_0_parity > "$RES/q4_0_parity.txt" 2>&1; rc=$?
+      tail -2 "$RES/q4_0_parity.txt"
+      [ "$rc" = 0 ] && status "q4_0_parity" "$(tail -1 "$RES/q4_0_parity.txt")" || status "q4_0_parity-FAIL" "rc=$rc (the MTP head rows below are not trustworthy)"
+    fi
   fi
 
   # ------------------------------------------------------------------------------------------------------------ load
@@ -285,13 +322,23 @@ PY
       depth_run b2 "$M2" "$c"
       b25_ok && depth_run b25 "$M25" "$c"
     done
+    if b25_ok && head_on_cpu b25_d131072_depth; then
+      log "Bonsai 2.5: LM head on the CPU at ctx 131072; repeating the depth probe at the largest context that keeps it on the GPU"
+      fc="$(fit_ctx_run)"
+      [ -n "$fc" ] && status "fit-ctx" "Bonsai 2.5 LM head stays on the GPU up to ctx $fc" || status "fit-ctx-FAILED" "see raw/b25fit_dmax_depth.fail.txt"
+    fi
     if b25_ok && [ -f "$M25MTP" ]; then   # the file with the head: without MTP (mtp-steps 0) and with it, as in depth_matrix.md
       for c in 4096 32768 65536 114688 131072; do
         depth_run b25mtp "$M25MTP" "$c" --mtp-steps 0
         depth_run b25mtpon "$M25MTP" "$c" --mtp-adaptive 0 --mtp-steps 2
       done
     fi
-    log "real 4K prompt, no MTP"
+    mkdir -p "$RES/prompts"
+    chatml bench/prompt4k.txt "$RES/prompts/p4k_chat.txt"
+    log "real 4K prompt, ChatML (primary rows), no MTP"
+    run b2_p4k_chat_s0 -m "$M2" "${COMMON[@]}" --ctx 8192 --parse-special -f "$RES/prompts/p4k_chat.txt" -n 128 --temp 0 --seed 42 --mtp-steps 0
+    b25_ok && run b25_p4k_chat_s0 -m "$M25" "${COMMON[@]}" --ctx 8192 --parse-special -f "$RES/prompts/p4k_chat.txt" -n 128 --temp 0 --seed 42 --mtp-steps 0
+    log "real 4K prompt, raw text (no chat template), no MTP"
     run b2_p4k_s0 -m "$M2" "${COMMON[@]}" --ctx 8192 -f bench/prompt4k.txt -n 128 --temp 0 --seed 42 --mtp-steps 0
     b25_ok && run b25_p4k_s0 -m "$M25" "${COMMON[@]}" --ctx 8192 -f bench/prompt4k.txt -n 128 --temp 0 --seed 42 --mtp-steps 0
   fi
@@ -317,7 +364,13 @@ PY
       else log "Bonsai 2 at ctx $c: not rerun; the report shows an OLDER-BUILD recorded run (bench/results/bonsai_local_10h or bonsai128k_v2, decode not comparable). B2_LONG=1 reruns it with the current build, about 1 h per 128K"; fi
       if b25_ok; then
         needle_run b25 "$M25" "$c"
-        if [ $? != 0 ] && [ "$c" = 131072 ]; then log "131072 failed for 2.5, trying 122880"; needle_run b25 "$M25" 122880; fi
+        rc25=$?
+        if [ "$rc25" != 0 ] && [ "$c" = 131072 ]; then log "131072 failed for 2.5, trying 122880"; needle_run b25 "$M25" 122880
+        elif [ "$c" = 131072 ] && head_on_cpu b25_c131072_statetest; then
+          fc="$(fit_ctx_run)"; fc="${fc:-${FIT_CTX_FALLBACK:-122880}}"
+          log "Bonsai 2.5 LM head on the CPU at 131072: needle + state round trip at ctx $fc (largest context with the head on the GPU)"
+          needle_run b25 "$M25" "$fc"
+        fi
       fi
     done
   fi
@@ -328,17 +381,23 @@ PY
     cp -f bench/prompt512.txt "$RES/prompts/p512.txt"
     printf '%s\n' 'Implement a thread-safe LRU cache in Python with O(1) get and put. Provide the full class `LRUCache` with `__init__(self, capacity: int)`, `get(self, key: str) -> object`, and `put(self, key: str, value: object) -> None`, using `collections.OrderedDict` and a `threading.Lock`. Then explain the eviction policy in one sentence and state the time complexity of each method.' > "$RES/prompts/coding.txt"
     printf '%s\n' 'Jelaskan perbedaan antara list, tuple, dan set dalam bahasa Python: kapan masing-masing sebaiknya dipakai, bagaimana perilaku duplikat dan urutan pada setiap struktur, dan berikan satu contoh kode singkat untuk masing-masing.' > "$RES/prompts/id.txt"
-    race() {   # race CFG MODEL [sidecar-or-empty] : base (--gen-mtp-steps 0) and the MTP runs for every workload
-      local cfg="$1" m="$2" sc="${3:-}" w s
-      for w in p512 coding id; do
+    # ChatML variants (thinking closed, --parse-special): the primary rows. Bonsai 2.5 ends a raw-text prompt at once (0 tokens).
+    for w in p512 coding id; do chatml "$RES/prompts/$w.txt" "$RES/prompts/${w}_chat.txt"; done
+    RACE_WL="chat_p512 chat_coding chat_id"
+    [ "${RAW_RACE:-1}" = 1 ] && RACE_WL="$RACE_WL p512 coding id"
+    race() {   # race CFG MODEL [sidecar-or-empty] : base (--gen-mtp-steps 0) and the MTP runs for every workload (chat_* = ChatML prompt)
+      local cfg="$1" m="$2" sc="${3:-}" w s pf
+      local -a ex
+      for w in $RACE_WL; do
+        if [[ "$w" == chat_* ]]; then pf="$RES/prompts/${w#chat_}_chat.txt"; ex=(--parse-special); else pf="$RES/prompts/$w.txt"; ex=(); fi
         if [ "${cfg##*_}" = base ]; then
-          run "race_${cfg}_${w}" -m "$m" "${COMMON[@]}" --ctx 4096 -f "$RES/prompts/$w.txt" -n 256 --temp 0 --seed 42 --gen-mtp-steps 0
+          run "race_${cfg}_${w}" -m "$m" "${COMMON[@]}" --ctx 4096 -f "$pf" ${ex[@]+"${ex[@]}"} -n 256 --temp 0 --seed 42 --gen-mtp-steps 0
         else
           for s in $MTP_STEPS; do
             if [ -n "$sc" ]; then
-              run "race_${cfg}_s${s}_${w}" -m "$m" "${COMMON[@]}" --ctx 4096 -f "$RES/prompts/$w.txt" -n 256 --temp 0 --seed 42 --mtp-gguf "$sc" --mtp-adaptive 1 --gen-mtp-steps "$s"
+              run "race_${cfg}_s${s}_${w}" -m "$m" "${COMMON[@]}" --ctx 4096 -f "$pf" ${ex[@]+"${ex[@]}"} -n 256 --temp 0 --seed 42 --mtp-gguf "$sc" --mtp-adaptive 1 --gen-mtp-steps "$s"
             else
-              run "race_${cfg}_s${s}_${w}" -m "$m" "${COMMON[@]}" --ctx 4096 -f "$RES/prompts/$w.txt" -n 256 --temp 0 --seed 42 --mtp-adaptive 1 --gen-mtp-steps "$s"
+              run "race_${cfg}_s${s}_${w}" -m "$m" "${COMMON[@]}" --ctx 4096 -f "$pf" ${ex[@]+"${ex[@]}"} -n 256 --temp 0 --seed 42 --mtp-adaptive 1 --gen-mtp-steps "$s"
             fi
           done
         fi
@@ -427,10 +486,13 @@ PY
       git commit -m "exp: Bonsai 2.5 vs 2 rerun results (speed, VRAM, RAM, MTP, quality)" || die "git commit failed"
     fi
     git push -u origin "$BR" || die "git push failed"
-    prurl="$(gh pr view "$BR" --json url -q .url 2> /dev/null)"
-    if [ -n "$prurl" ]; then
-      log "PR already exists ($prurl): updating its body with the new REPORT.md"
-      gh pr edit "$BR" --body-file "$RES/REPORT.md" || log "WARNING: gh pr edit failed (gh auth?); the branch is pushed"
+    # `gh pr edit` fails with the GraphQL "Projects (classic) is being deprecated" error: find the PR number and PATCH the body over REST.
+    slug="$(gh repo view --json nameWithOwner -q .nameWithOwner 2> /dev/null)"; slug="${slug:-mcpe500/legacy1070qi38}"
+    prnum="$(gh api "repos/$slug/pulls?head=${slug%%/*}:$BR&state=open" --jq '.[0].number // empty' 2> /dev/null)"
+    [ -n "$prnum" ] || prnum="$(gh pr view "$BR" --json number -q .number 2> /dev/null)"
+    if [ -n "$prnum" ]; then
+      log "PR #$prnum already exists: updating its body with the new REPORT.md (REST)"
+      gh api -X PATCH "repos/$slug/pulls/$prnum" -F body=@"$RES/REPORT.md" > /dev/null || log "WARNING: PATCH of PR #$prnum failed (gh auth?); the branch is pushed"
     else
       gh pr create --base main --head "$BR" --title "exp: Ternary Bonsai 2.5 27B vs Bonsai 2 (speed, VRAM, RAM, MTP, quality)" --body-file "$RES/REPORT.md" || die "gh pr create failed (gh auth login?)"
     fi

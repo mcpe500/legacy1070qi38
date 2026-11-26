@@ -43,6 +43,29 @@ def f(x, nd=2, unit=""):
     return "-" if x is None else ("%.*f%s" % (nd, x, unit))
 
 
+def speed(e, nd=2):
+    """Decode tok/s of an engine result, or '0 tokens (stopped)' when the run generated nothing (never 0.00 as a speed)."""
+    if not e:
+        return "-"
+    g = e.get("generated_tokens")
+    v = e.get("decode_tok_s")
+    if g is not None and g <= 1 and not v:
+        return "%d token%s (stopped)" % (g, "" if g == 1 else "s")
+    return f(v, nd)
+
+
+def head_line(tag):
+    """The engine's 'LM head:' placement line(s) of a run (from its .err)."""
+    out = []
+    try:
+        for l in open(os.path.join(RAW, tag + ".err"), encoding="utf-8", errors="replace"):
+            if l.startswith("LM head:") or l.startswith("--fit-ctx-for-gpu-head") or l.startswith("verify batch lowered"):
+                out.append(l.strip())
+    except OSError:
+        pass
+    return out
+
+
 def vram(w):
     if not w:
         return "-"
@@ -141,7 +164,7 @@ except OSError:
 P("")
 
 # ------------------------------------------------------------------------------------------------ depth
-CTXS = [512, 4096, 16384, 32768, 65536, 98304, 114688, 131072, 122880]
+CTXS = sorted({int(m.group(1)) for fn in (os.listdir(RAW) if os.path.isdir(RAW) else []) for m in [re.match(r"b(?:2|25|25mtp|25mtpon)_d(\d+)_depth\.txt$", fn)] if m})
 P("## 3. Decode speed, VRAM and RSS versus context (depth probe, 32 steps at the end of the context)\n")
 P("| ctx | B2 tok/s | B2.5 tok/s | B2.5 / B2 | B2 VRAM MiB | B2.5 VRAM MiB | B2 RSS MiB | B2.5 RSS MiB | B2.5-mtp file (no MTP) tok/s / VRAM | B2.5-mtp file (MTP 2) tok/s / VRAM |")
 P("|---:|---:|---:|---:|---:|---:|---:|---:|---|---|")
@@ -166,15 +189,35 @@ for c in CTXS:
                                                               vram(w2), vram(w5), rss(w2, e2), rss(w5, e5), mt("b25mtp"), mt("b25mtpon")))
 P("\nThe probe measures the attention cost at depth, not a real prefill. A row `122880` is the fallback when 131072 was refused.")
 P("")
-P("Real 4K prompt (`bench/prompt4k.txt`, 128 tokens, no MTP):\n")
-P("| model | prefill tok/s | decode tok/s | peak VRAM MiB | RSS MiB | load s |")
-P("|---|---:|---:|---:|---:|---:|")
-for lab, tag in (("Bonsai 2", "b2_p4k_s0"), ("Bonsai 2.5", "b25_p4k_s0")):
-    e, w, _ = get(tag)
-    if e:
-        P("| %s | %s | %s | %s | %s | %s |" % (lab, f(e.get("prefill_tok_s"), 1), f(e.get("decode_tok_s")), vram(w), rss(w, e), f(e.get("load_s"), 1)))
-    else:
-        P("| %s | %s | | | | |" % (lab, failed(tag) or "not run"))
+e_fit, w_fit, _ = get("b25fit_dmax_depth")
+if e_fit or failed("b25fit_dmax_depth") or any(x.startswith("LM head: CPU") for x in head_line("b25_d131072_depth")):
+    P("**128K and the LM head (Bonsai 2.5).** The engine keeps the LM head on the GPU when it fits the 7373 MiB cap next to 64 layers; "
+      "it tries prefill chunks 256, 128, 64, 32, 16 before giving up. When the head still does not fit, the engine prints the largest "
+      "context that keeps it on the GPU, and `--fit-ctx-for-gpu-head 1` lowers `--ctx` to it (an explicit `--ctx` is never changed otherwise).\n")
+    P("| run | ctx | decode tok/s | peak VRAM MiB | LM head placement (engine log) |")
+    P("|---|---:|---:|---:|---|")
+    for lab, tag in (("`--ctx 131072`", "b25_d131072_depth"), ("`--ctx 131072 --fit-ctx-for-gpu-head 1`", "b25fit_dmax_depth")):
+        e, w, _ = get(tag)
+        hl = " / ".join(head_line(tag)) or "-"
+        if e:
+            P("| %s | %s | %s | %s | %s |" % (lab, e.get("ctx", "-"), f(e["decode_tok_s"]), vram(w), hl[:300]))
+        else:
+            P("| %s | - | %s | | %s |" % (lab, failed(tag) or "not run", hl[:300]))
+    P("")
+P("Real 4K prompt (`bench/prompt4k.txt`, up to 128 tokens, no MTP). **ChatML** rows wrap the prompt as one user turn with thinking closed "
+  "(`--parse-special`, same template as the needle prompts); **raw** rows are the plain text, which the chat-tuned Bonsai 2.5 ends at once. "
+  "The chat rows are the ones to compare. A run that generates nothing shows `0 tokens (stopped)`, never a speed.\n")
+P("| model | prompt | prompt tokens | generated tokens | finish | prefill tok/s | decode tok/s | peak VRAM MiB | RSS MiB | load s |")
+P("|---|---|---:|---:|---|---:|---:|---:|---:|---:|")
+for ptype, suffix in (("ChatML", "_chat"), ("raw", "")):
+    for lab, key in (("Bonsai 2", "b2"), ("Bonsai 2.5", "b25")):
+        tag = "%s_p4k%s_s0" % (key, suffix)
+        e, w, _ = get(tag)
+        if e:
+            P("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (lab, ptype, e.get("prompt_tokens", "-"), e.get("generated_tokens", "-"), e.get("finish", "-"),
+                                                                   f(e.get("prefill_tok_s"), 1), speed(e), vram(w), rss(w, e), f(e.get("load_s"), 1)))
+        elif failed(tag) or ptype == "ChatML" or os.path.exists(os.path.join(RAW, tag + ".err")):
+            P("| %s | %s | | | | | %s | | | |" % (lab, ptype, failed(tag) or "not run"))
 P("")
 
 # ------------------------------------------------------------------------------------------------ needle
@@ -192,7 +235,9 @@ def old_source(c):
 
 
 old_used = []
-for c in (4096, 32768, 65536, 98304, 114688, 122880, 131072):
+NEEDLE_C = sorted({int(m.group(1)) for fn in (os.listdir(RAW) if os.path.isdir(RAW) else []) for m in [re.match(r"b(?:2|25)_c(\d+)_statetest\.txt$", fn)] if m} |
+                  {65536, 131072})
+for c in NEEDLE_C:
     for lab, key in (("Bonsai 2", "b2"), ("Bonsai 2.5", "b25")):
         tag = "%s_c%d_statetest" % (key, c)
         e, w, txt = get(tag)
@@ -212,7 +257,9 @@ for c in (4096, 32768, 65536, 98304, 114688, 122880, 131072):
         if e is None:
             P("| %d | %s%s | %s | | | | | | |" % (c, lab, dag, failed(tag) or "no result"))
             continue
-        P("| %d | %s%s | %s | %s | %s | %s | %s | %s | %s |" % (c, lab, dag, f(e.get("prefill_tok_s"), 1), f(e.get("decode_tok_s")) + (" †" if dag else ""), vram(w), rss(w), f(e.get("state_mib"), 0), ans, rt))
+        hl = head_line(tag) if key == "b25" else []
+        note = " (LM head on the CPU)" if any(x.startswith("LM head: CPU") for x in hl) else (" (head on GPU, ctx lowered by the fit flag)" if any("ctx lowered" in x for x in hl) else "")
+        P("| %d | %s%s%s | %s | %s | %s | %s | %s | %s | %s |" % (c, lab, dag, note, f(e.get("prefill_tok_s"), 1), speed(e) + (" †" if dag else ""), vram(w), rss(w), f(e.get("state_mib"), 0), ans, rt))
 for c, src, dec in old_used:
     P("\n† ctx %d, Bonsai 2: **not measured in this run.** Recorded run of an older engine build, source `%s` (decode %s tok/s). "
       "Its decode tok/s is **not comparable** with the Bonsai 2.5 row or with the depth probe in section 3 (later optimisations; compare prefill, answer and round trip only). "
@@ -221,10 +268,13 @@ P("")
 
 # ------------------------------------------------------------------------------------------------ mtp
 P("## 5. MTP race (256 tokens, ctx 4096; acceptance = draft_n_accepted / draft_n; lossless = same ids as the no-draft run)\n")
+P("Every cell is `decode tok/s (acceptance) [generated tokens]`. **5a** uses ChatML prompts (thinking closed, `--parse-special`) and is the main "
+  "table: Bonsai 2.5 is chat tuned and ends a raw text prompt at once, so only the chat rows compare the two models fairly. **5b** keeps the "
+  "raw-text rows of the first run. A run that generates nothing shows `0 tokens (stopped)`, never a speed.\n")
 WL = (("p512", "prompt512"), ("coding", "coding (LRU cache)"), ("id", "Indonesian"))
 CFG = [("b2_base", "B2, no MTP"), ("b2_r3", "B2 + r3 sidecar"), ("b2_uq4", "B2 + user head (uq4)"),
        ("b25_base", "B2.5, no MTP"), ("b25_r3", "B2.5 + r3 sidecar"), ("b25_uq4", "B2.5 + uq4 sidecar"),
-       ("b25mtp_base", "B2.5-mtp file, no MTP"), ("b25mtp_builtin", "B2.5-mtp file, built-in head"), ("b25head", "B2.5 + its head extracted as sidecar")]
+       ("b25mtp_base", "B2.5-mtp file, no MTP"), ("b25mtp_builtin", "B2.5-mtp file, built-in head (Q4_0)"), ("b25head", "B2.5 + its head extracted as sidecar")]
 steps = sorted({m.group(1) for fn in (os.listdir(RAW) if os.path.isdir(RAW) else []) for m in [re.match(r"race_.*_s(\d)_", fn)] if m}) or ["2"]
 baseline_of = {"b2": "b2_base", "b25": "b25_base", "b25mtp": "b25mtp_base", "b25head": "b25_base"}
 ids_cache = {}
@@ -237,31 +287,50 @@ def ids(tag):
     return ids_cache[tag]
 
 
-P("| config | steps | " + " | ".join("%s tok/s (accept)" % n for _, n in WL) + " | lossless |")
-P("|---|---|" + "---:|" * len(WL) + "---|")
-for cfg, name in CFG:
-    for s in (["-"] if cfg.endswith("_base") else steps):
-        cells, ok, seen = [], True, False
-        for w, _ in WL:
-            tag = "race_%s_%s" % (cfg, w) if s == "-" else "race_%s_s%s_%s" % (cfg, s, w)
-            e = get(tag)[0]
-            if not e:
-                cells.append(failed(tag) or "-"); ok = False if s != "-" else ok
+def race_table(prefix, label):
+    rows = []
+    for cfg, name in CFG:
+        for s in (["-"] if cfg.endswith("_base") else steps):
+            cells, ok, seen, empty = [], True, False, False
+            for w, _ in WL:
+                wk = prefix + w
+                tag = "race_%s_%s" % (cfg, wk) if s == "-" else "race_%s_s%s_%s" % (cfg, s, wk)
+                e = get(tag)[0]
+                if not e:
+                    cells.append(failed(tag) or "-"); ok = False if s != "-" else ok
+                    continue
+                seen = True
+                acc = "" if not e.get("draft_n") else " (%.1f %%)" % (100.0 * e["draft_n_accepted"] / e["draft_n"])
+                cells.append("%s%s [%s]" % (speed(e), acc, e.get("generated_tokens", "?")))
+                if s != "-":
+                    fam = cfg.split("_")[0]
+                    ref = ids("race_%s_%s" % (baseline_of.get(fam, fam + "_base"), wk))
+                    mine = ids(tag)
+                    if ref is None or mine is None or ref != mine:
+                        ok = False
+                    elif not ref:
+                        empty = True   # both runs generated nothing: identical but proves nothing
+            if not seen and all(c == "-" for c in cells):
                 continue
-            seen = True
-            acc = "" if not e.get("draft_n") else " (%.1f %%)" % (100.0 * e["draft_n_accepted"] / e["draft_n"])
-            cells.append("%s%s" % (f(e["decode_tok_s"]), acc))
-            if s != "-":
-                fam = cfg.split("_")[0]
-                ref = ids("race_%s_%s" % (baseline_of.get(fam, fam + "_base"), w))
-                mine = ids(tag)
-                if ref is None or mine is None or ref != mine:
-                    ok = False
-        if not seen and not any(c != "-" for c in cells):
-            continue
-        P("| %s | %s | %s | %s |" % (name, s, " | ".join(cells), "n/a" if s == "-" else ("yes" if ok else "NO or missing")))
-P("\nLossless compares each MTP run with the `--gen-mtp-steps 0` run of the same main model. "
-  "A built-in head row that shows `FAILED` means the engine rejected the 2.5 head (see `probe.txt` for its tensor names); the extracted-sidecar row is the fallback.")
+            verdict = "n/a" if s == "-" else ("n/a (0 tokens)" if ok and empty else ("yes" if ok else "NO or missing"))
+            rows.append("| %s | %s | %s | %s |" % (name, s, " | ".join(cells), verdict))
+    if not rows:
+        return False
+    P("**%s**\n" % label)
+    P("| config | steps | " + " | ".join(n for _, n in WL) + " | lossless |")
+    P("|---|---|" + "---:|" * len(WL) + "---|")
+    for r in rows:
+        P(r)
+    P("")
+    return True
+
+
+if not race_table("chat_", "5a. ChatML prompts (main table)"):
+    P("_no ChatML race rows yet (run the `mtp` stage)._\n")
+race_table("", "5b. Raw text prompts (no chat template)")
+P("Lossless compares each MTP run with the `--gen-mtp-steps 0` run of the same main model and the same prompt type (ids must match exactly). "
+  "For the built-in head the baseline is the no-draft run of the same `-mtp` file. A built-in head row that shows `FAILED` means the engine "
+  "rejected the head; the extracted-sidecar row is the fallback.")
 P("")
 
 # ------------------------------------------------------------------------------------------------ intel
