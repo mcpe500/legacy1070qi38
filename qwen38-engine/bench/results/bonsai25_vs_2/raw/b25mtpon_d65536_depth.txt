@@ -1,0 +1,1 @@
+{"tag":"b25mtpon_d65536_depth","rc":1,"wall_s":1,"peak_vram_mib":107,"vram_cap_ok":true,"max_rss_kb":338392}

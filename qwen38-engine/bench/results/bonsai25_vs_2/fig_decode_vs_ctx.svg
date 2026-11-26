@@ -24,4 +24,14 @@
 <circle cx="540" cy="167" r="3" fill="#c0392b"/>
 <circle cx="620" cy="176" r="3" fill="#c0392b"/>
 <text x="510" y="40" fill="#c0392b">Bonsai 2</text>
+<polyline fill="none" stroke="#2471a3" stroke-width="2" points="60,56 140,76 220,93 300,103 380,134 460,160 540,169 620,260"/>
+<circle cx="60" cy="56" r="3" fill="#2471a3"/>
+<circle cx="140" cy="76" r="3" fill="#2471a3"/>
+<circle cx="220" cy="93" r="3" fill="#2471a3"/>
+<circle cx="300" cy="103" r="3" fill="#2471a3"/>
+<circle cx="380" cy="134" r="3" fill="#2471a3"/>
+<circle cx="460" cy="160" r="3" fill="#2471a3"/>
+<circle cx="540" cy="169" r="3" fill="#2471a3"/>
+<circle cx="620" cy="260" r="3" fill="#2471a3"/>
+<text x="510" y="56" fill="#2471a3">Bonsai 2.5</text>
 </svg>

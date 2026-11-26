@@ -8,3 +8,21 @@
 2026-11-25 15:56:58	load-FAILED	Bonsai 2.5 did not load; dependent 2.5 stages are skipped, see raw/b25_sanity.fail.txt
 2026-11-25 16:31:32	intel-bin	Bonsai 2.5 evaluated with /home/ivan/llama-prism/llama-prism-b12128-d7b2896
 2026-11-25 16:58:19	report	REPORT.md and figure written
+2026-11-26 05:18:01	probe	probe.json / probe.txt written
+2026-11-26 05:18:04	head-extract	ok 238984352 bytes
+2026-11-26 05:18:04	build	frozen engine refreshed (sources changed)
+2026-11-26 05:18:41	load	Bonsai 2.5 loads and generates
+2026-11-26 05:25:07	run-failed	b25mtpon_d4096_depth rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 05:25:51	run-failed	b25mtpon_d32768_depth rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 05:26:35	run-failed	b25mtpon_d65536_depth rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 05:27:19	run-failed	b25mtpon_d114688_depth rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:14	run-failed	race_b25mtp_base_p512 rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:15	run-failed	race_b25mtp_base_coding rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:15	run-failed	race_b25mtp_base_id rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:16	run-failed	race_b25mtp_builtin_s2_p512 rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:17	run-failed	race_b25mtp_builtin_s2_coding rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:17	run-failed	race_b25mtp_builtin_s2_id rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:18	run-failed	race_b25head_s2_p512 rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:19	run-failed	race_b25head_s2_coding rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:20	run-failed	race_b25head_s2_id rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:20	report	REPORT.md and figure written

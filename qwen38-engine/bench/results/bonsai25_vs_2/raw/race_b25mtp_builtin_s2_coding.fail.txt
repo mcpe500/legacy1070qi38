@@ -1,0 +1,7 @@
+tag=race_b25mtp_builtin_s2_coding rc=1
+args: -m /home/ivan/models/27b-bonsai-2.5/Ternary-Bonsai-2.5-27B-PTQ1_0-mtp.gguf --gpu-layers auto --ctx 4096 -f /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/bonsai25_vs_2/prompts/coding.txt -n 256 --temp 0 --seed 42 --mtp-adaptive 1 --gen-mtp-steps 2
+error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+--- time -v (kept separately) ---
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.47
+	Maximum resident set size (kbytes): 338520
+	Exit status: 1

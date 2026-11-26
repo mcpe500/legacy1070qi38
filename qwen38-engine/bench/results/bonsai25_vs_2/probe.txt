@@ -1,6 +1,85 @@
 == Ternary-Bonsai-2-27B-PTQ1_0.gguf (5946648928 bytes)
-  GGUFReader: np.uint32(143) is not a valid GGMLQuantizationType
+  general.architecture = qwen35
+  general.basename = folded
+  general.file_type = 143
+  general.name = Hf
+  general.quantization_version = 2
+  prism.hadamard.inverse_weight_names = array[1]
+  prism.hadamard.weight_names = array[401]
+  qwen35.block_count = 64
+  qwen35.context_length = 262144
+  qwen35.embedding_length = 5120
+  qwen35.full_attention_interval = 4
+  qwen35.ssm.conv_kernel = 4
+  qwen35.ssm.group_count = 16
+  qwen35.ssm.inner_size = 6144
+  qwen35.ssm.state_size = 128
+  qwen35.ssm.time_step_rank = 48
+  GGUF v3, block_count 64, tensors: 851, highest blk index 63, tokenizer 248320 tokens sha256 49930cc8a75188cf69a07c57914f0aabe383db11494aa03ed15629adee4c7e33
+  ssm_alpha / ssm_beta (blk.0) types: {"blk.0.ssm_alpha.weight": "BF16", "blk.0.ssm_beta.weight": "BF16"}
+  types: {"PTQ1_0": {"n": 402, "bytes": 7137280000}, "F32": {"n": 353, "bytes": 10582016}, "BF16": {"n": 96, "bytes": 47185920}}
+  blk.64 / nextn / mtp tensors (0):
 == Ternary-Bonsai-2.5-27B-PTQ1_0.gguf (5993834848 bytes)
-  GGUFReader: np.uint32(143) is not a valid GGMLQuantizationType
+  general.architecture = qwen35
+  general.file_type = 143
+  general.name = Ternary-Bonsai-2.5-27B
+  general.quantization_version = 2
+  prism.hadamard.inverse_weight_names = array[1]
+  prism.hadamard.weight_names = array[401]
+  qwen35.block_count = 64
+  qwen35.context_length = 262144
+  qwen35.embedding_length = 5120
+  qwen35.full_attention_interval = 4
+  qwen35.ssm.conv_kernel = 4
+  qwen35.ssm.group_count = 16
+  qwen35.ssm.inner_size = 6144
+  qwen35.ssm.state_size = 128
+  qwen35.ssm.time_step_rank = 48
+  GGUF v3, block_count 64, tensors: 851, highest blk index 63, tokenizer 248320 tokens sha256 49930cc8a75188cf69a07c57914f0aabe383db11494aa03ed15629adee4c7e33
+  ssm_alpha / ssm_beta (blk.0) types: {"blk.0.ssm_alpha.weight": "F32", "blk.0.ssm_beta.weight": "F32"}
+  types: {"PTQ1_0": {"n": 402, "bytes": 7137280000}, "F32": {"n": 449, "bytes": 104953856}}
+  blk.64 / nextn / mtp tensors (0):
+  only_in_this_vs_bonsai2: []
+  only_in_bonsai2_vs_this: []
+  type diff vs Bonsai 2: 96 tensors differ
+    BF16 -> F32: 96 tensors, e.g. blk.0.ssm_alpha.weight, blk.0.ssm_beta.weight, blk.1.ssm_alpha.weight, blk.1.ssm_beta.weight
 == Ternary-Bonsai-2.5-27B-PTQ1_0-mtp.gguf (6232818944 bytes)
-  GGUFReader: np.uint32(143) is not a valid GGMLQuantizationType
+  general.architecture = qwen35
+  general.file_type = 143
+  general.name = Ternary-Bonsai-2.5-27B
+  general.quantization_version = 2
+  prism.hadamard.inverse_weight_names = array[1]
+  prism.hadamard.weight_names = array[401]
+  qwen35.block_count = 65
+  qwen35.context_length = 262144
+  qwen35.embedding_length = 5120
+  qwen35.full_attention_interval = 4
+  qwen35.nextn_predict_layers = 1
+  qwen35.ssm.conv_kernel = 4
+  qwen35.ssm.group_count = 16
+  qwen35.ssm.inner_size = 6144
+  qwen35.ssm.state_size = 128
+  qwen35.ssm.time_step_rank = 48
+  GGUF v3, block_count 65, tensors: 866, highest blk index 64, tokenizer 248320 tokens sha256 49930cc8a75188cf69a07c57914f0aabe383db11494aa03ed15629adee4c7e33
+  ssm_alpha / ssm_beta (blk.0) types: {"blk.0.ssm_alpha.weight": "F32", "blk.0.ssm_beta.weight": "F32"}
+  types: {"PTQ1_0": {"n": 402, "bytes": 7137280000}, "F32": {"n": 456, "bytes": 105058304}, "Q4_0": {"n": 8, "bytes": 238878720}}
+  blk.64 / nextn / mtp tensors (15):
+    blk.64.attn_k.weight                             Q4_0     [5120, 1024] 2949120 B
+    blk.64.attn_k_norm.weight                        F32      [256] 1024 B
+    blk.64.attn_norm.weight                          F32      [5120] 20480 B
+    blk.64.attn_output.weight                        Q4_0     [6144, 5120] 17694720 B
+    blk.64.attn_q.weight                             Q4_0     [5120, 12288] 35389440 B
+    blk.64.attn_q_norm.weight                        F32      [256] 1024 B
+    blk.64.attn_v.weight                             Q4_0     [5120, 1024] 2949120 B
+    blk.64.ffn_down.weight                           Q4_0     [17408, 5120] 50135040 B
+    blk.64.ffn_gate.weight                           Q4_0     [5120, 17408] 50135040 B
+    blk.64.ffn_up.weight                             Q4_0     [5120, 17408] 50135040 B
+    blk.64.nextn.eh_proj.weight                      Q4_0     [10240, 5120] 29491200 B
+    blk.64.nextn.enorm.weight                        F32      [5120] 20480 B
+    blk.64.nextn.hnorm.weight                        F32      [5120] 20480 B
+    blk.64.nextn.shared_head_norm.weight             F32      [5120] 20480 B
+    blk.64.post_attention_norm.weight                F32      [5120] 20480 B
+  only_in_this_vs_bonsai2: ['blk.64.attn_k.weight', 'blk.64.attn_k_norm.weight', 'blk.64.attn_norm.weight', 'blk.64.attn_output.weight', 'blk.64.attn_q.weight', 'blk.64.attn_q_norm.weight', 'blk.64.attn_v.weight', 'blk.64.ffn_down.weight', 'blk.64.ffn_gate.weight', 'blk.64.ffn_up.weight', 'blk.64.nextn.eh_proj.weight', 'blk.64.nextn.enorm.weight', 'blk.64.nextn.hnorm.weight', 'blk.64.nextn.shared_head_norm.weight', 'blk.64.post_attention_norm.weight']
+  only_in_bonsai2_vs_this: []
+  type diff vs Bonsai 2: 96 tensors differ
+    BF16 -> F32: 96 tensors, e.g. blk.0.ssm_alpha.weight, blk.0.ssm_beta.weight, blk.1.ssm_alpha.weight, blk.1.ssm_beta.weight
