@@ -531,10 +531,10 @@ struct GpuLayers::Impl {
         quant_rot({&l.qkv, &l.gate_z}, xn, kHidden, T, 0);
         gemv(l.qkv, xn, T, bufA);
         gemv(l.gate_z, xn, T, bufB);
-        if (l.alpha.type == GT_BF16 && l.beta.type == GT_BF16 && l.alpha.out == l.beta.out && l.alpha.in == l.beta.in &&
+        if ((l.alpha.type == GT_BF16 || l.alpha.type == GT_F32) && l.beta.type == l.alpha.type && l.alpha.out == l.beta.out && l.alpha.in == l.beta.in &&
             !l.alpha.src && !l.beta.src) {
-            // plain basis (ssm_alpha/ssm_beta are not Hadamard-folded): both 48-row BF16 GEMVs in one launch
-            CK(gemv_fp32_pair(GT_BF16, l.alpha.p, l.beta.p, l.alpha.in, l.alpha.out, xn, T, alpha, betar, st));
+            // plain basis (ssm_alpha/ssm_beta are not Hadamard-folded): both 48-row BF16 or F32 GEMVs in one launch
+            CK(gemv_fp32_pair(l.alpha.type, l.alpha.p, l.beta.p, l.alpha.in, l.alpha.out, xn, T, alpha, betar, st));
         } else {
             gemv(l.alpha, xn, T, alpha);
             gemv(l.beta, xn, T, betar);

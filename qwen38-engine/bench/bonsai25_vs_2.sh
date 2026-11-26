@@ -9,11 +9,13 @@
 #   STAGES="download probe build" bench/bonsai25_vs_2.sh
 #   STAGES="depth mtp report" bench/bonsai25_vs_2.sh
 #   SKIP_PR=1 bench/bonsai25_vs_2.sh            # everything except push + gh pr create
+#   STAGES="probe load depth needle mtp report pr" bench/bonsai25_vs_2.sh   # rerun on the existing branch (no branch stage; failed runs are retried,
+#                                                  finished ones skipped; a stale frozen engine is rebuilt; an existing PR body is updated)
 #
 # Stages (in this order): branch download probe build gates load depth needle mtp intel report pr
 #   branch    git fetch, then git checkout -b exp/bonsai-2.5-vs-2 origin/main (never touches main); the script and the summarizer are carried over
 #   download  hf download both Bonsai 2.5 GGUFs into ~/models/27b-bonsai-2.5, verify size and LFS sha256
-#   probe     gguf tensor/metadata probe (blk.64 / nextn tensors, block_count, tokenizer hash), try to extract the 2.5 head as a sidecar (CPU only)
+#   probe     gguf tensor/metadata probe (bench/gguf_probe.py, standalone parser, includes a type diff Bonsai 2 vs 2.5) (blk.64 / nextn tensors, block_count, tokenizer hash), try to extract the 2.5 head as a sidecar (CPU only)
 #   build     taskset -c 0-3 ninja -C build -j4 (qwen38-engine, ternary_ab_test) and freeze a copy of the engine for the whole run
 #   gates     scripts/sass_gate.sh (must PASS), ternary_ab_test (must be bit-identical)
 #   load      does the engine load Bonsai 2.5 and give sane greedy output (versus Bonsai 2, same prompt)
@@ -22,9 +24,9 @@
 #   mtp       MTP race (protocol of bonsai_overnight_v2/mtp_race): 2.5 built-in head, r3 sidecar, user head, extracted 2.5 head; lossless check
 #   intel     llama-perplexity: WikiText-2 PPL, KLD vs Qwen Q4_K_M, HellaSwag/Winogrande/ARC/MMLU subsets (same commands as bench/results/bonsai/intel)
 #   report    bench/bonsai25_vs_2_summary.py -> REPORT.md, figure
-#   pr        git add (script, summarizer, results dir only), commit, push -u origin, gh pr create --base main
+#   pr        git add (script, summarizer, probe, results dir only), commit, push -u origin, gh pr create --base main or gh pr edit when the PR exists
 #
-# Every stage is resumable: a run whose result file already exists is skipped (FORCE=1 reruns everything; delete a raw/<tag>.txt to rerun one).
+# Every stage is resumable: a run whose result file already has "rc":0 is skipped (a failed run is retried) (FORCE=1 reruns everything; delete a raw/<tag>.txt to rerun one).
 # A failed run (for example 128K not fitting) is recorded in raw/<tag>.fail.txt and the script goes on; nothing here aborts the whole run
 # except: no GPU, a failed download/sha256, a failed SASS gate, or a dirty tree at the branch step.
 #
@@ -89,9 +91,19 @@ gpu_end() {
 # ---------------------------------------------------------------------------------------------------------------- engine runs
 b25_ok() { grep -qs '"rc":0' "$RAW/b25_sanity.txt"; }
 
-run() {   # run TAG engine-args... : one engine run through bench/bonsai_ctx_run.sh; skipped when raw/TAG.txt already has its result line
+engine_err() {   # engine_err FILE : the engine's own error lines of a .err (everything before the /usr/bin/time -v block)
+  local pre errs
+  pre="$(awk '/^Command (exited|terminated|being timed)/{exit} NF' "$1" 2> /dev/null)"
+  errs="$(printf '%s\n' "$pre" | grep -iE '^(error|fatal|terminate|cuda error|.*(out of memory|cudaerror))' | tail -n 4)"
+  [ -n "$errs" ] || errs="$(printf '%s\n' "$pre" | tail -n 6)"
+  printf '%s\n' "$errs"
+}
+
+# run TAG engine-args... : one engine run through bench/bonsai_ctx_run.sh. Skipped only when raw/TAG.txt already holds a result line
+# with "rc":0; a run that failed earlier (rc != 0, raw/TAG.fail.txt) is retried.
+run() {
   local tag="$1"; shift
-  if [ -z "${FORCE:-}" ] && grep -qs "\"tag\":\"$tag\"" "$RAW/$tag.txt"; then log "skip $tag (done)"; return "$(grep -o '"rc":[0-9]*' "$RAW/$tag.txt" | tail -1 | cut -d: -f2)"; fi
+  if [ -z "${FORCE:-}" ] && grep -qs "\"tag\":\"$tag\",\"rc\":0" "$RAW/$tag.txt"; then log "skip $tag (done)"; return 0; fi
   local rc try
   for try in 1 2 3 4 5 6; do
     log "run $tag"
@@ -102,8 +114,14 @@ run() {   # run TAG engine-args... : one engine run through bench/bonsai_ctx_run
   done
   log "done $tag rc=$rc: $(tail -1 "$RAW/$tag.txt" 2> /dev/null)"
   if [ "$rc" != 0 ]; then
-    { echo "tag=$tag rc=$rc"; echo "args: $*"; tail -8 "$RAW/$tag.err" 2> /dev/null; } > "$RAW/$tag.fail.txt"
-    status "run-failed" "$tag rc=$rc (see raw/$tag.fail.txt)"
+    {
+      echo "tag=$tag rc=$rc"
+      echo "args: $*"
+      engine_err "$RAW/$tag.err"
+      echo "--- time -v (kept separately) ---"
+      grep -E "Elapsed|Maximum resident|Exit status" "$RAW/$tag.err" 2> /dev/null
+    } > "$RAW/$tag.fail.txt"
+    status "run-failed" "$tag rc=$rc: $(engine_err "$RAW/$tag.err" | head -1 | cut -c1-160)"
   else
     rm -f "$RAW/$tag.fail.txt"
   fi
@@ -179,73 +197,9 @@ main() {
   if want probe; then
     banner "probe: GGUF metadata and tensor names (blk.64 / nextn)"
     [ -f "$M25" ] || die "$M25 missing: run the download stage"
-    PYTHONPATH="$GGUFPY" python3 - "$RES" "$M2" "$M25" "$M25MTP" <<'PY'
-import hashlib, json, os, sys
-import gguf
-res = sys.argv[1]
-def scalar(f):
-    try:
-        t = f.types[0]
-        if t == gguf.GGUFValueType.STRING:
-            return bytes(f.parts[f.data[0]]).decode("utf-8", "replace")
-        if t == gguf.GGUFValueType.ARRAY:
-            return "array[%d]" % len(f.data)
-        v = f.parts[f.data[0]].tolist()
-        return v[0] if isinstance(v, list) and len(v) == 1 else v
-    except Exception as e:
-        return "?%s" % e
-def probe(path):
-    out = {"file": os.path.basename(path), "size": os.path.getsize(path)}
-    if not os.path.exists(path):
-        out["error"] = "missing"; return out
-    try:
-        r = gguf.GGUFReader(path)
-    except Exception as e:
-        out["error"] = "GGUFReader: %s" % e; return out
-    keys = ("architecture", "name", "file_type", "block_count", "nextn", "mtp", "context_length", "embedding_length", "vocab", "quantization", "expert", "ssm", "full_attention")
-    out["meta"] = {k: scalar(f) for k, f in r.fields.items() if any(w in k for w in keys) and not k.startswith("tokenizer.ggml.merges")}
-    tf = r.fields.get("tokenizer.ggml.tokens")
-    if tf is not None:
-        h = hashlib.sha256()
-        for i in tf.data:
-            h.update(bytes(tf.parts[i])); h.update(b"\0")
-        out["tokenizer_tokens"] = len(tf.data); out["tokenizer_sha256"] = h.hexdigest()
-    hist, tensors, names = {}, [], set()
-    maxblk = -1
-    for t in r.tensors:
-        names.add(t.name)
-        ty = t.tensor_type.name
-        h = hist.setdefault(ty, [0, 0]); h[0] += 1; h[1] += int(t.n_bytes)
-        if t.name.startswith("blk."):
-            try: maxblk = max(maxblk, int(t.name.split(".")[1]))
-            except ValueError: pass
-        if t.name.startswith("blk.64.") or "nextn" in t.name or "mtp" in t.name.lower():
-            tensors.append({"name": t.name, "type": ty, "shape": [int(x) for x in t.shape], "bytes": int(t.n_bytes)})
-    out.update(n_tensors=len(names), max_block_index=maxblk, type_hist={k: {"n": v[0], "bytes": v[1]} for k, v in hist.items()}, head_tensors=tensors, _names=sorted(names))
-    return out
-paths = sys.argv[2:]
-P = [probe(p) for p in paths]
-b2 = set(P[0].get("_names", []))
-for p in P[1:]:
-    n = set(p.get("_names", []))
-    p["only_in_this_vs_bonsai2"] = sorted(n - b2)[:60]
-    p["only_in_bonsai2_vs_this"] = sorted(b2 - n)[:60]
-for p in P: p.pop("_names", None)
-json.dump(P, open(os.path.join(res, "probe.json"), "w"), indent=1)
-with open(os.path.join(res, "probe.txt"), "w") as fh:
-    for p in P:
-        fh.write("== %s (%d bytes)\n" % (p["file"], p["size"]))
-        if "error" in p: fh.write("  %s\n" % p["error"]); continue
-        for k, v in sorted(p["meta"].items()): fh.write("  %s = %s\n" % (k, v))
-        fh.write("  tensors: %d, highest blk index %d, tokenizer %s tokens sha256 %s\n" % (p["n_tensors"], p["max_block_index"], p.get("tokenizer_tokens"), p.get("tokenizer_sha256")))
-        fh.write("  types: %s\n" % json.dumps(p["type_hist"]))
-        fh.write("  blk.64 / nextn / mtp tensors (%d):\n" % len(p["head_tensors"]))
-        for t in p["head_tensors"]: fh.write("    %-48s %-8s %s %d B\n" % (t["name"], t["type"], t["shape"], t["bytes"]))
-        for k in ("only_in_this_vs_bonsai2", "only_in_bonsai2_vs_this"):
-            if k in p: fh.write("  %s: %s\n" % (k, p[k]))
-print(open(os.path.join(res, "probe.txt")).read())
-PY
-    [ $? = 0 ] && status "probe" "probe.json / probe.txt written" || status "probe-failed" "python gguf probe failed (is $GGUFPY present?)"
+    # standalone header parser (bench/gguf_probe.py): gguf-py cannot read PTQ1_0 (type 143) / Q2_0 (type 42); always overwrites probe.json / probe.txt
+    python3 bench/gguf_probe.py "$RES" "$M2" "$M25" "$M25MTP"
+    [ $? = 0 ] && status "probe" "probe.json / probe.txt written" || status "probe-failed" "bench/gguf_probe.py failed (see run.log)"
     if [ -f "$M25MTP" ]; then
       log "extracting the 2.5 head as a sidecar (CPU only)"
       rm -f "$WORK/b25_head_blk64.gguf"
@@ -259,8 +213,16 @@ PY
     banner "build: taskset -c 0-3 ninja -C build -j4"
     taskset -c 0-3 ninja -C build -j4 qwen38-engine ternary_ab_test || die "ninja build failed"
     cp -f build/qwen38-engine "$ENG" && log "frozen engine copy: $ENG ($(git rev-parse --short HEAD))"
-    echo "engine from $(git rev-parse HEAD) on $(git branch --show-current)" > "$RES/engine_build.txt"
+    echo "engine from $(git rev-parse HEAD)$(git diff --quiet -- src CMakeLists.txt || echo '+dirty') on $(git branch --show-current)" > "$RES/engine_build.txt"
     status "build" "ok"
+  fi
+  if ! want build && [ -x "$ENG" ] && [ -n "$(find src CMakeLists.txt -type f -newer "$ENG" -print -quit 2> /dev/null)" ]; then
+    # the frozen copy predates the sources (for example the F32 ssm_alpha/ssm_beta fix): rebuild so the fix is really used
+    log "engine sources are newer than the frozen copy $ENG: rebuilding"
+    taskset -c 0-3 ninja -C build -j4 qwen38-engine ternary_ab_test || die "ninja build failed"
+    cp -f build/qwen38-engine "$ENG" || die "cannot refresh $ENG"
+    echo "engine from $(git rev-parse HEAD)$(git diff --quiet -- src CMakeLists.txt || echo '+dirty') on $(git branch --show-current)" > "$RES/engine_build.txt"
+    status "build" "frozen engine refreshed (sources changed)"
   fi
   [ -x "$ENG" ] || { [ -x build/qwen38-engine ] && cp -f build/qwen38-engine "$ENG"; }
   [ -x "$ENG" ] || die "no engine binary ($ENG); run the build stage"
@@ -352,7 +314,7 @@ PY
     }
     for c in $NEEDLE_CTXS; do
       if [ "$c" -le 32768 ] || [ "${B2_LONG:-0}" = 1 ]; then needle_run b2 "$M2" "$c"
-      else log "Bonsai 2 at ctx $c: reusing the recorded run in bench/results/bonsai128k_v2 (B2_LONG=1 to rerun, about 1 h per 128K)"; fi
+      else log "Bonsai 2 at ctx $c: not rerun; the report shows an OLDER-BUILD recorded run (bench/results/bonsai_local_10h or bonsai128k_v2, decode not comparable). B2_LONG=1 reruns it with the current build, about 1 h per 128K"; fi
       if b25_ok; then
         needle_run b25 "$M25" "$c"
         if [ $? != 0 ] && [ "$c" = 131072 ]; then log "131072 failed for 2.5, trying 122880"; needle_run b25 "$M25" 122880; fi
@@ -459,13 +421,16 @@ PY
     banner "pr: commit, push, gh pr create"
     [ "$(git branch --show-current)" = "$BR" ] || die "not on $BR; refusing to commit"
     [ -s "$RES/REPORT.md" ] || die "no REPORT.md (run the report stage)"
-    git add bench/bonsai25_vs_2.sh bench/bonsai25_vs_2_summary.py bench/results/bonsai25_vs_2 || die "git add failed"
+    git add bench/bonsai25_vs_2.sh bench/bonsai25_vs_2_summary.py bench/gguf_probe.py bench/results/bonsai25_vs_2 || die "git add failed"
     if git diff --cached --quiet; then log "nothing new to commit"
     else
-      git commit -m "exp: Ternary Bonsai 2.5 27B vs Bonsai 2 on the GTX 1070 Ti (speed, VRAM, RAM, MTP, quality)" || die "git commit failed"
+      git commit -m "exp: Bonsai 2.5 vs 2 rerun results (speed, VRAM, RAM, MTP, quality)" || die "git commit failed"
     fi
     git push -u origin "$BR" || die "git push failed"
-    if gh pr view "$BR" --json url -q .url 2> /dev/null; then log "PR already exists"
+    prurl="$(gh pr view "$BR" --json url -q .url 2> /dev/null)"
+    if [ -n "$prurl" ]; then
+      log "PR already exists ($prurl): updating its body with the new REPORT.md"
+      gh pr edit "$BR" --body-file "$RES/REPORT.md" || log "WARNING: gh pr edit failed (gh auth?); the branch is pushed"
     else
       gh pr create --base main --head "$BR" --title "exp: Ternary Bonsai 2.5 27B vs Bonsai 2 (speed, VRAM, RAM, MTP, quality)" --body-file "$RES/REPORT.md" || die "gh pr create failed (gh auth login?)"
     fi

@@ -175,6 +175,14 @@ template <> struct Deq<GT_BF16> {  // no scale: 32 bf16 values per unit, widened
     }
 };
 
+template <> struct Deq<GT_F32> {  // no scale: 32 fp32 values per unit (ssm_alpha/ssm_beta of Ternary Bonsai 2.5), copied bytewise
+    static constexpr int BLOCK_BYTES = 128, UPB = 1;
+    static __device__ __forceinline__ void run(const uint8_t * blk, int, float * w) {
+#pragma unroll
+        for (int l = 0; l < 32; ++l) std::memcpy(&w[l], blk + 4 * l, sizeof(float));
+    }
+};
+
 template <> struct Deq<GT_Q8_0> {  // block 34 bytes: d, qs[32] (reference path for tests; production uses dp4a)
     static constexpr int BLOCK_BYTES = 34, UPB = 1;
     static __device__ __forceinline__ void run(const uint8_t * blk, int, float * w) {
@@ -249,9 +257,10 @@ bool gemv_fp32_supported(int type) { return gemv_row_bytes(type, 256) != 0; }
 
 cudaError_t gemv_fp32_pair(int type, const uint8_t * W1, const uint8_t * W2, int64_t in, int64_t out, const float * x, int64_t T,
                            float * y1, float * y2, cudaStream_t s) {
-    if (type != GT_BF16) return cudaErrorInvalidValue;
+    if (type != GT_BF16 && type != GT_F32) return cudaErrorInvalidValue;
     dim3 grid(static_cast<unsigned>((out + WARPS - 1) / WARPS), static_cast<unsigned>((T + TT - 1) / TT), 2);
-    gemv_fp32_kernel<GT_BF16><<<grid, WARPS * 32, 0, s>>>(W1, in, out, x, static_cast<int>(T), y1, W2, y2);
+    if (type == GT_F32) gemv_fp32_kernel<GT_F32><<<grid, WARPS * 32, 0, s>>>(W1, in, out, x, static_cast<int>(T), y1, W2, y2);
+    else gemv_fp32_kernel<GT_BF16><<<grid, WARPS * 32, 0, s>>>(W1, in, out, x, static_cast<int>(T), y1, W2, y2);
     return cudaGetLastError();
 }
 
@@ -267,6 +276,7 @@ int64_t gemv_row_bytes(int type, int64_t in) {
         case GT_IQ3_S: return in / 256 * 110;
         case GT_Q8_0: return in / 32 * 34;
         case GT_BF16: return static_cast<int64_t>(in) * 2;
+        case GT_F32: return in % 32 == 0 ? static_cast<int64_t>(in) * 4 : 0;
         default: return 0;
     }
 }
@@ -283,6 +293,7 @@ cudaError_t gemv_fp32(int type, const uint8_t * W, int64_t in, int64_t out, cons
         case GT_IQ3_S: return launch<GT_IQ3_S>(W, in, out, x, T, y, s);
         case GT_Q8_0: return launch<GT_Q8_0>(W, in, out, x, T, y, s);
         case GT_BF16: return launch<GT_BF16>(W, in, out, x, T, y, s);
+        case GT_F32: return launch<GT_F32>(W, in, out, x, T, y, s);
         default: return cudaErrorInvalidValue;
     }
 }

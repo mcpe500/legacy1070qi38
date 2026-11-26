@@ -117,6 +117,10 @@ target_include_directories(gemv_parity PRIVATE "${LLAMA_SRC}/ggml/include")
 target_link_libraries(gemv_parity PRIVATE gpu_cuda qmat gguf_index ${GGML_CPU_LIB} ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart pthread)
 set_target_properties(gemv_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
 
+# F32 / BF16 ssm_alpha and ssm_beta GEMV (Bonsai 2.5 / 2) against a double reference, synthetic weights, needs a GPU but no model.
+add_executable(gemv_f32_parity tests/cuda/gemv_f32_parity.cu)
+target_link_libraries(gemv_f32_parity PRIVATE gpu_cuda CUDA::cudart)
+
 add_executable(gpu_layers_parity tests/cuda/gpu_layers_parity.cpp)
 target_link_libraries(gpu_layers_parity PRIVATE gpu_cuda gguf_index CUDA::cudart)
 set_target_properties(gpu_layers_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
