@@ -38,6 +38,10 @@ struct EngineConfig {
     std::vector<int> gpu_layer_list;
     bool kv_iso3 = true;
     int gpu_head = -1;           // LM head on the GPU: -1 auto (when 64 layers + head fit), 0 CPU, 1 required
+    // When the LM head would go to the CPU only because of ctx_max (every layer fits, the head does not, even at the smallest
+    // prefill chunk), lower ctx_max to the largest multiple of 4096 that keeps the head on the GPU. Off by default: an explicit
+    // --ctx is never changed silently. Either way the engine prints that largest context.
+    bool fit_ctx_for_gpu_head = false;   // --fit-ctx-for-gpu-head 1
     int gpu_mtp = -1;            // MTP block (blk.64) on the GPU: -1 auto (needs the GPU head and room), 0 CPU, 1 required
     uint32_t dp4a_mask = (1u << 2) | (1u << 11) | (1u << 12) | (1u << 13) | (1u << 14) | (1u << 20) | (1u << 21) | (1u << 23);
     // Prefill batches of at least stream_min_t tokens (first call, position 0) run the CPU layers on the GPU too, one layer

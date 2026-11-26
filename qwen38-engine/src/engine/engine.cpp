@@ -320,17 +320,18 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
     // LM head on the GPU: only with every layer there (the stream is already in VRAM), when it fits after the layers.
     // Auto (-1) puts it there if the plan stays under the budget; 1 requires it; 0 keeps it on the CPU.
     if (g0 == kLayers && cfg_.gpu_head != 0) {
-        auto head_fits = [&]() {
+        auto head_fits = [&](bool quiet = false) {
             bool fit = GpuLayers::projected_mib(ix, gcfg(g0, false, true)) <= cfg_.vram_budget_mib;
             // At long context the iso3 KV leaves no room for the head next to the prefill scratch (about 270 MiB at t_max 512).
             // Smaller prefill chunks free it: the batched GEMVs tile at most 16 tokens, so prefill speed barely changes.
-            for (int tm : {256, 128, 64}) {
+            // 32 and 16 keep every GEMV tile full (tile 16) and are only tried when 64 is not enough (Bonsai 2.5 at 128K).
+            for (int tm : {256, 128, 64, 32, 16}) {
                 if (fit) break;
                 if (cfg_.t_max <= tm) continue;   // already at or below this chunk size: try the next smaller one
                 const int keep = cfg_.t_max;
                 cfg_.t_max = tm;
                 fit = GpuLayers::projected_mib(ix, gcfg(g0, false, true)) <= cfg_.vram_budget_mib;
-                if (fit) std::fprintf(stderr, "LM head: prefill chunk lowered from %d to %d tokens so the head fits in VRAM\n", keep, tm);
+                if (fit && !quiet) std::fprintf(stderr, "LM head: prefill chunk lowered from %d to %d tokens so the head fits in VRAM\n", keep, tm);
                 else cfg_.t_max = keep;
             }
             return fit;
@@ -371,7 +372,42 @@ Engine::Engine(const EngineConfig & cfg) : cfg_(cfg) {
                 roll = true;
             }
         }
-        if (!fit && cfg_.gpu_head == 1) throw std::runtime_error("--gpu-head 1: the LM head does not fit the VRAM budget at this context");
+        // Still no room: report the largest context that keeps the head on the GPU (the plan is monotone in ctx_max: the iso3 KV,
+        // the RoPE tables and the split-K buffers grow with it). Searched in steps of 4096 positions, with the prefill chunk
+        // ladder of head_fits. The requested context is only changed when --fit-ctx-for-gpu-head 1 is given.
+        int ctx_fit = 0;
+        if (!fit) {
+            const int ctx_req = cfg_.ctx_max, t_req = cfg_.t_max;
+            auto fits_at = [&](int ctx) {
+                cfg_.ctx_max = ctx;
+                const bool r = head_fits(true);
+                cfg_.ctx_max = ctx_req;
+                cfg_.t_max = t_req;
+                return r;
+            };
+            int lo = 0, hi = (ctx_req - 1) / 4096;   // largest k with k * 4096 fitting, k in [lo, hi]
+            while (lo < hi) {
+                const int mid = (lo + hi + 1) / 2;
+                if (fits_at(mid * 4096)) lo = mid; else hi = mid - 1;
+            }
+            ctx_fit = lo * 4096;
+            if (ctx_fit >= 4096) {
+                std::fprintf(stderr, "LM head: stays off the GPU only because of ctx %d; the largest context that keeps it on the GPU is %d "
+                             "(use --ctx %d or --fit-ctx-for-gpu-head 1)\n", ctx_req, ctx_fit, ctx_fit);
+                if (cfg_.fit_ctx_for_gpu_head) {
+                    cfg_.ctx_max = ctx_fit;
+                    fit = head_fits();
+                    std::fprintf(stderr, "--fit-ctx-for-gpu-head: ctx lowered from %d to %d, LM head on the GPU: %s\n", ctx_req, ctx_fit,
+                                 fit ? "yes" : "no");
+                    if (!fit) cfg_.ctx_max = ctx_req;
+                }
+            } else {
+                ctx_fit = 0;
+            }
+        }
+        if (!fit && cfg_.gpu_head == 1)
+            throw std::runtime_error("--gpu-head 1: the LM head does not fit the VRAM budget at this context" +
+                                     (ctx_fit ? " (largest context that fits: " + std::to_string(ctx_fit) + ", or --fit-ctx-for-gpu-head 1)" : std::string()));
         head_on_ = fit;
         std::fprintf(stderr, "LM head: %s\n", fit ? "GPU" : "CPU (does not fit the VRAM budget next to 64 layers)");
     } else if (cfg_.gpu_head == 1) {

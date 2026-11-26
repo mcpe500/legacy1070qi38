@@ -108,6 +108,7 @@ int main(int argc, char ** argv) {
     gp.sp.seed = 42;
     std::string prompt = "The capital of France is", parity_dir, tok_file, state_save, state_load, state_test, cont_file;
     int depth_bench = 0;
+    bool depth_bench_max = false;
     int gen_mtp_steps = -1;
     int n_predict = 16;
     bool parse_special = false, rollback_test = false, serve = false;
@@ -133,7 +134,8 @@ int main(int argc, char ** argv) {
         else if (a == "--state-load") state_load = next();
         else if (a == "--state-test") state_test = next();     // round-trip test file (with --cont-file)
         else if (a == "--cont-file") cont_file = next();       // continuation text of --state-test
-        else if (a == "--depth-bench") depth_bench = std::atoi(next().c_str());
+        else if (a == "--depth-bench") { const std::string v = next(); depth_bench_max = v == "max"; depth_bench = depth_bench_max ? 0 : std::atoi(v.c_str()); }   // "max": the engine's final ctx
+        else if (a == "--fit-ctx-for-gpu-head") cfg.fit_ctx_for_gpu_head = std::atoi(next().c_str()) != 0;
         else if (a == "--gpu-head") cfg.gpu_head = std::atoi(next().c_str());
         else if (a == "--gpu-mtp") cfg.gpu_mtp = std::atoi(next().c_str());
         else if (a == "--vram-budget-mib") cfg.vram_budget_mib = std::atof(next().c_str());
@@ -225,6 +227,8 @@ int main(int argc, char ** argv) {
         Engine eng(cfg);
         const double load_s = secs(t_load0, Clock::now());
         cfg.gpu_layers = eng.config().gpu_layers;   // resolved count (--gpu-layers auto)
+        cfg.ctx_max = eng.config().ctx_max;         // --fit-ctx-for-gpu-head may have lowered it
+        if (depth_bench_max) depth_bench = cfg.ctx_max;
         std::fprintf(stderr, "loaded in %.2f s; CPU arena %.1f MiB; CPU resident layers %d (%.2f GiB), streamed %.2f GiB\n", load_s,
                      static_cast<double>(eng.arena_used()) / (1024.0 * 1024.0), eng.n_resident_layers,
                      eng.resident_gib_actual, eng.streamed_gib);
