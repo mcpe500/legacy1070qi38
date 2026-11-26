@@ -5,4 +5,4 @@
 
 First 2 of 48 generated ids are identical between the two models (different weights, so a divergence is expected).
 
-Verdict: SUSPICIOUS output (degenerate or empty)
+Verdict: sane: Bonsai 2.5 gives the same answer as Bonsai 2 (`Paris.`) and then ends with EOS (finish=stop after 2 tokens; chat-tuned model, see the ChatML rows)

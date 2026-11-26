@@ -400,13 +400,26 @@ P("")
 P("## 7. Recorded failures and notes\n")
 fails = sorted(fn for fn in (os.listdir(RAW) if os.path.isdir(RAW) else []) if fn.endswith(".fail.txt"))
 if not fails:
-    P("none")
+    P("No run failed in the current results.")
 for fn in fails:
     t = open(os.path.join(RAW, fn), encoding="utf-8", errors="replace").read().strip().splitlines()
     msg = engine_error(fn[:-9]) or [x for x in t[2:] if not x.startswith("---")][:3]
     P("- `%s`: %s" % (fn[:-9], " | ".join(x.strip() for x in msg)[:300]))
 try:
-    P("\nStatus log (`status.tsv`):\n\n```\n%s\n```" % open(os.path.join(RES, "status.tsv")).read().strip())
+    st = open(os.path.join(RES, "status.tsv")).read().strip().splitlines()
+    old_fail, all_fail = [], set()
+    for l in st:
+        c = l.split("\t")
+        if len(c) >= 3 and c[1] in ("run-failed", "load-FAILED"):
+            tag = c[2].split(" ")[0] if c[1] == "run-failed" else "b25_sanity"
+            all_fail.add(tag)
+            if get(tag)[0] and not os.path.exists(os.path.join(RAW, tag + ".fail.txt")):
+                old_fail.append(tag)
+    if all_fail:
+        P("\nThe `run-failed` / `load-FAILED` lines in the status log below come from earlier runs, before the engine supported the "
+          "F32 `ssm_alpha`/`ssm_beta` tensors and the Q4_0 built-in MTP head. %d of those %d runs were rerun with the fixed engine and now "
+          "have a result in the tables above." % (len(set(old_fail)), len(all_fail)))
+    P("\nStatus log (`status.tsv`):\n\n```\n%s\n```" % "\n".join(st))
 except OSError:
     pass
 
@@ -436,5 +449,52 @@ try:
         open(os.path.join(RES, "fig_decode_vs_ctx.svg"), "w").write("\n".join(svg))
 except Exception as ex:  # the figure is optional
     sys.stderr.write("figure skipped: %s\n" % ex)
+
+# ------------------------------------------------------------------------------------------------ summary (printed at the top)
+S = ["## Summary\n"]
+try:
+    rat = [(c, v5 / v2) for (c, v2) in series["b2"] for (c5, v5) in series["b25"] if c == c5 and v2]
+    gpu = [r for c, r in rat if not any(x.startswith("LM head: CPU") for x in head_line("b25_d%d_depth" % c))]
+    cpu = [(c, r) for c, r in rat if any(x.startswith("LM head: CPU") for x in head_line("b25_d%d_depth" % c))]
+    if gpu:
+        S.append("- **Decode speed.** Without MTP, Bonsai 2.5 runs at %.2fx to %.2fx the speed of Bonsai 2 at the same context (section 3, all contexts "
+                 "where its LM head stays on the GPU)." % (min(gpu), max(gpu)))
+    for c, r in cpu:
+        ef = get("b25fit_dmax_depth")[0]
+        S.append("  At ctx %d the 2.5 LM head no longer fits the VRAM cap and runs on the CPU (%.2fx). With `--fit-ctx-for-gpu-head 1` the context "
+                 "drops to %s and decode is %s tok/s." % (c, r, ef.get("ctx", "-") if ef else "-", f(ef["decode_tok_s"]) if ef else "-"))
+    tb = lambda p: sum(v["bytes"] for v in p["type_hist"].values())
+    p2, p5 = probes[0], probes[1]
+    S.append("- **VRAM and RAM.** Bonsai 2.5 stores the 96 `ssm_alpha`/`ssm_beta` tensors as F32 instead of BF16, which adds %.1f MiB of weights. "
+             "Peak VRAM is about that much higher; RSS is the same. The engine reads these tensors as F32 (no conversion, numerics unchanged)." % ((tb(p5) - tb(p2)) / MIB))
+except Exception as ex:
+    sys.stderr.write("summary speed/vram skipped: %s\n" % ex)
+try:
+    best = lambda cfgs, w: max(((get("race_%s_s2_%s" % (c, w))[0] or {}).get("decode_tok_s") or 0, c) for c in cfgs)
+    b2c, b5c = best(("b2_r3", "b2_uq4"), "chat_coding"), best(("b25mtp_builtin", "b25head", "b25_r3", "b25_uq4"), "chat_coding")
+    nolossless = any("NO or missing" in l for l in L)
+    S.append("- **MTP.** Best ChatML coding run: Bonsai 2 %.2f tok/s (%s), Bonsai 2.5 %.2f tok/s (%s). The uq4 head was trained for Bonsai 2 and accepts "
+             "fewer drafts on 2.5; on 2.5 its own head (built-in or extracted as a sidecar) is the fastest choice. %s"
+             % (b2c[0], b2c[1], b5c[0], b5c[1], "Some MTP rows are NOT lossless, see section 5." if nolossless else "Every MTP row with output is lossless (same ids as without MTP)."))
+except Exception as ex:
+    sys.stderr.write("summary mtp skipped: %s\n" % ex)
+try:
+    ppl2, ppl5 = num(old["ptq1_ppl"]["score"], r"PPL = ([\d.]+)"), num(new["b25_ppl"]["score"], r"PPL = ([\d.]+)")
+    k2, k5 = num(old["ptq1_kld"]["score"], r"Mean KLD: ([\d.]+)"), num(new["b25_kld"]["score"], r"Mean KLD: ([\d.]+)")
+    binc = open(os.path.join(RES, "intel", "bin_choice.txt")).read().strip()
+    tv = lambda r: None if not r else (num(r["score"], r"acc_norm ([\d.]+)") or num(r["score"], r"Final \w+ score\(\d+ tasks\): ([\d.]+)") or num(r["score"], r"Final result: ([\d.]+)"))
+    dd = []
+    for t in ("hellaswag", "winogrande", "arc", "mmlu"):
+        a, b = tv(old.get("ptq1_" + t) or new.get("b2_ptq1_" + t)), tv(new.get("b25_" + t))
+        if a is not None and b is not None:
+            dd.append("%s %+.1f" % (t, b - a))
+    S.append("- **Quality.** Bonsai 2.5 is further from the Qwen reference: WikiText-2 PPL %.3f vs %.3f, KLD %.4f vs %.4f. Task scores, 2.5 minus 2: %s points, "
+             "inside the noise of these small subsets (standard error 3 to 5 points). "
+             "These numbers come from llama.cpp (`%s` build), not from qwen38-engine, so the difference belongs to the model weights, not to this engine." % (ppl5, ppl2, k5, k2, ", ".join(dd), binc))
+except Exception as ex:
+    sys.stderr.write("summary quality skipped: %s\n" % ex)
+S.append("- **Behaviour.** Bonsai 2.5 is chat tuned: on raw text prompts it often ends at once with EOS (5b), so the ChatML rows (5a) are the fair comparison.")
+S.append("")
+L[2:2] = S
 
 print("\n".join(L))

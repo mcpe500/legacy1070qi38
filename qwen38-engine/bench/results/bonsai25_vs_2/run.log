@@ -1183,3 +1183,13 @@ Real 4K prompt (`bench/prompt4k.txt`, up to 128 tokens, no MTP). **ChatML** rows
 ==================================================================
 [2026-11-26 12:57:25] STAGE pr: commit, push, gh pr create
 ==================================================================
+[exp/bonsai-2.5-vs-2 6df6f46] exp: Bonsai 2.5 vs 2 rerun results (speed, VRAM, RAM, MTP, quality)
+ 8 files changed, 283 insertions(+), 50 deletions(-)
+ create mode 100644 qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b25_base_chat_p512.bugT8.txt
+ copy qwen38-engine/bench/results/bonsai25_vs_2/raw/{race_b2_base_chat_p512.txt => race_b2_base_chat_p512.bugT8.txt} (100%)
+ rewrite qwen38-engine/bench/results/bonsai25_vs_2/raw/race_b2_base_chat_p512.txt (66%)
+To https://github.com/mcpe500/legacy1070qi38.git
+   77d4af3..6df6f46  exp/bonsai-2.5-vs-2 -> exp/bonsai-2.5-vs-2
+Branch 'exp/bonsai-2.5-vs-2' set up to track remote branch 'exp/bonsai-2.5-vs-2' from 'origin'.
+[2026-11-26 12:57:29] PR #69 already exists: updating its body with the new REPORT.md (REST)
+[2026-11-26 12:57:30] finished. results: /home/ivan/kiroween-2026/legacy1070qi38/qwen38-engine/bench/results/bonsai25_vs_2

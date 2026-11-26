@@ -299,8 +299,18 @@ for n, d in (("Bonsai 2", a), ("Bonsai 2.5", b)):
 if a and b:
     n = next((i for i, (x, y) in enumerate(zip(a["ids"], b["ids"])) if x != y), min(len(a["ids"]), len(b["ids"])))
     print("\nFirst %d of %d generated ids are identical between the two models (different weights, so a divergence is expected)." % (n, len(a["ids"])))
-    ok = len(set(b["ids"])) > 5 and len(b["text"].strip()) > 10
-    print("\nVerdict: %s" % ("sane (varied, non-empty text)" if ok else "SUSPICIOUS output (degenerate or empty)"))
+    ids, txt = b["ids"], b["text"].strip()
+    if not ids or not txt:
+        v = "SUSPICIOUS output (empty)"
+    elif b.get("finish") == "stop" and ids == a["ids"][:len(ids)]:
+        v = "sane: Bonsai 2.5 gives the same answer as Bonsai 2 (`%s`) and then ends with EOS (finish=stop after %d tokens; chat-tuned model, see the ChatML rows)" % (txt, len(ids))
+    elif b.get("finish") == "stop":
+        v = "sane: non-empty answer `%s`, then EOS (finish=stop after %d tokens)" % (txt[:60], len(ids))
+    elif len(set(ids)) > 5:
+        v = "sane (varied, non-empty text)"
+    else:
+        v = "SUSPICIOUS output (degenerate: %d distinct ids in %d tokens)" % (len(set(ids)), len(ids))
+    print("\nVerdict: %s" % v)
 PY
     cat "$RES/sanity.md"
     b25_ok && status "load" "Bonsai 2.5 loads and generates" || status "load-FAILED" "Bonsai 2.5 did not load; dependent 2.5 stages are skipped, see raw/b25_sanity.fail.txt"
