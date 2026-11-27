@@ -844,10 +844,13 @@ template <int TT, int R>
 cudaError_t launch_ptq1_v3(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
     static int n_sm = 0;
     if (!n_sm) { cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, 0); if (n_sm < 1) n_sm = 19; }
-    static int bps = -1;   // persistent blocks per SM: one full wave at the occupancy of this instance (QWEN_PTQ1_BPS3 overrides)
+    static int bps = -1;   // persistent blocks per SM (QWEN_PTQ1_BPS3 overrides): T = 1 uses 8 (measured on the engine decode,
+                           // Bonsai 2.5 ChatML coding, 3 interleaved rounds: 17.87 vs 17.64 tok/s at one full occupancy wave, ids
+                           // identical); T = 2..5 keep one full wave at the occupancy of the instance (8 was 0.4 % slower with MTP)
     if (bps < 0) {
         const char * e = std::getenv("QWEN_PTQ1_BPS3");
         if (e) bps = std::atoi(e);
+        else if (TT == 1) bps = 8;
         else if (cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, gemv_ptq1_0_kernel_v3<TT, R>, PW * 32, 0) != cudaSuccess || bps < 1) bps = 4;
     }
     const int64_t rows = (out + PW * R - 1) / (PW * R), cap = static_cast<int64_t>(n_sm) * bps;
