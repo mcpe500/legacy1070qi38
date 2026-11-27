@@ -102,6 +102,7 @@ template <class T> std::vector<T> down(const T * d, size_t n) {
 }  // namespace
 
 int main() {
+    setenv("QWEN_PTQ1_PREFILL_LPG", "0", 0);   // this gate compares the opt-in fast tile2 path with the tile2 default
     std::mt19937 rng(20261121);
     std::normal_distribution<float> nd(0.0f, 1.0f);
     std::uniform_int_distribution<int> byte(0, 255);

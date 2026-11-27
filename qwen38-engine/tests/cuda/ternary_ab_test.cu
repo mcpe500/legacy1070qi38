@@ -40,6 +40,7 @@ int main() {
     // This test pins the bit-identity of the v3 decode kernel (QWEN_PTQ1_DEC=3) against the reference. The default LPG
     // decode kernel (DEC=4) has its own FP32 order and is gated by tests/cuda/ptq1_lpg_test.cu instead.
     setenv("QWEN_PTQ1_DEC", "3", 0);
+    setenv("QWEN_PTQ1_PREFILL_LPG", "0", 0);   // the prefill tiles (T > 5) of the reference order: tile2
     std::mt19937 rng(7);
     std::normal_distribution<float> nd(0.0f, 1.0f);
     std::uniform_int_distribution<int> byte(0, 255), code(0, 2);

@@ -129,6 +129,84 @@ int main() {
         }
     }
     actq8_free(a);
+    // prefill tiles (T > 5, LPG prefill kernel): FP64 reference on the first 1027 rows, T = 6, 16, 37, 64
+    {
+        ActQ8 ap;
+        CK(actq8_alloc(ap, 64, 17408));
+        for (int in : widths) {
+            const int G = in / 128, out = 1027;
+            std::vector<uint8_t> w(static_cast<size_t>(out) * G * 28);
+            std::vector<int8_t> dg(static_cast<size_t>(out) * in);
+            std::vector<float> dsc(static_cast<size_t>(out) * G);
+            for (int o = 0; o < out; ++o)
+                for (int g = 0; g < G; ++g) {
+                    int8_t * t = &dg[static_cast<size_t>(o) * in + g * 128];
+                    for (int i = 0; i < 128; ++i) t[i] = static_cast<int8_t>(dig(rng));
+                    uint8_t * p = &w[(static_cast<size_t>(o) * G + g) * 28];
+                    for (int j = 0; j < 16; ++j) { int c = 0; for (int s = 0; s < 5; ++s) c = c * 3 + t[j + 16 * s]; p[j] = inv[c]; }
+                    for (int k = 0; k < 8; ++k) { int c = 0; for (int s = 0; s < 5; ++s) c = c * 3 + t[80 + k + 8 * s]; p[16 + k] = inv[c]; }
+                    for (int k = 0; k < 2; ++k) { int c = 0; for (int s = 0; s < 4; ++s) c = c * 3 + t[120 + k + 2 * s]; p[24 + k] = inv[3 * c]; }
+                    const int man = static_cast<int>(rng() & 0x3FF), ex = 7 + static_cast<int>(rng() % 6);
+                    const uint16_t h = static_cast<uint16_t>((ex << 10) | man);
+                    p[26] = static_cast<uint8_t>(h & 0xFF);
+                    p[27] = static_cast<uint8_t>(h >> 8);
+                    dsc[static_cast<size_t>(o) * G + g] = std::ldexp(1.0f + man / 1024.0f, ex - 15);
+                }
+            uint8_t * dw;
+            CK(cudaMalloc(&dw, w.size()));
+            CK(cudaMemcpy(dw, w.data(), w.size(), cudaMemcpyHostToDevice));
+            std::vector<float> x(static_cast<size_t>(64) * in);
+            for (float & v : x) v = nd(rng);
+            float *dxin, *yT;
+            CK(cudaMalloc(&dxin, x.size() * 4));
+            CK(cudaMalloc(&yT, sizeof(float) * 64 * out));
+            CK(cudaMemcpy(dxin, x.data(), x.size() * 4, cudaMemcpyHostToDevice));
+            CK(actq8_quantize(dxin, in, 64, ap, 0));
+            std::vector<int8_t> q(static_cast<size_t>(64) * in);
+            std::vector<float> qd(static_cast<size_t>(64) * in / 32);
+            CK(cudaMemcpy(q.data(), ap.qx, q.size(), cudaMemcpyDeviceToHost));
+            CK(cudaMemcpy(qd.data(), ap.dx, qd.size() * 4, cudaMemcpyDeviceToHost));
+            for (int T : {6, 16, 37, 64}) {
+                CK(gemv_ptq1_0_dp4a(dw, in, out, ap, T, yT, 0));
+                std::vector<float> h(static_cast<size_t>(T) * out);
+                CK(cudaMemcpy(h.data(), yT, h.size() * 4, cudaMemcpyDeviceToHost));
+                double e2 = 0, r2 = 0;
+                bool arg_ok = true;
+                for (int t = 0; t < T; ++t) {
+                    int am = 0, amr = 0;
+                    double best = -1e300;
+                    for (int o = 0; o < out; ++o) {
+                        double r = 0;
+                        for (int g = 0; g < G; ++g) {
+                            double sg = 0;
+                            for (int b = 0; b < 4; ++b) {
+                                long long si = 0;
+                                const int8_t * wd = &dg[static_cast<size_t>(o) * in + g * 128 + b * 32];
+                                const int8_t * qq = &q[static_cast<size_t>(t) * in + g * 128 + b * 32];
+                                for (int i = 0; i < 32; ++i) si += static_cast<long long>(wd[i] - 1) * qq[i];
+                                sg += static_cast<double>(qd[static_cast<size_t>(t) * (in / 32) + g * 4 + b]) * si;
+                            }
+                            r += dsc[static_cast<size_t>(o) * G + g] * sg;
+                        }
+                        const double v = h[static_cast<size_t>(t) * out + o];
+                        e2 += (v - r) * (v - r);
+                        r2 += r * r;
+                        if (v > h[static_cast<size_t>(t) * out + am]) am = o;
+                        if (r > best) { best = r; amr = o; }
+                    }
+                    arg_ok = arg_ok && am == amr;
+                }
+                const double rel = std::sqrt(e2 / r2);
+                const bool ok = rel < 1e-6 && arg_ok;
+                worst = std::fmax(worst, rel);
+                ++cases;
+                if (!ok) ++fails;
+                std::printf("%s in=%5d out=%5d T=%d (prefill) | rel_rms %.3e | argmax %s\n", ok ? "PASS" : "FAIL", in, out, T, rel, arg_ok ? "same" : "DIFF");
+            }
+            CK(cudaFree(dw)); CK(cudaFree(dxin)); CK(cudaFree(yT));
+        }
+        actq8_free(ap);
+    }
     std::printf("ptq1_lpg_test: %d cases, %d fail, worst rel_rms %.3e -> %s\n", cases, fails, worst, fails ? "FAIL" : "PASS");
     return fails ? 1 : 0;
 }
