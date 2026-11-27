@@ -1,0 +1,277 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1810" viewBox="0 0 1400 1810" font-family="DejaVu Sans, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/>
+    </marker>
+    <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1e8449"/>
+    </marker>
+    <pattern id="est" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#d6eaf8"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#5dade2" stroke-width="3"/>
+    </pattern>
+  </defs>
+  <rect width="1400" height="1810" fill="#ffffff"/>
+
+  <!-- title -->
+  <text x="40" y="44" font-size="24" font-weight="bold">Experiment: DFly2-style shared-KV MTP drafter for Bonsai 2.5 at 100K context</text>
+  <text x="40" y="68" font-size="14" fill="#444">qwen38-engine, GTX 1070 Ti (sm_61, 7373 MiB cap), Ternary Bonsai 2.5 27B PTQ1_0 + built-in Q4_0 MTP head (blk.64).</text>
+  <text x="40" y="84" font-size="12" fill="#444">Solid boxes and bars = measured in PR #69; hatched blue = new component or estimate.</text>
+
+  <!-- ===================== Panel A: today ===================== -->
+  <rect x="30" y="96" width="1340" height="324" rx="10" fill="#fdf2f2" stroke="#c0392b"/>
+  <text x="50" y="122" font-size="17" font-weight="bold" fill="#922b21">A. Today: one 102021-token ChatML request, MTP built-in head, 2 steps (measured, raw/real_b25mtp_s2_c102400)</text>
+
+  <!-- target -->
+  <rect x="55" y="138" width="520" height="150" rx="8" fill="#ffffff" stroke="#555"/>
+  <text x="70" y="160" font-weight="bold">Target: 64 layers on the GPU</text>
+  <text x="70" y="182">48 Gated DeltaNet layers: fixed-size state (no KV growth)</text>
+  <text x="70" y="202">16 GQA layers (3, 7, ..., 63): 24 q / 4 kv heads, d 256</text>
+  <text x="70" y="222">iso3 KV: 800 B per position per layer</text>
+  <rect x="70" y="232" width="490" height="40" rx="4" fill="#fadbd8" stroke="#c0392b"/>
+  <text x="80" y="257">KV cache 16 layers x 102400 positions = 1250.0 MiB (VRAM)</text>
+
+  <!-- MTP -->
+  <rect x="660" y="138" width="690" height="150" rx="8" fill="#ffffff" stroke="#555"/>
+  <text x="675" y="160" font-weight="bold">MTP block (blk.64): its OWN attention and its OWN KV cache</text>
+  <text x="675" y="182">VRAM does not fit at ctx 102400 -> engine log "MTP block: CPU"</text>
+  <text x="675" y="202">MTP prefill over the whole prompt on the CPU: 4395.7 s</text>
+  <text x="675" y="222">Draft: CPU attention over 102K own positions: 32.3 s / 113 = 286 ms per cycle</text>
+  <text x="675" y="242">Own KV at 102400: 1 layer x 800 B x 102400 = 78.1 MiB</text>
+  <text x="675" y="262">Verify (target, T = 1 + drafts): 21.1 s / 113 cycles = 187 ms per cycle</text>
+  <text x="675" y="280" fill="#922b21">Tokens per cycle 256 / 113 = 2.27, acceptance 143 / 176 = 81.2 %</text>
+  <line x1="575" y1="210" x2="655" y2="210" stroke="#333" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="583" y="202" font-size="11">last hidden</text>
+
+  <!-- result chips -->
+  <rect x="55" y="305" width="400" height="98" rx="8" fill="#ffffff" stroke="#c0392b"/>
+  <text x="70" y="328" font-weight="bold" fill="#922b21">Built-in MTP at 102K (measured)</text>
+  <text x="70" y="350">time to first token 6709.5 s (111.8 min)</text>
+  <text x="70" y="370">decode 4.77 tok/s</text>
+  <text x="70" y="390">peak VRAM 7411 MiB (over the 7373 cap)</text>
+  <rect x="475" y="305" width="400" height="98" rx="8" fill="#ffffff" stroke="#555"/>
+  <text x="490" y="328" font-weight="bold">No MTP at 102K (measured)</text>
+  <text x="490" y="350">time to first token 2522.4 s (42.0 min)</text>
+  <text x="490" y="370">decode 9.36 tok/s</text>
+  <text x="490" y="390">peak VRAM 7263 MiB</text>
+  <rect x="895" y="305" width="455" height="98" rx="8" fill="#ffffff" stroke="#555"/>
+  <text x="910" y="328" font-weight="bold">Same head at ctx 4096 (measured, race 5a)</text>
+  <text x="910" y="350">28.56 tok/s vs 17.06 without MTP (1.67x)</text>
+  <text x="910" y="370">draft 22.9 ms + verify 100.0 ms per cycle</text>
+  <text x="910" y="390">3.56 tokens per cycle</text>
+
+  <!-- ===================== Panel B: proposal ===================== -->
+  <rect x="30" y="440" width="1340" height="440" rx="10" fill="#eef8f1" stroke="#1e8449"/>
+  <text x="50" y="468" font-size="17" font-weight="bold" fill="#145a32">B. Proposal: the drafter reads the target's layer-63 KV at a few selected positions (KV share + index share)</text>
+
+  <!-- target layer 63 -->
+  <rect x="55" y="490" width="380" height="230" rx="8" fill="#ffffff" stroke="#555"/>
+  <text x="70" y="512" font-weight="bold">Target layer 63 (last full attention)</text>
+  <text x="70" y="534">runs anyway in every verify step</text>
+  <rect x="70" y="546" width="350" height="34" rx="4" fill="#fadbd8" stroke="#c0392b"/>
+  <text x="80" y="568">iso3 K/V cache index 15 (already in VRAM)</text>
+  <rect x="70" y="592" width="350" height="56" rx="4" fill="url(#est)" stroke="#2e86c1"/>
+  <text x="80" y="612">NEW sideband: per kv head, max score</text>
+  <text x="80" y="630">of each 64-position block (anchor row)</text>
+  <text x="80" y="644" font-size="11">102400 / 64 = 1600 blocks x 4 heads = 25.6 KB</text>
+  <rect x="70" y="658" width="350" height="50" rx="4" fill="url(#est)" stroke="#2e86c1"/>
+  <text x="80" y="678">NEW top-k block selector (GPU)</text>
+  <text x="80" y="696" font-size="12">top 32 blocks (2048) + window 128 + 4 sinks</text>
+
+  <!-- sparse attention -->
+  <rect x="500" y="490" width="380" height="230" rx="8" fill="#ffffff" stroke="#1e8449" stroke-width="2"/>
+  <text x="515" y="512" font-weight="bold">NEW sparse gather attention (GPU)</text>
+  <text x="515" y="534">MTP query (24 heads x 256) against</text>
+  <text x="515" y="552">layer-63 K/V at about 2180 positions</text>
+  <text x="515" y="574">+ in-block draft K/V (at most 5 rows,</text>
+  <text x="515" y="592">from the drafter's own k/v projection)</text>
+  <text x="515" y="616">reads about 2180 x 800 B = 1.7 MB per</text>
+  <text x="515" y="634">draft token at ANY context length</text>
+  <text x="515" y="658" fill="#145a32">no drafter KV cache (-78.1 MiB at 102400)</text>
+  <text x="515" y="678" fill="#145a32">no drafter prefill (-4395.7 s at 102K)</text>
+  <text x="515" y="698" fill="#145a32">cost per cycle constant (target ~23 ms)</text>
+
+  <!-- MTP weights -->
+  <rect x="945" y="490" width="405" height="230" rx="8" fill="#ffffff" stroke="#555"/>
+  <text x="960" y="512" font-weight="bold">Rest of the MTP block</text>
+  <text x="960" y="534">eh_proj (hidden injection, exists today),</text>
+  <text x="960" y="552">q/o projections, FFN: 227.9 MiB Q4_0</text>
+  <text x="960" y="576">Placement by VRAM:</text>
+  <text x="960" y="596">  short ctx: GPU (as today)</text>
+  <text x="960" y="616">  100K: CPU (RAM is free: RSS 0.8 GB of 14.2)</text>
+  <text x="960" y="636">  only q (24 KB) up and attn out (24 KB)</text>
+  <text x="960" y="654">  down per draft token over PCIe</text>
+  <text x="960" y="678" fill="#555">CPU FFN read 228 MB per draft at</text>
+  <text x="960" y="696" fill="#555">about 20 GB/s: about 11 ms (estimate)</text>
+
+  <line x1="435" y1="683" x2="497" y2="683" stroke="#1e8449" stroke-width="2" marker-end="url(#arg)"/>
+  <text x="441" y="675" font-size="11">indices</text>
+  <line x1="435" y1="563" x2="497" y2="563" stroke="#1e8449" stroke-width="2" marker-end="url(#arg)"/>
+  <text x="446" y="555" font-size="11">K/V</text>
+  <line x1="943" y1="560" x2="883" y2="560" stroke="#333" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="895" y="552" font-size="11">q</text>
+  <line x1="883" y1="640" x2="943" y2="640" stroke="#333" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="890" y="632" font-size="11">attn out</text>
+
+  <!-- training note -->
+  <rect x="55" y="738" width="1295" height="126" rx="8" fill="#ffffff" stroke="#7d3c98"/>
+  <text x="70" y="760" font-weight="bold" fill="#5b2c6f">Why training is needed (and what DFly2 does differently)</text>
+  <text x="70" y="782">Today the MTP keys come from the MTP's own k_proj on (embedding, last hidden). Layer-63 keys come from layer 63's k_proj on its own input:</text>
+  <text x="70" y="800">a different space, so the current head cannot read them as is (phase 0 measures how bad zero-shot is). DFly2 initializes each draft layer</text>
+  <text x="70" y="818">from its paired target layer and trains with the shared KV. Here: retrain blk.64 attention on layer-63 K/V with tools/bonsai_mtp_train</text>
+  <text x="70" y="836">(live teacher on Colab RTX PRO 6000; the teacher forward already produces layer-63 K/V). DFly2 targets are natively sparse (indexer per layer);</text>
+  <text x="70" y="854">Qwen3.8 GQA has no indexer, so the selection is a block-max sideband computed in our own attention kernel (an assumption to verify in phase 0).</text>
+
+  <!-- ===================== Panel C: cycle budget ===================== -->
+  <rect x="30" y="900" width="1340" height="330" rx="10" fill="#f8f9f9" stroke="#566573"/>
+  <text x="50" y="928" font-size="17" font-weight="bold">C. Time per MTP cycle at 102K (1 px = 0.8 ms)</text>
+  <!-- axis -->
+  <line x1="330" y1="950" x2="330" y2="1170" stroke="#333"/>
+  <line x1="330" y1="1170" x2="1300" y2="1170" stroke="#333"/>
+  <g font-size="11" fill="#333">
+    <text x="330" y="1186" text-anchor="middle">0</text>
+    <line x1="455" y1="1170" x2="455" y2="1175" stroke="#333"/><text x="455" y="1186" text-anchor="middle">100 ms</text>
+    <line x1="580" y1="1170" x2="580" y2="1175" stroke="#333"/><text x="580" y="1186" text-anchor="middle">200 ms</text>
+    <line x1="705" y1="1170" x2="705" y2="1175" stroke="#333"/><text x="705" y="1186" text-anchor="middle">300 ms</text>
+    <line x1="830" y1="1170" x2="830" y2="1175" stroke="#333"/><text x="830" y="1186" text-anchor="middle">400 ms</text>
+    <line x1="955" y1="1170" x2="955" y2="1175" stroke="#333"/><text x="955" y="1186" text-anchor="middle">500 ms</text>
+  </g>
+  <!-- row 1 measured: draft 286 (357.5 px), verify 187 (233.75 px) -->
+  <text x="50" y="978" font-weight="bold">Today (measured)</text>
+  <text x="50" y="995" font-size="11">2.27 tokens per cycle</text>
+  <rect x="330" y="962" width="357.5" height="34" fill="#e74c3c"/>
+  <text x="340" y="984" fill="#fff">draft (CPU, own KV) 286 ms</text>
+  <rect x="687.5" y="962" width="233.75" height="34" fill="#7f8c8d"/>
+  <text x="697" y="984" fill="#fff">verify 187 ms</text>
+  <text x="932" y="984" font-weight="bold">473 ms -> 4.80 tok/s (engine: 4.77)</text>
+  <!-- row 2 est: draft 23 (28.75), verify 187 (233.75) -->
+  <text x="50" y="1038" font-weight="bold">Shared-KV drafter</text>
+  <text x="50" y="1055" font-size="11">estimate, same 2.27 tok/cycle</text>
+  <rect x="330" y="1022" width="28.75" height="34" fill="url(#est)" stroke="#2e86c1"/>
+  <rect x="358.75" y="1022" width="233.75" height="34" fill="#7f8c8d"/>
+  <text x="368" y="1044" fill="#fff">verify 187 ms (measured)</text>
+  <text x="604" y="1044" font-weight="bold">210 ms -> 10.8 tok/s</text>
+  <text x="334" y="1070" font-size="11" fill="#1f618d">draft ~23 ms (value at ctx 4096)</text>
+  <!-- row 3 est: draft 23, verify 151 (188.75) -->
+  <text x="50" y="1108" font-weight="bold">+ verify attention reads</text>
+  <text x="50" y="1125" font-weight="bold">  the KV once per step</text>
+  <text x="50" y="1142" font-size="11">estimate</text>
+  <rect x="330" y="1092" width="28.75" height="34" fill="url(#est)" stroke="#2e86c1"/>
+  <rect x="358.75" y="1092" width="188.75" height="34" fill="url(#est)" stroke="#2e86c1"/>
+  <text x="368" y="1114" fill="#1b4f72">verify ~151 ms</text>
+  <text x="560" y="1114" font-weight="bold">174 ms -> 13.0 tok/s</text>
+  <!-- no-MTP reference line: 1 token per 106.9 ms -->
+  <line x1="463.6" y1="950" x2="463.6" y2="1160" stroke="#1e8449" stroke-dasharray="6,4" stroke-width="2"/>
+  <text x="470" y="1162" font-size="11" fill="#145a32">no MTP: 106.9 ms per token = 9.36 tok/s (measured)</text>
+  <text x="50" y="1214" font-size="12" fill="#444">verify ~151 ms = 100 ms (verify at ctx 4096, measured) + 51 ms (attention cost at 102K for one query row: 1/9.36 - 1/17.9 s). Today a 3-row verify pays ~87 ms of attention.</text>
+
+  <!-- ===================== Panel D: VRAM ===================== -->
+  <rect x="30" y="1250" width="1340" height="240" rx="10" fill="#f8f9f9" stroke="#566573"/>
+  <text x="50" y="1278" font-size="17" font-weight="bold">D. VRAM at ctx 102400 (1 px = 10 MiB, cap 7373 MiB)</text>
+  <!-- scale origin x=330, 8000 MiB = 800 px -->
+  <line x1="1067.3" y1="1290" x2="1067.3" y2="1450" stroke="#c0392b" stroke-width="2" stroke-dasharray="5,3"/>
+  <text x="1075" y="1302" font-size="12" fill="#c0392b">cap 7373</text>
+  <!-- row no MTP: weights 5440.4 (544.0), KV 1250 (125), other 572.9 (57.3) -->
+  <text x="50" y="1322" font-weight="bold">No MTP (measured plan)</text>
+  <rect x="330" y="1306" width="544.04" height="28" fill="#5d6d7e"/><text x="340" y="1325" fill="#fff">weights 5440.4</text>
+  <rect x="874.04" y="1306" width="125" height="28" fill="#e74c3c"/><text x="880" y="1325" fill="#fff" font-size="12">KV 1250</text>
+  <rect x="999.04" y="1306" width="57.29" height="28" fill="#aab7b8"/>
+  <text x="1090" y="1325">7263.3</text>
+  <!-- row MTP on GPU today: +227.9 weights, +78.1 KV, +229 other (from ctx 65536 delta) -->
+  <text x="50" y="1372" font-weight="bold">MTP block on GPU, own KV</text>
+  <text x="50" y="1388" font-size="11">estimate from the ctx 65536 delta</text>
+  <rect x="330" y="1356" width="544.04" height="28" fill="#5d6d7e"/>
+  <rect x="874.04" y="1356" width="125" height="28" fill="#e74c3c"/>
+  <rect x="999.04" y="1356" width="57.29" height="28" fill="#aab7b8"/>
+  <rect x="1056.33" y="1356" width="22.79" height="28" fill="#8e44ad"/>
+  <rect x="1079.12" y="1356" width="7.81" height="28" fill="#f1948a"/>
+  <rect x="1086.93" y="1356" width="22.9" height="28" fill="url(#est)" stroke="#2e86c1"/>
+  <text x="1118" y="1376">about 7798: does not fit</text>
+  <!-- row proposed: weights on CPU, + sideband/gather scratch ~10 -->
+  <text x="50" y="1422" font-weight="bold">Shared-KV drafter, MTP weights</text>
+  <text x="50" y="1438" font-weight="bold">on the CPU (proposal)</text>
+  <rect x="330" y="1406" width="544.04" height="28" fill="#5d6d7e"/>
+  <rect x="874.04" y="1406" width="125" height="28" fill="#e74c3c"/>
+  <rect x="999.04" y="1406" width="57.29" height="28" fill="#aab7b8"/>
+  <rect x="1056.33" y="1406" width="1.5" height="28" fill="url(#est)" stroke="#2e86c1"/>
+  <text x="1090" y="1426">about 7275 (+ &lt; 15 MiB scratch)</text>
+  <g font-size="11">
+    <rect x="330" y="1458" width="14" height="12" fill="#5d6d7e"/><text x="350" y="1469">target weights</text>
+    <rect x="460" y="1458" width="14" height="12" fill="#e74c3c"/><text x="480" y="1469">target KV</text>
+    <rect x="570" y="1458" width="14" height="12" fill="#aab7b8"/><text x="590" y="1469">scratch / arena rest</text>
+    <rect x="730" y="1458" width="14" height="12" fill="#8e44ad"/><text x="750" y="1469">MTP weights 227.9</text>
+    <rect x="880" y="1458" width="14" height="12" fill="#f1948a"/><text x="900" y="1469">MTP own KV 78.1</text>
+    <rect x="1020" y="1458" width="14" height="12" fill="url(#est)" stroke="#2e86c1"/><text x="1040" y="1469">MTP verify scratch ~229 (65536 delta, est.)</text>
+  </g>
+
+  <!-- ===================== Panel E: phases ===================== -->
+  <rect x="30" y="1510" width="1340" height="285" rx="10" fill="#fef9e7" stroke="#b7950b"/>
+  <text x="50" y="1538" font-size="17" font-weight="bold" fill="#7d6608">E. Plan, each phase ends at a measured gate (stop or continue)</text>
+  <g>
+    <rect x="50" y="1556" width="250" height="220" rx="8" fill="#ffffff" stroke="#b7950b"/>
+    <text x="62" y="1578" font-weight="bold">P0 Feasibility (no training)</text>
+    <text x="62" y="1600" font-size="11">a. block-max sideband in layer 63</text>
+    <text x="62" y="1617" font-size="11">b. coverage of softmax mass by</text>
+    <text x="62" y="1634" font-size="11">   top-32 blocks at 4K/32K/100K</text>
+    <text x="62" y="1651" font-size="11">c. today's head, OWN KV but sparse</text>
+    <text x="62" y="1668" font-size="11">   read: acceptance vs dense</text>
+    <text x="62" y="1685" font-size="11">d. zero-shot read of layer-63 KV</text>
+    <text x="62" y="1712" font-size="11" fill="#7d6608">Gate: coverage &gt;= 0.80 and</text>
+    <text x="62" y="1729" font-size="11" fill="#7d6608">sparse acceptance within 3 points</text>
+    <text x="62" y="1746" font-size="11" fill="#7d6608">of dense at 32K</text>
+
+    <rect x="315" y="1556" width="250" height="220" rx="8" fill="#ffffff" stroke="#b7950b"/>
+    <text x="327" y="1578" font-weight="bold">P1 Train shared-KV head</text>
+    <text x="327" y="1600" font-size="11">train_bonsai_mtp.py: attention</text>
+    <text x="327" y="1617" font-size="11">keys/values = teacher layer 63</text>
+    <text x="327" y="1634" font-size="11">(post k_norm + RoPE), own k/v only</text>
+    <text x="327" y="1651" font-size="11">for in-block drafts; sparse mask</text>
+    <text x="327" y="1668" font-size="11">from the same block-max rule;</text>
+    <text x="327" y="1685" font-size="11">warm start: Bonsai 2.5 blk.64</text>
+    <text x="327" y="1712" font-size="11" fill="#7d6608">Gate: top-1 agreement within</text>
+    <text x="327" y="1729" font-size="11" fill="#7d6608">2 points of the current head on</text>
+    <text x="327" y="1746" font-size="11" fill="#7d6608">held-out 4K, better at 32K+</text>
+
+    <rect x="580" y="1556" width="250" height="220" rx="8" fill="#ffffff" stroke="#b7950b"/>
+    <text x="592" y="1578" font-weight="bold">P2 Engine path</text>
+    <text x="592" y="1600" font-size="11">sideband + selector kernels,</text>
+    <text x="592" y="1617" font-size="11">sparse iso3 gather attention,</text>
+    <text x="592" y="1634" font-size="11">drop MTP KV + mtp_prefill,</text>
+    <text x="592" y="1651" font-size="11">MTP weights CPU when VRAM short,</text>
+    <text x="592" y="1668" font-size="11">FP32 only, SASS gate, no</text>
+    <text x="592" y="1685" font-size="11">allocation in the token loop</text>
+    <text x="592" y="1712" font-size="11" fill="#7d6608">Gate: ids identical to no-MTP</text>
+    <text x="592" y="1729" font-size="11" fill="#7d6608">(lossless) at 4K / 32K / 102K;</text>
+    <text x="592" y="1746" font-size="11" fill="#7d6608">peak VRAM &lt;= 7373 MiB</text>
+
+    <rect x="845" y="1556" width="250" height="220" rx="8" fill="#ffffff" stroke="#b7950b"/>
+    <text x="857" y="1578" font-weight="bold">P3 Verify attention at T = 3</text>
+    <text x="857" y="1600" font-size="11">read each KV tile once for all</text>
+    <text x="857" y="1617" font-size="11">verify rows (today 87 ms vs</text>
+    <text x="857" y="1634" font-size="11">51 ms for one row at 102K);</text>
+    <text x="857" y="1651" font-size="11">same math, attn_long_test and</text>
+    <text x="857" y="1668" font-size="11">verify_t17_test stay PASS</text>
+    <text x="857" y="1712" font-size="11" fill="#7d6608">Gate: verify cycle at 102K</text>
+    <text x="857" y="1729" font-size="11" fill="#7d6608">&lt;= 160 ms, bit-identical</text>
+    <text x="857" y="1746" font-size="11" fill="#7d6608">attention output</text>
+
+    <rect x="1110" y="1556" width="245" height="220" rx="8" fill="#ffffff" stroke="#b7950b"/>
+    <text x="1122" y="1578" font-weight="bold">P4 Real-request benchmark</text>
+    <text x="1122" y="1600" font-size="11">bonsai25_vs_2.sh stage real:</text>
+    <text x="1122" y="1617" font-size="11">102K ChatML request, TTFT,</text>
+    <text x="1122" y="1634" font-size="11">decode, acceptance, VRAM, RSS;</text>
+    <text x="1122" y="1651" font-size="11">race 5a at ctx 4096 must not</text>
+    <text x="1122" y="1668" font-size="11">regress (28.56 tok/s today)</text>
+    <text x="1122" y="1712" font-size="11" fill="#7d6608">Success: MTP at 102K &gt; 9.36</text>
+    <text x="1122" y="1729" font-size="11" fill="#7d6608">tok/s and TTFT &lt;= 2600 s</text>
+    <text x="1122" y="1746" font-size="11" fill="#7d6608">(today 4.77 / 6709.5 s)</text>
+  </g>
+  <line x1="300" y1="1666" x2="313" y2="1666" stroke="#333" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="565" y1="1666" x2="578" y2="1666" stroke="#333" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="830" y1="1666" x2="843" y2="1666" stroke="#333" stroke-width="2" marker-end="url(#ar)"/>
+  <line x1="1095" y1="1666" x2="1108" y2="1666" stroke="#333" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="40" y="1803" font-size="11" fill="#666">Sources: PR #69 raw/real_*_c102400, raw/race_*_chat_coding, depth runs ctx 65536 (VRAM delta); DFly2: MarkTechPost 2026-11-26, Hugging Face AngelSlim/DS-V4.1-Flash-DFly2-B6 model card.</text>
+</svg>
