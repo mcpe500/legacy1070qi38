@@ -29,7 +29,9 @@ cudaError_t gemv_q2_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const Act
 // y[t][o] = sum_i W[o][i] * x'[t][i] for the PTQ1_0 packing (type 143: one fp16 scale per 128 values at offset 26,
 // 26 payload bytes of base-3 digits). `in` must be a multiple of 128. Needs ternary_ptq1_init() once.
 // fast=false keeps the reference FP32 group order (bit-identical), and only decode (T <= 5) and the measured
-// prefill tiles use it. fast=true is the relaxed-order variant (two independent FP32 group accumulators, tile picked
+// prefill tiles use it. Decode (T <= 5) defaults to the lane-per-group kernel (QWEN_PTQ1_DEC=4): its own fixed FP32
+// order, gated by tests/cuda/ptq1_lpg_test.cu (FP64 reference, rows bit-identical across T = 1..5); QWEN_PTQ1_DEC=3
+// selects the v3 kernel that ternary_ab_test pins bit-identical to the reference. fast=true is the relaxed-order variant (two independent FP32 group accumulators, tile picked
 // by QWEN_PTQ1_FAST); it is exercised by tests/cuda/ptq1_fast_gate.cu only: on this card it is a measured loss
 // (bench/quant_roofline_bench.cu --fast: 0.95x-1.00x on the GEMV, 0.76x on the engine prefill, greedy tokens diverge
 // at step 16), so the engine never calls it.

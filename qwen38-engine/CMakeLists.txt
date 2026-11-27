@@ -173,6 +173,9 @@ target_link_libraries(dn_rollback_test PRIVATE gpu_cuda CUDA::cudart)
 # FP64 reference, and a greedy token identical to the default path at every prefill T.
 add_executable(ptq1_fast_gate tests/cuda/ptq1_fast_gate.cu)
 target_link_libraries(ptq1_fast_gate PRIVATE gpu_cuda CUDA::cudart)
+# Gate of the default PTQ1_0 decode kernel (lane per group, T <= 5): FP64 reference and bit-identity across T.
+add_executable(ptq1_lpg_test tests/cuda/ptq1_lpg_test.cu)
+target_link_libraries(ptq1_lpg_test PRIVATE gpu_cuda CUDA::cudart)
 add_executable(attn_long_test tests/cuda/attn_long_test.cu)
 target_link_libraries(attn_long_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
 

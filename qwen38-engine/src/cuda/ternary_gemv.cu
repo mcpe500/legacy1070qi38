@@ -858,6 +858,175 @@ cudaError_t launch_ptq1_v3(const uint8_t * W, int64_t in, int64_t out, const Act
     return cudaGetLastError();
 }
 
+// ---- PTQ1_0 lane-per-group decode kernel (LPG, T = 1..5): one lane decodes a whole 128-weight group.
+// The PTQ1_0 layout puts 4 consecutive weights at the same digit position of 4 consecutive payload bytes (stage 1: byte j
+// digit s -> weight j + 16 s; stage 2: byte 16 + k digit s -> 80 + k + 8 s; tail: bytes 24 / 25 digit s -> 120 + 2 s /
+// 121 + 2 s), so one 32-bit payload word decodes into the digits of 4 consecutive weights per digit position with the
+// v3 identity (digit i of a canonical byte = ((b * 3^i) mod 256) * 3 >> 8, applied iteratively: x3 with one ISCADD, the
+// digits sit in byte 1 / byte 3 of each 16-bit half, one PRMT packs four, one LOP keeps the remainder). Each packed word
+// is dotted with the matching int8 activation word by __dp4a in the natural activation order, minus the integer block sum.
+// v3 splits a group over 32 lanes (4 weights each), so every 4 weights pay a shuffle, the scale conversion and the FP32
+// epilogue (24.6 warp instructions per 128 weights); here those are paid once per group, and the kernel is bound by the
+// DRAM read instead of the instruction issue (prototype ~/kiro-tmp/ptq1_lpg: ffn_up T = 1 161.3 -> 95.8 us, 203 GB/s).
+// 8 lanes per output row (lane l takes groups l, l + 8, ...), 4 rows per warp, 8 warps per block, persistent grid.
+// Activations (int8), their fp32 block scales and integer block sums are staged in shared memory once per block; the
+// activations use a 144-byte stride per group so the LDS.128 of 8 lanes on 8 groups hit 32 different banks. When the
+// activations of TT tokens do not fit 48 KiB (in = 17408 at T >= 3) they are read from global memory through the read-only
+// cache instead (SA = false); scales and sums stay in shared memory. The arithmetic of one (row, token) does not depend on
+// TT or SA (same group order per lane, same integer dot, same FP32 order), so a verify row equals the decode row
+// bit for bit, which keeps MTP lossless. FP32 only, no half arithmetic (fp16 -> fp32 conversion only).
+constexpr int LPG_LPR = 8, LPG_RPB = (32 / LPG_LPR) * 8, LPG_ASTRIDE = 144;
+
+__device__ __forceinline__ void lpg_dec5(uint32_t w, uint32_t (&o)[5]) {
+    uint32_t lo = w & 0x00FF00FFu, hi = (w >> 8) & 0x00FF00FFu;
+#pragma unroll
+    for (int s = 0; s < 5; ++s) {
+        lo = times3(lo);
+        hi = times3(hi);
+        o[s] = __byte_perm(lo, hi, 0x7351u);
+        lo &= 0x00FF00FFu;
+        hi &= 0x00FF00FFu;
+    }
+}
+
+template <int TT, bool SA>
+__global__ void __launch_bounds__(256, 2) gemv_ptq1_0_kernel_lpg(const uint8_t * __restrict__ W, int in, int out,
+                                                                  const int8_t * __restrict__ qx, const float * __restrict__ dx,
+                                                                  int T, float * __restrict__ y) {
+    extern __shared__ __align__(16) uint8_t lpg_smem[];
+    const int G = in / 128, nb = in / 32;
+    const size_t abytes = SA ? static_cast<size_t>(TT) * G * LPG_ASTRIDE : 0;
+    uint8_t * sa = lpg_smem;
+    float * sdx = reinterpret_cast<float *>(lpg_smem + abytes);
+    int * sqs = reinterpret_cast<int *>(sdx + TT * nb);
+    if (SA) {
+        for (int i = threadIdx.x; i < TT * G * 8; i += blockDim.x) {
+            const int t = i / (G * 8), r = i % (G * 8), g = r >> 3, k = r & 7;
+            const int4 v = t < T ? __ldg(reinterpret_cast<const int4 *>(qx + static_cast<size_t>(t) * in + g * 128 + k * 16)) : make_int4(0, 0, 0, 0);
+            *reinterpret_cast<int4 *>(sa + (static_cast<size_t>(t) * G + g) * LPG_ASTRIDE + k * 16) = v;
+        }
+    }
+    for (int i = threadIdx.x; i < TT * nb; i += blockDim.x) {
+        const int t = i / nb, b = i % nb;
+        int sum = 0;
+        float d = 0.0f;
+        if (t < T) {
+            const int4 * p = reinterpret_cast<const int4 *>(qx + static_cast<size_t>(t) * in + b * 32);
+            const int4 u = __ldg(p), v = __ldg(p + 1);
+            sum = __dp4a(u.x, 0x01010101, sum); sum = __dp4a(u.y, 0x01010101, sum); sum = __dp4a(u.z, 0x01010101, sum); sum = __dp4a(u.w, 0x01010101, sum);
+            sum = __dp4a(v.x, 0x01010101, sum); sum = __dp4a(v.y, 0x01010101, sum); sum = __dp4a(v.z, 0x01010101, sum); sum = __dp4a(v.w, 0x01010101, sum);
+            d = __ldg(dx + static_cast<size_t>(t) * nb + b);
+        }
+        sqs[i] = sum;
+        sdx[i] = d;
+    }
+    __syncthreads();
+
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    const int rsub = lane / LPG_LPR, lsub = lane % LPG_LPR;
+    for (int rb = blockIdx.x * LPG_RPB; rb < out; rb += gridDim.x * LPG_RPB) {
+        const int row = rb + warp * (32 / LPG_LPR) + rsub;
+        const bool live = row < out;
+        const uint8_t * wrow = W + static_cast<size_t>(live ? row : 0) * G * ternary::kPtqGroupBytes;
+        float acc[TT];
+#pragma unroll
+        for (int t = 0; t < TT; ++t) acc[t] = 0.0f;
+        for (int g = lsub; g < G; g += LPG_LPR) {
+            const uint32_t * wp = reinterpret_cast<const uint32_t *>(wrow + g * ternary::kPtqGroupBytes);
+            uint32_t w[7];
+#pragma unroll
+            for (int j = 0; j < 7; ++j) w[j] = __ldg(wp + j);
+            const float d = f16_cvt(w[6] >> 16);
+            uint32_t dg[32];   // dg[k]: digits of weights 4k..4k+3
+            {
+                uint32_t o[5];
+#pragma unroll
+                for (int j = 0; j < 4; ++j) {
+                    lpg_dec5(w[j], o);
+#pragma unroll
+                    for (int s = 0; s < 5; ++s) dg[j + 4 * s] = o[s];
+                }
+                lpg_dec5(w[4], o);
+#pragma unroll
+                for (int s = 0; s < 5; ++s) dg[20 + 2 * s] = o[s];
+                lpg_dec5(w[5], o);
+#pragma unroll
+                for (int s = 0; s < 5; ++s) dg[21 + 2 * s] = o[s];
+                uint32_t m = __byte_perm(w[6], 0u, 0x4140u);   // b24, 0, b25, 0
+                uint32_t tq[4];
+#pragma unroll
+                for (int s = 0; s < 4; ++s) { m = times3(m); tq[s] = m; m &= 0x00FF00FFu; }
+                dg[30] = __byte_perm(tq[0], tq[1], 0x7531u);
+                dg[31] = __byte_perm(tq[2], tq[3], 0x7531u);
+            }
+#pragma unroll
+            for (int t = 0; t < TT; ++t) {
+                const int4 * ap = SA ? reinterpret_cast<const int4 *>(sa + (static_cast<size_t>(t) * G + g) * LPG_ASTRIDE)
+                                     : reinterpret_cast<const int4 *>(qx + static_cast<size_t>(t < T ? t : 0) * in + g * 128);
+                int ib[4];
+#pragma unroll
+                for (int b = 0; b < 4; ++b) ib[b] = -sqs[t * nb + 4 * g + b];
+#pragma unroll
+                for (int q = 0; q < 8; ++q) {
+                    const int4 av = SA ? ap[q] : __ldg(ap + q);
+                    ib[q >> 1] = __dp4a(static_cast<int>(dg[4 * q + 0]), av.x, ib[q >> 1]);
+                    ib[q >> 1] = __dp4a(static_cast<int>(dg[4 * q + 1]), av.y, ib[q >> 1]);
+                    ib[q >> 1] = __dp4a(static_cast<int>(dg[4 * q + 2]), av.z, ib[q >> 1]);
+                    ib[q >> 1] = __dp4a(static_cast<int>(dg[4 * q + 3]), av.w, ib[q >> 1]);
+                }
+                const float * dxp = sdx + t * nb + 4 * g;
+                float sg = dxp[0] * static_cast<float>(ib[0]);
+                sg = fmaf(dxp[1], static_cast<float>(ib[1]), sg);
+                sg = fmaf(dxp[2], static_cast<float>(ib[2]), sg);
+                sg = fmaf(dxp[3], static_cast<float>(ib[3]), sg);
+                acc[t] = fmaf(d, sg, acc[t]);
+            }
+        }
+#pragma unroll
+        for (int t = 0; t < TT; ++t) {
+            float v = acc[t];
+            v += __shfl_xor_sync(0xffffffffu, v, 1);
+            v += __shfl_xor_sync(0xffffffffu, v, 2);
+            v += __shfl_xor_sync(0xffffffffu, v, 4);
+            if (lsub == 0 && live && t < T) y[static_cast<size_t>(t) * out + row] = v;
+        }
+    }
+}
+
+template <int TT, bool SA>
+size_t lpg_smem_bytes(int64_t in) {
+    return (SA ? static_cast<size_t>(TT) * (in / 128) * LPG_ASTRIDE : 0) + static_cast<size_t>(TT) * (in / 32) * 8;
+}
+
+template <int TT, bool SA>
+cudaError_t launch_ptq1_lpg_k(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+    static int n_sm = 0;
+    if (!n_sm) { cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, 0); if (n_sm < 1) n_sm = 19; }
+    const size_t sh = lpg_smem_bytes<TT, SA>(in);
+    static int64_t cached_in[4] = {0, 0, 0, 0};   // persistent blocks per SM = occupancy for this shared-memory size
+    static int cached_bps[4] = {0, 0, 0, 0};
+    int bps = 0;
+    for (int i = 0; i < 4; ++i) if (cached_in[i] == in) { bps = cached_bps[i]; break; }
+    if (!bps) {
+        const char * e = std::getenv("QWEN_PTQ1_BPS4");
+        if (e) bps = std::atoi(e);
+        else if (cudaOccupancyMaxActiveBlocksPerMultiprocessor(&bps, gemv_ptq1_0_kernel_lpg<TT, SA>, 256, sh) != cudaSuccess || bps < 1) bps = 2;
+        for (int i = 0; i < 4; ++i) if (!cached_in[i]) { cached_in[i] = in; cached_bps[i] = bps; break; }
+    }
+    const int64_t tiles = (out + LPG_RPB - 1) / LPG_RPB, cap = static_cast<int64_t>(n_sm) * bps;
+    gemv_ptq1_0_kernel_lpg<TT, SA><<<dim3(static_cast<unsigned>(tiles < cap ? tiles : cap)), 256, sh, s>>>(
+        W, static_cast<int>(in), static_cast<int>(out), a.qx, a.dx, static_cast<int>(T), y);
+    return cudaGetLastError();
+}
+
+template <int TT>
+cudaError_t launch_ptq1_lpg(const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y, cudaStream_t s) {
+    static int force_ga = -1;   // QWEN_PTQ1_LPG_GA=1 reads the activations from global memory at every width (A/B)
+    if (force_ga < 0) { const char * e = std::getenv("QWEN_PTQ1_LPG_GA"); force_ga = e ? std::atoi(e) : 0; }
+    if (!force_ga && lpg_smem_bytes<TT, true>(in) <= 48 * 1024) return launch_ptq1_lpg_k<TT, true>(W, in, out, a, T, y, s);
+    return launch_ptq1_lpg_k<TT, false>(W, in, out, a, T, y, s);
+}
+
 }  // namespace
 
 cudaError_t ternary_ptq1_canonicalize(uint8_t * W, int64_t n_groups, unsigned long long * d_changed, cudaStream_t s) {
@@ -961,8 +1130,16 @@ cudaError_t gemv_ptq1_0_dp4a(const uint8_t * W, int64_t in, int64_t out, const A
                              cudaStream_t s, bool fast) {
     if (in % (128 * KG) != 0) return cudaErrorInvalidValue;
     ternary_ptq1_init();
-    static int dec = -1;   // decode kernel for T <= 5 (QWEN_PTQ1_DEC): 2 = v2 (digit tables), 3 = v3 (arithmetic decode)
-    if (dec < 0) { const char * e = std::getenv("QWEN_PTQ1_DEC"); dec = e ? std::atoi(e) : 3; }
+    static int dec = -1;   // decode kernel for T <= 5 (QWEN_PTQ1_DEC): 2 = v2 (digit tables), 3 = v3 (arithmetic decode, 32 lanes
+                           // per group), 4 = LPG (one lane per group, default)
+    if (dec < 0) { const char * e = std::getenv("QWEN_PTQ1_DEC"); dec = e ? std::atoi(e) : 4; }
+    if (dec == 4 && T <= 5) {
+        if (T <= 1) return launch_ptq1_lpg<1>(W, in, out, a, T, y, s);
+        if (T == 2) return launch_ptq1_lpg<2>(W, in, out, a, T, y, s);
+        if (T == 3) return launch_ptq1_lpg<3>(W, in, out, a, T, y, s);
+        if (T == 4) return launch_ptq1_lpg<4>(W, in, out, a, T, y, s);
+        return launch_ptq1_lpg<5>(W, in, out, a, T, y, s);
+    }
     if (dec == 3 && T <= 5) {
         static int r3 = -1;   // rows per warp of the v3 decode kernel at T = 1 (QWEN_PTQ1_R3, tuning)
         if (r3 < 0) { const char * e = std::getenv("QWEN_PTQ1_R3"); r3 = e ? std::atoi(e) : 4; }
