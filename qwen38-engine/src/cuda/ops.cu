@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstdlib>
+#include <type_traits>
 
 #include "f16bits.hpp"
 #include "ops.cuh"
@@ -423,6 +424,9 @@ __global__ void attention_kernel_tiled(const float * qbuf, const float * qfull, 
 // decode step at 128K positions runs only 24 blocks (one per head) over the whole cache.
 constexpr int kSplits = 64;
 constexpr int kVerifySlices = 100;   // most slices a verification row sums (op_attention_part_floats, below)
+// Decode slices of iso3 attention (decode v2). 56 slices = 56 blocks of 4 warps = one wave of 3 resident blocks on each of the 19 SMs of
+// the GTX 1070 Ti (57 slots). 100 slices left a 1.75-wave tail; the kernel is latency bound, so a full single wave is the fastest shape.
+constexpr int kDecSlices = 56;
 constexpr int kSplitTMax = 8;
 
 template <bool ISO3>
@@ -863,7 +867,8 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
 #pragma unroll
         for (int k = 0; k < 8; ++k) o[r][k] = 0.0f;
     }
-    for (int j0 = js; j0 < je; j0 += 16) {
+    auto tile = [&](const int j0, auto full_tag) {
+        constexpr bool FULL = decltype(full_tag)::value;
         float s[2][QG];
 #pragma unroll
         for (int c = 0; c < 2; ++c) {
@@ -873,7 +878,7 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
                 const int j = j0 + c * 8 + pp;
                 float cv[8];
                 float nm = 0.0f;
-                if (j < je) {
+                if (FULL || j < je) {
                     const uint8_t * kb = kc + (static_cast<int64_t>(j) * 8 + g * 2 + hf) * 50;
                     iso3_codes8(kb, gi0, s_cb, cv);
                     nm = f16_to_f32(__ldg(reinterpret_cast<const unsigned short *>(kb)));
@@ -889,7 +894,7 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
                     pv[r][pp] = d * nm;
                 }
             }
-            const bool ok = j0 + c * 8 + ((lane >> 2) & 7) < je;
+            const bool ok = FULL || j0 + c * 8 + ((lane >> 2) & 7) < je;
 #pragma unroll
             for (int r = 0; r < QG; ++r) {
                 const float v = reduce_scatter8(pv[r], lane);
@@ -916,8 +921,7 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
 #pragma unroll
             for (int k = 0; k < 8; ++k) o[r][k] *= corr;
         }
-        const int nv = min(16, je - j0);
-        for (int p = 0; p < nv; ++p) {
+        auto vstep = [&](const int p) {
             const uint8_t * vb = vc + (static_cast<int64_t>(j0 + p) * 8 + g * 2 + hf) * 50;
             float cv[8];
             iso3_codes8(vb, gi0, s_cb, cv);
@@ -929,8 +933,18 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
 #pragma unroll
                 for (int k = 0; k < 8; ++k) o[r][k] += w * cv[k];
             }
+        };
+        if constexpr (FULL) {
+#pragma unroll 4
+            for (int p = 0; p < 16; ++p) vstep(p);
+        } else {
+            const int nv = min(16, je - j0);
+            for (int p = 0; p < nv; ++p) vstep(p);
         }
-    }
+    };
+    int j0 = js;
+    for (; j0 + 16 <= je; j0 += 16) tile(j0, std::true_type{});
+    if (j0 < je) tile(j0, std::false_type{});
 #pragma unroll
     for (int r = 0; r < QG; ++r) {
         float * dst = part + ((static_cast<int64_t>(t) * NH + g * QG + r) * nsl + sl) * (HD + 2);
@@ -1046,7 +1060,7 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
         // device), at least 256 positions per warp, at most kVerifySlices slices (the part buffer holds vt x kVerifySlices rows per head)
         // The slice count must not depend on T for T <= vt: an MTP verify row then sums exactly like the single-token
         // decode row of the same position, so speculative decoding stays lossless.
-        int nsl = std::min(ctx_max / 256, kVerifySlices);
+        int nsl = std::min(ctx_max / 256, kDecSlices);
         nsl = std::max(kDecWarps, nsl / kDecWarps * kDecWarps);
         const dim3 g2(T * NKV, nsl / kDecWarps);
         attention_kernel_decode_iso3<0><<<g2, kDecWarps * 32, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache),
