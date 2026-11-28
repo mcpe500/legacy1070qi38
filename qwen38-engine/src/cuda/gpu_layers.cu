@@ -319,6 +319,9 @@ struct GpuLayers::Impl {
                 vec_bytes = std::max(vec_bytes, c.off);
             }
             weights = w0;
+            for (const auto & kv : src().tensors) {   // the MTP head (blk.64.*) uploads through the same staging buffer
+                if (kv.first.rfind("blk.64.", 0) == 0) lazy_max = std::max(lazy_max, static_cast<size_t>(kv.second.nbytes));
+            }
             stage_bytes = lazy_max;
             svec = pl.take<uint8_t>(vec_bytes);
             stage = pl.take<uint8_t>(stage_bytes);
@@ -565,17 +568,26 @@ struct GpuLayers::Impl {
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
     }
 
-    void attention(const LayerD & l, int T, int pos0, bool iso3) {
+    void attention(const LayerD & l, int T, int pos0, bool iso3, const uint8_t * rk = nullptr, const uint8_t * rv = nullptr,
+                   int pos_att = -1) {
         CK(op_rmsnorm_rows(x, l.attn_norm, xn, kHidden, T, eps, st));
-        quant_rot({&l.wq, &l.wk, &l.wv}, xn, kHidden, T, 0);
-        gemv(l.wq, xn, T, bufA);
-        gemv(l.wk, xn, T, kproj);
-        gemv(l.wv, xn, T, vproj);
+        if (rk) {   // shared-KV (issue #70 P0.d zero-shot): the head reads another layer's cache, so only q is projected
+            quant_rot({&l.wq}, xn, kHidden, T, 0);
+            gemv(l.wq, xn, T, bufA);
+        } else {
+            quant_rot({&l.wq, &l.wk, &l.wv}, xn, kHidden, T, 0);
+            gemv(l.wq, xn, T, bufA);
+            gemv(l.wk, xn, T, kproj);
+            gemv(l.wv, xn, T, vproj);
+        }
         const int * pd = in_graph ? pos_dev : nullptr;
         CK(op_qk_prep(bufA, kproj, l.q_norm, l.k_norm, qbuf, kout, T, pos0, rope_cos, rope_sin, eps, st, pd));
-        CK(op_kv_store(kout, l.kcache, T, pos0, iso3, st, pd));
-        CK(op_kv_store(vproj, l.vcache, T, pos0, iso3, st, pd));
-        CK(op_attention(qbuf, bufA, l.kcache, l.vcache, attn_o, T, pos0, iso3, cfg.ctx_max, st, pd, attn_part, tmode));
+        if (!rk) {   // in shared-KV mode the head's K/V are never read; writing them would poison the borrowed cache
+            CK(op_kv_store(kout, l.kcache, T, pos0, iso3, st, pd));
+            CK(op_kv_store(vproj, l.vcache, T, pos0, iso3, st, pd));
+        }
+        CK(op_attention(qbuf, bufA, rk ? rk : l.kcache, rv ? rv : l.vcache, attn_o, T, pos_att < 0 ? pos0 : pos_att,
+                        iso3, cfg.ctx_max, st, pd, attn_part, tmode));
         quant_rot({&l.wo}, attn_o, kInner, T, 1);
         gemv(l.wo, attn_o, T, proj);
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
@@ -764,14 +776,27 @@ void GpuLayers::forward(float * x_host, int T, int pos0, const std::function<voi
 bool GpuLayers::has_head() const { return p_->cfg.head; }
 bool GpuLayers::has_mtp() const { return p_->cfg.mtp; }
 
-void GpuLayers::mtp_forward(const float * concat_host, int T, int pos0, float * h_out, float * logits) {
+void GpuLayers::mtp_forward(const float * concat_host, int T, int pos0, float * h_out, float * logits, int pos_kv) {
     Impl & m = *p_;
     if (!m.cfg.mtp) throw std::runtime_error("GpuLayers::mtp_forward: no MTP block on the GPU");
     if (T < 1 || T > m.cfg.t_max || pos0 < 0 || pos0 + T > m.cfg.ctx_max) throw std::runtime_error("GpuLayers::mtp_forward: T or position out of range");
     CK(cudaMemcpy(m.conv, concat_host, static_cast<size_t>(T) * 2 * kHidden * sizeof(float), cudaMemcpyHostToDevice));
     m.quant(m.conv, 2 * kHidden, T, {&m.eh_w});
     m.gemv(m.eh_w, m.conv, T, m.x);
-    m.attention(m.mtpL, T, pos0, m.cfg.kv_iso3);
+    static const bool shared_kv = [] { const char * e = std::getenv("QWEN_MTP_SHARED_KV"); return e && std::atoi(e) != 0; }();
+    if (shared_kv) {   // issue #70 P0.d zero-shot: the draft attention reads the target's last attention layer (63) cache
+        const LayerD * src = nullptr;
+        for (int il = m.cfg.n_layers - 1; il >= 0; --il)
+            if (m.L[static_cast<size_t>(il)].is_attn) { src = &m.L[static_cast<size_t>(il)]; break; }
+        if (src) {
+            const int pk = pos_kv < 0 ? pos0 : std::min(pos0, pos_kv);   // draft rows above pos_kv see no real keys
+            m.attention(m.mtpL, T, pos0, m.cfg.kv_iso3, src->kcache, src->vcache, pk);
+        } else {
+            m.attention(m.mtpL, T, pos0, m.cfg.kv_iso3);
+        }
+    } else {
+        m.attention(m.mtpL, T, pos0, m.cfg.kv_iso3);
+    }
     m.ffn(m.mtpL, T);
     if (!h_out && !logits) return;
     CK(op_rmsnorm_rows(m.x + static_cast<size_t>(T - 1) * kHidden, m.mtp_hn, m.xn, kHidden, 1, m.eps, m.st));

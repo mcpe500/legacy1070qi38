@@ -1087,6 +1087,8 @@ void Engine::forward_ex(const int32_t * tokens, int T, int pos0, float * logits,
 }
 
 void Engine::mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0) {
+    static const bool shared_kv = [] { const char * e = std::getenv("QWEN_MTP_SHARED_KV"); return e && std::atoi(e) != 0; }();
+    if (shared_kv && mtp_gpu_) return;   // issue #70: the head reads layer 63's KV, which the main prefill already filled
     if (mtp_gpu_) { mtp_forward(tokens, h_in, T, pos0, nullptr, nullptr); return; }
     if (!(gpu_ && gpu_->stream_ready() && cfg_.mtp_gpu_prefill && T >= cfg_.stream_min_t)) { mtp_forward(tokens, h_in, T, pos0, nullptr, nullptr); return; }
     if (T < 1 || T > cfg_.t_max || pos0 < 0 || pos0 + T > cfg_.ctx_max) throw std::runtime_error("mtp_prefill: T or position out of range");
@@ -1101,7 +1103,7 @@ void Engine::mtp_prefill(const int32_t * tokens, const float * h_in, int T, int 
     gpu_->mtp_kv(bufA_, T, pos0, kcache_[16], vcache_[16]);
 }
 
-void Engine::mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits) {
+void Engine::mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits, int pos_kv) {
     if (!mtp_ok_) throw std::runtime_error("mtp_forward: no MTP block loaded");
     if (T < 1 || T > cfg_.t_max || pos0 < 0 || pos0 + T > cfg_.ctx_max) throw std::runtime_error("mtp_forward: T or position out of range");
     // concat(rmsnorm(embedding, enorm), rmsnorm(h, hnorm)) -> eh_proj, then an ordinary attention + FFN block with its own KV.
@@ -1113,7 +1115,7 @@ void Engine::mtp_forward(const int32_t * tokens, const float * h_in, int T, int 
         rmsnorm(proj_, kHidden, mtp_enorm_, eps_, dst);
         rmsnorm(h_in + static_cast<int64_t>(t) * kHidden, kHidden, mtp_hnorm_, eps_, dst + kHidden);
     }
-    if (mtp_gpu_) { gpu_->mtp_forward(bufA_, T, pos0, h_out, logits); return; }
+    if (mtp_gpu_) { gpu_->mtp_forward(bufA_, T, pos0, h_out, logits, pos_kv); return; }
     qmatmul(*pool_, mtp_eh_, bufA_, T, x_, act_);
     attn_layer(64, mtp_L_, T, pos0);   // cache index 64 / 4 = 16
     ffn(mtp_L_, T);

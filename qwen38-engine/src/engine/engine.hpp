@@ -107,8 +107,9 @@ public:
 
     // MTP draft head (block 64). Batch of T tokens at positions pos0.. with the hidden rows h_in[T][5120] of the previous
     // positions (see src/engine/main.cpp for the pairing). Fills the MTP KV; the last row's hidden state (after the head norm)
-    // goes to h_out and its logits to logits (either may be null).
-    void mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits);
+    // goes to h_out and its logits to logits (either may be null). pos_kv = last position with a real target KV
+    // (QWEN_MTP_SHARED_KV=1 zero-shot shared-KV mode, issue #70 P0.d); -1 = pos0.
+    void mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits, int pos_kv = -1);
     // Prefill of the MTP KV only (no output): on the GPU when prefill streaming is available and T >= stream_min_t, else mtp_forward.
     void mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0);
     bool has_mtp() const { return mtp_ok_; }

@@ -373,14 +373,14 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
                 // Standard MTP path, identical to the main branch.
                 for (int j = 0; j < k_prev; ++j) bt[j] = dr[j];
                 bt[k_prev] = cur;
-                guarded([&] { eng_.mtp_forward(bt.data(), hv->data(), k_prev + 1, pos_new - k_prev, hm->data(), lmtp_.data()); });
+                guarded([&] { eng_.mtp_forward(bt.data(), hv->data(), k_prev + 1, pos_new - k_prev, hm->data(), lmtp_.data(), pos_new); });
                 dr[0] = argmax(lmtp_.data(), V);
                 De = D;
                 if (adaptive) {
                     float p = top1_prob(lmtp_.data(), V, dr[0]);
                     De = p >= gp.mtp_p_keep ? 1 : 0;
                     while (De < D && p >= gp.mtp_p_cont) {
-                        guarded([&] { eng_.mtp_forward(&dr[De - 1], hm->data(), 1, pos_new + De, hm2->data(), lmtp_.data()); });
+                        guarded([&] { eng_.mtp_forward(&dr[De - 1], hm->data(), 1, pos_new + De, hm2->data(), lmtp_.data(), pos_new); });
                         dr[De] = argmax(lmtp_.data(), V);
                         p = top1_prob(lmtp_.data(), V, dr[De]);
                         std::swap(hm, hm2);
@@ -389,7 +389,7 @@ void Generator::run(const std::vector<int32_t> & prompt, const GenParams & gp, c
                     }
                 } else {
                     for (int i = 1; i < D; ++i) {
-                        guarded([&] { eng_.mtp_forward(&dr[i - 1], hm->data(), 1, pos_new + i, hm2->data(), lmtp_.data()); });
+                        guarded([&] { eng_.mtp_forward(&dr[i - 1], hm->data(), 1, pos_new + i, hm2->data(), lmtp_.data(), pos_new); });
                         dr[i] = argmax(lmtp_.data(), V);
                         std::swap(hm, hm2);
                     }

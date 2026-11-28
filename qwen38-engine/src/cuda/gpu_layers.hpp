@@ -112,7 +112,9 @@ public:
     // MTP block on the GPU (cfg.mtp). concat_host [T][10240] = [rmsnorm(emb, enorm) | rmsnorm(h, hnorm)] (built on the host).
     // Fills the MTP KV at positions pos0 .. pos0+T-1; h_out (optional) receives shared_head_norm of the last row and logits
     // (optional) its logits through the GPU LM head.
-    void mtp_forward(const float * concat_host, int T, int pos0, float * h_out, float * logits);
+    void mtp_forward(const float * concat_host, int T, int pos0, float * h_out, float * logits, int pos_kv = -1);
+    // pos_kv = the last position with a real target KV (QWEN_MTP_SHARED_KV=1 zero-shot mode): draft rows above it attend
+    // only up to pos_kv of the borrowed cache. -1 (default) = pos0.
     bool has_mtp() const;
     size_t head_bytes() const;   // device bytes of the GPU LM-head weights
 
