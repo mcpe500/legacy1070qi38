@@ -1,0 +1,46 @@
+
+prompt: <|im_start|>user
+Implement a thread-safe LRU cache in Python with O(1) get and put. Provide the full class `LRUCache` with `__init__(self, capacity: int)`, `get(self, key: str) -> object`, and `put(self, key: str, value: object) -> None`, using `collections.OrderedDict` and a `threading.Lock`. Then explain the eviction policy in one sentence and state the time complexity of each method.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+
+generated: ```python
+import threading
+from collections import OrderedDict
+
+
+class LRUCache:
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.cache = OrderedDict()
+        self.lock = threading.Lock()
+
+    def get(self, key: str) -> object:
+        with self.lock:
+            if key not in self.cache:
+                return None
+            # Move to end to mark as most recently used
+            self.cache.move_to_end(key)
+            return self.cache[key]
+
+    def put(self, key: str, value: object) -> None:
+        with self.lock:
+            if key in self.cache:
+                # Update value and move to end
+                self.cache[key] = value
+                self.cache.move_to_end(key)
+            else:
+                if len(self.cache) >= self.capacity:
+                    # Evict the least recently used item (first in OrderedDict)
+                    self.cache.popitem(last=False)
+                self.cache[key] = value
+```
+
+**Eviction policy:** When the cache is full and a new key is inserted, the least recently used item (the one at the front of the `OrderedDict`) is evicted.
+
+**
+{"prompt_tokens":109,"generated_tokens":256,"ids":[71093,12305,198,464,29174,198,1445,14856,1120,51425,1358,1005,43072,5287,1714,25,198,262,687,1259,2251,3676,701,11,8390,25,514,1590,198,285,638,57167,283,8390,198,285,638,19474,283,51425,363,198,285,638,20362,283,29174,30371,363,271,262,687,615,1153,11,1328,25,592,8,1411,1576,25,198,285,440,638,20362,25,198,309,413,1328,524,303,638,19474,25,198,388,460,2168,198,309,653,14142,310,809,310,1804,430,1379,5742,1429,198,309,638,19474,13242,2270,6018,4702,8,198,309,460,638,19474,7900,60,271,262,687,2113,1153,11,1328,25,592,11,869,25,1576,8,1411,2168,25,198,285,440,638,20362,25,198,309,413,1328,303,638,19474,25,198,388,653,5376,869,321,3166,310,809,198,388,638,19474,7900,60,283,869,198,388,638,19474,13242,2270,6018,4702,8,198,309,745,25,198,388,413,2343,1153,19474,8,2518,638,57167,25,198,493,653,10114,823,279,3140,5742,1429,1455,318,3765,303,51425,8,198,493,638,19474,8030,1163,22634,5433,8,198,388,638,19474,7900,60,283,869,198,71093,271,332,32983,2399,4687,64700,3095,279,6297,369,2400,321,264,491,1328,369,20918,11,279,3140,5742,1429,1455,318,1719,799,506,279,3929,314,279,1510,52560,13061,31789,369,3514,12404,13,271,332],"text":"```python\nimport threading\nfrom collections import OrderedDict\n\n\nclass LRUCache:\n    def __init__(self, capacity: int):\n        self.capacity = capacity\n        self.cache = OrderedDict()\n        self.lock = threading.Lock()\n\n    def get(self, key: str) -> object:\n        with self.lock:\n            if key not in self.cache:\n                return None\n            # Move to end to mark as most recently used\n            self.cache.move_to_end(key)\n            return self.cache[key]\n\n    def put(self, key: str, value: object) -> None:\n        with self.lock:\n            if key in self.cache:\n                # Update value and move to end\n                self.cache[key] = value\n                self.cache.move_to_end(key)\n            else:\n                if len(self.cache) >= self.capacity:\n                    # Evict the least recently used item (first in OrderedDict)\n                    self.cache.popitem(last=False)\n                self.cache[key] = value\n```\n\n**Eviction policy:** When the cache is full and a new key is inserted, the least recently used item (the one at the front of the `OrderedDict`) is evicted.\n\n**","load_s":40.60,"prefill_s":1.74,"prefill_tok_s":62.791,"decode_s":15.01,"decode_tok_s":17.0589,"heap_allocs_in_decode_forward":0,"peak_rss_kb":926516,"rss_anon_kb":216624,"rss_file_kb":681652,"swap_used_kb_before":378068,"swap_used_kb_after":378068,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":6374.6,"gpu_weights_mib":5668.3,"gpu_kv_mib":53.1,"vram_used_mib":6498.2,"kv":"iso3","dp4a_mask":11565060,"decode_gpu_s":14.000,"decode_cpu_layers_s":0.000,"decode_head_s":0.858,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.000,"prefill_main_s":1.736,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"verify_t":17,"verify_t_requested":17,"roll_t":17,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"pld_step_us":0.00,"ttft_s":1.736,"finish":"length","temperature":0.000,"ctx":4096,"reused_tokens":0,"state_load_s":0.000}
+{"tag":"race_b25mtp_base_chat_coding","rc":0,"wall_s":58,"peak_vram_mib":6499,"vram_cap_ok":true,"max_rss_kb":926516}

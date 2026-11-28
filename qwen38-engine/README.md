@@ -141,6 +141,8 @@ dengan QuickJS; belum ada uji browser sungguhan.
 | `--state-save FILE`, `--state-load FILE` | simpan/buka state model |
 | `--state-test FILE --cont-file FILE` | uji round-trip state dalam satu proses |
 | `--gpu-head 0\|1\|auto` | penempatan LM head; auto hanya dengan 64 layer GPU |
+| `--fit-ctx-for-gpu-head 1` | jika LM head hanya terlempar ke CPU karena konteks, turunkan `--ctx` ke kelipatan 4096 terbesar yang masih memuat head di GPU (tanpa flag ini `--ctx` tidak diubah, hanya dicetak) |
+| `--depth-bench max` | depth probe pada ctx akhir engine (setelah `--fit-ctx-for-gpu-head`) |
 | `--gpu-mtp 0\|1\|auto` | penempatan blok MTP; auto mengikuti head dan sisa VRAM |
 | `--depth-bench N` | probe biaya decode pada posisi N dengan KV kosong |
 | `--rollback-test` | uji rollback DeltaNet bit-identik |

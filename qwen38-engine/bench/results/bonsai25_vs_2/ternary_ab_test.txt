@@ -1,0 +1,5 @@
+gpu_isolate: safe: GPU 3/8192 MiB (budget 7373), host RAM 2328 MiB (budget 14541)
+canonicalize in=5120 out=1027: 106173 of 1068080 payload bytes rewritten
+canonicalize in=6144 out=1027: 127295 of 1281696 payload bytes rewritten
+canonicalize in=17408 out=1027: 360802 of 3631472 payload bytes rewritten
+ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS

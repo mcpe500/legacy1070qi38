@@ -1,0 +1,38 @@
+2026-11-25 15:54:50	download	both files verified
+2026-11-25 15:55:34	probe	probe.json / probe.txt written
+2026-11-25 15:55:35	head-extract	ok 238984352 bytes
+2026-11-25 15:55:35	build	ok
+2026-11-25 15:56:12	sass_gate	PASS
+2026-11-25 15:56:13	ternary_ab_test	ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS
+2026-11-25 15:56:58	run-failed	b25_sanity rc=1 (see raw/b25_sanity.fail.txt)
+2026-11-25 15:56:58	load-FAILED	Bonsai 2.5 did not load; dependent 2.5 stages are skipped, see raw/b25_sanity.fail.txt
+2026-11-25 16:31:32	intel-bin	Bonsai 2.5 evaluated with /home/ivan/llama-prism/llama-prism-b12128-d7b2896
+2026-11-25 16:58:19	report	REPORT.md and figure written
+2026-11-26 05:18:01	probe	probe.json / probe.txt written
+2026-11-26 05:18:04	head-extract	ok 238984352 bytes
+2026-11-26 05:18:04	build	frozen engine refreshed (sources changed)
+2026-11-26 05:18:41	load	Bonsai 2.5 loads and generates
+2026-11-26 05:25:07	run-failed	b25mtpon_d4096_depth rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 05:25:51	run-failed	b25mtpon_d32768_depth rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 05:26:35	run-failed	b25mtpon_d65536_depth rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 05:27:19	run-failed	b25mtpon_d114688_depth rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:14	run-failed	race_b25mtp_base_p512 rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:15	run-failed	race_b25mtp_base_coding rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:15	run-failed	race_b25mtp_base_id rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:16	run-failed	race_b25mtp_builtin_s2_p512 rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:17	run-failed	race_b25mtp_builtin_s2_coding rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:17	run-failed	race_b25mtp_builtin_s2_id rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:18	run-failed	race_b25head_s2_p512 rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:19	run-failed	race_b25head_s2_coding rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:20	run-failed	race_b25head_s2_id rc=1: error: unsupported quantization in blk.64.ffn_gate.weight: type 2
+2026-11-26 07:15:20	report	REPORT.md and figure written
+2026-11-26 09:30:42	build	ok
+2026-11-26 09:31:17	sass_gate	PASS
+2026-11-26 09:31:19	ternary_ab_test	ternary_ab_test: 180 cases, 180 bit-identical, 0 differ -> PASS
+2026-11-26 09:31:22	q4_0_parity	q4_0_parity: 16 cases, 0 fail, worst r/bar 0.037 -> PASS
+2026-11-26 09:31:22	load	Bonsai 2.5 loads and generates
+2026-11-26 09:32:55	fit-ctx	Bonsai 2.5 LM head stays on the GPU up to ctx 126976
+2026-11-26 12:11:43	report	REPORT.md and figure written
+2026-11-26 12:55:38	build	frozen engine refreshed (sources changed)
+2026-11-26 12:57:25	report	REPORT.md and figure written
+2026-11-26 15:49:05	build	ok

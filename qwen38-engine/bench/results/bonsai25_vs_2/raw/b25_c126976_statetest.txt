@@ -1,0 +1,6 @@
+state round trip: prefix 126869 tokens, continuation 42 tokens, state 1698.3 MiB, save 4.47 s, load 2.70 s
+{"state_test_prefill_tokens":126869,"prefill_s":3520.48,"prefill_tok_s":36.037,"state_mib":1698.3,"save_s":4.47,"load_s":2.70,"cont_prefill_s_mem":1.763,"cont_prefill_s_file":1.744,"decode_tok_s":8.7476,"ctx":126976,"gpu_layers":64,"t_max":64,"vram_used_mib":7342.2}
+in-memory: reused 126869, 10 tokens: \n\nMAGENTA-FALCON-42
+from file: reused 126869, 10 tokens: \n\nMAGENTA-FALCON-42
+state round trip: tokens identical, first logits row bit-identical -> PASS
+{"tag":"b25_c126976_statetest","rc":0,"wall_s":3573,"peak_vram_mib":7343,"vram_cap_ok":true,"max_rss_kb":798396}

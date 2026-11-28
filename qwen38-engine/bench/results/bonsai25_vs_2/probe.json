@@ -1,0 +1,315 @@
+[
+ {
+  "file": "Ternary-Bonsai-2-27B-PTQ1_0.gguf",
+  "size": 5946648928,
+  "version": 3,
+  "meta": {
+   "general.architecture": "qwen35",
+   "general.name": "Hf",
+   "general.basename": "folded",
+   "qwen35.block_count": 64,
+   "qwen35.context_length": 262144,
+   "qwen35.embedding_length": 5120,
+   "qwen35.ssm.conv_kernel": 4,
+   "qwen35.ssm.state_size": 128,
+   "qwen35.ssm.group_count": 16,
+   "qwen35.ssm.time_step_rank": 48,
+   "qwen35.ssm.inner_size": 6144,
+   "qwen35.full_attention_interval": 4,
+   "prism.hadamard.weight_names": "array[401]",
+   "prism.hadamard.inverse_weight_names": "array[1]",
+   "general.quantization_version": 2,
+   "general.file_type": 143
+  },
+  "tokenizer_tokens": 248320,
+  "tokenizer_sha256": "49930cc8a75188cf69a07c57914f0aabe383db11494aa03ed15629adee4c7e33",
+  "n_tensors": 851,
+  "max_block_index": 63,
+  "type_hist": {
+   "PTQ1_0": {
+    "n": 402,
+    "bytes": 7137280000
+   },
+   "F32": {
+    "n": 353,
+    "bytes": 10582016
+   },
+   "BF16": {
+    "n": 96,
+    "bytes": 47185920
+   }
+  },
+  "head_tensors": [],
+  "ssm_ab": {
+   "blk.0.ssm_alpha.weight": "BF16",
+   "blk.0.ssm_beta.weight": "BF16"
+  },
+  "block_count": 64
+ },
+ {
+  "file": "Ternary-Bonsai-2.5-27B-PTQ1_0.gguf",
+  "size": 5993834848,
+  "version": 3,
+  "meta": {
+   "general.architecture": "qwen35",
+   "general.name": "Ternary-Bonsai-2.5-27B",
+   "qwen35.block_count": 64,
+   "qwen35.context_length": 262144,
+   "qwen35.embedding_length": 5120,
+   "qwen35.ssm.conv_kernel": 4,
+   "qwen35.ssm.state_size": 128,
+   "qwen35.ssm.group_count": 16,
+   "qwen35.ssm.time_step_rank": 48,
+   "qwen35.ssm.inner_size": 6144,
+   "qwen35.full_attention_interval": 4,
+   "prism.hadamard.weight_names": "array[401]",
+   "prism.hadamard.inverse_weight_names": "array[1]",
+   "general.quantization_version": 2,
+   "general.file_type": 143
+  },
+  "tokenizer_tokens": 248320,
+  "tokenizer_sha256": "49930cc8a75188cf69a07c57914f0aabe383db11494aa03ed15629adee4c7e33",
+  "n_tensors": 851,
+  "max_block_index": 63,
+  "type_hist": {
+   "PTQ1_0": {
+    "n": 402,
+    "bytes": 7137280000
+   },
+   "F32": {
+    "n": 449,
+    "bytes": 104953856
+   }
+  },
+  "head_tensors": [],
+  "ssm_ab": {
+   "blk.0.ssm_alpha.weight": "F32",
+   "blk.0.ssm_beta.weight": "F32"
+  },
+  "block_count": 64,
+  "only_in_this_vs_bonsai2": [],
+  "only_in_bonsai2_vs_this": [],
+  "type_diff_vs_bonsai2": {
+   "n": 96,
+   "groups": {
+    "BF16 -> F32": {
+     "n": 96,
+     "examples": [
+      "blk.0.ssm_alpha.weight",
+      "blk.0.ssm_beta.weight",
+      "blk.1.ssm_alpha.weight",
+      "blk.1.ssm_beta.weight"
+     ]
+    }
+   }
+  }
+ },
+ {
+  "file": "Ternary-Bonsai-2.5-27B-PTQ1_0-mtp.gguf",
+  "size": 6232818944,
+  "version": 3,
+  "meta": {
+   "general.architecture": "qwen35",
+   "general.name": "Ternary-Bonsai-2.5-27B",
+   "qwen35.block_count": 65,
+   "qwen35.nextn_predict_layers": 1,
+   "qwen35.context_length": 262144,
+   "qwen35.embedding_length": 5120,
+   "qwen35.ssm.conv_kernel": 4,
+   "qwen35.ssm.state_size": 128,
+   "qwen35.ssm.group_count": 16,
+   "qwen35.ssm.time_step_rank": 48,
+   "qwen35.ssm.inner_size": 6144,
+   "qwen35.full_attention_interval": 4,
+   "prism.hadamard.weight_names": "array[401]",
+   "prism.hadamard.inverse_weight_names": "array[1]",
+   "general.quantization_version": 2,
+   "general.file_type": 143
+  },
+  "tokenizer_tokens": 248320,
+  "tokenizer_sha256": "49930cc8a75188cf69a07c57914f0aabe383db11494aa03ed15629adee4c7e33",
+  "n_tensors": 866,
+  "max_block_index": 64,
+  "type_hist": {
+   "PTQ1_0": {
+    "n": 402,
+    "bytes": 7137280000
+   },
+   "F32": {
+    "n": 456,
+    "bytes": 105058304
+   },
+   "Q4_0": {
+    "n": 8,
+    "bytes": 238878720
+   }
+  },
+  "head_tensors": [
+   {
+    "name": "blk.64.attn_k.weight",
+    "type": "Q4_0",
+    "shape": [
+     5120,
+     1024
+    ],
+    "bytes": 2949120
+   },
+   {
+    "name": "blk.64.attn_k_norm.weight",
+    "type": "F32",
+    "shape": [
+     256
+    ],
+    "bytes": 1024
+   },
+   {
+    "name": "blk.64.attn_norm.weight",
+    "type": "F32",
+    "shape": [
+     5120
+    ],
+    "bytes": 20480
+   },
+   {
+    "name": "blk.64.attn_output.weight",
+    "type": "Q4_0",
+    "shape": [
+     6144,
+     5120
+    ],
+    "bytes": 17694720
+   },
+   {
+    "name": "blk.64.attn_q.weight",
+    "type": "Q4_0",
+    "shape": [
+     5120,
+     12288
+    ],
+    "bytes": 35389440
+   },
+   {
+    "name": "blk.64.attn_q_norm.weight",
+    "type": "F32",
+    "shape": [
+     256
+    ],
+    "bytes": 1024
+   },
+   {
+    "name": "blk.64.attn_v.weight",
+    "type": "Q4_0",
+    "shape": [
+     5120,
+     1024
+    ],
+    "bytes": 2949120
+   },
+   {
+    "name": "blk.64.ffn_down.weight",
+    "type": "Q4_0",
+    "shape": [
+     17408,
+     5120
+    ],
+    "bytes": 50135040
+   },
+   {
+    "name": "blk.64.ffn_gate.weight",
+    "type": "Q4_0",
+    "shape": [
+     5120,
+     17408
+    ],
+    "bytes": 50135040
+   },
+   {
+    "name": "blk.64.ffn_up.weight",
+    "type": "Q4_0",
+    "shape": [
+     5120,
+     17408
+    ],
+    "bytes": 50135040
+   },
+   {
+    "name": "blk.64.nextn.eh_proj.weight",
+    "type": "Q4_0",
+    "shape": [
+     10240,
+     5120
+    ],
+    "bytes": 29491200
+   },
+   {
+    "name": "blk.64.nextn.enorm.weight",
+    "type": "F32",
+    "shape": [
+     5120
+    ],
+    "bytes": 20480
+   },
+   {
+    "name": "blk.64.nextn.hnorm.weight",
+    "type": "F32",
+    "shape": [
+     5120
+    ],
+    "bytes": 20480
+   },
+   {
+    "name": "blk.64.nextn.shared_head_norm.weight",
+    "type": "F32",
+    "shape": [
+     5120
+    ],
+    "bytes": 20480
+   },
+   {
+    "name": "blk.64.post_attention_norm.weight",
+    "type": "F32",
+    "shape": [
+     5120
+    ],
+    "bytes": 20480
+   }
+  ],
+  "ssm_ab": {
+   "blk.0.ssm_alpha.weight": "F32",
+   "blk.0.ssm_beta.weight": "F32"
+  },
+  "block_count": 65,
+  "only_in_this_vs_bonsai2": [
+   "blk.64.attn_k.weight",
+   "blk.64.attn_k_norm.weight",
+   "blk.64.attn_norm.weight",
+   "blk.64.attn_output.weight",
+   "blk.64.attn_q.weight",
+   "blk.64.attn_q_norm.weight",
+   "blk.64.attn_v.weight",
+   "blk.64.ffn_down.weight",
+   "blk.64.ffn_gate.weight",
+   "blk.64.ffn_up.weight",
+   "blk.64.nextn.eh_proj.weight",
+   "blk.64.nextn.enorm.weight",
+   "blk.64.nextn.hnorm.weight",
+   "blk.64.nextn.shared_head_norm.weight",
+   "blk.64.post_attention_norm.weight"
+  ],
+  "only_in_bonsai2_vs_this": [],
+  "type_diff_vs_bonsai2": {
+   "n": 96,
+   "groups": {
+    "BF16 -> F32": {
+     "n": 96,
+     "examples": [
+      "blk.0.ssm_alpha.weight",
+      "blk.0.ssm_beta.weight",
+      "blk.1.ssm_alpha.weight",
+      "blk.1.ssm_beta.weight"
+     ]
+    }
+   }
+  }
+ }
+]

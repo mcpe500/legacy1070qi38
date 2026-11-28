@@ -1,0 +1,46 @@
+
+prompt: <|im_start|>user
+Implement a thread-safe LRU cache in Python with O(1) get and put. Provide the full class `LRUCache` with `__init__(self, capacity: int)`, `get(self, key: str) -> object`, and `put(self, key: str, value: object) -> None`, using `collections.OrderedDict` and a `threading.Lock`. Then explain the eviction policy in one sentence and state the time complexity of each method.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+
+generated: ```python
+import threading
+from collections import OrderedDict
+from typing import Any
+
+
+class LRUCache:
+    """
+    A thread-safe LRU (Least Recently Used) cache with O(1) get and put.
+    """
+
+    def __init__(self, capacity: int) -> None:
+        if capacity <= 0:
+            raise ValueError("Capacity must be positive")
+        self._capacity = capacity
+        self._cache: "OrderedDict[str, Any]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Any:
+        """
+        Retrieve the value associated with the key.
+        If the key exists, it is moved to the end (most recently used).
+        Returns None if the key is not found.
+        """
+        with self._lock:
+            if key in self._cache:
+                # Move to end to mark as most recently used
+                self._cache.move_to_end(key)
+                return self._cache[key]
+            return None
+
+    def put(self, key: str, value: Any) -> None:
+        """
+        Insert or update the key-value pair.
+        If the
+{"prompt_tokens":109,"generated_tokens":256,"ids":[71093,12305,198,464,29174,198,1445,14856,1120,51425,198,1445,18904,1120,5586,1358,1005,436,34810,7976,25,198,262,4071,198,262,357,4368,53269,436,34810,318,78994,39642,11851,8,6297,440,496,7,16,8,615,321,2113,13,198,262,4071,271,262,687,1259,2251,3676,701,11,8390,25,514,8,1411,2168,25,198,285,413,8390,2564,220,15,25,198,309,4673,14953,437,28432,1902,381,6572,871,198,285,638,1385,36151,283,8390,198,285,638,1385,9082,25,328,52560,13061,16793,11,5586,18597,283,51425,363,198,285,638,1385,988,283,29174,30371,363,271,262,687,615,1153,11,1328,25,592,8,1411,5586,25,198,285,4071,198,285,30523,279,869,5634,440,279,1328,13,198,285,1368,279,1328,6513,11,424,369,7481,310,279,809,318,3444,5742,1429,553,198,285,5019,2168,413,279,1328,369,524,1669,13,198,285,4071,198,285,440,638,1385,988,25,198,309,413,1328,303,638,1385,9082,25,198,388,653,14142,310,809,310,1804,430,1379,5742,1429,198,388,638,1385,9082,13242,2270,6018,4702,8,198,388,460,638,1385,9082,7900,60,198,309,460,2168,271,262,687,2113,1153,11,1328,25,592,11,869,25,5586,8,1411,2168,25,198,285,4071,198,285,16598,466,2560,279,1328,18509,6505,13,198,285,1368,279],"text":"```python\nimport threading\nfrom collections import OrderedDict\nfrom typing import Any\n\n\nclass LRUCache:\n    \"\"\"\n    A thread-safe LRU (Least Recently Used) cache with O(1) get and put.\n    \"\"\"\n\n    def __init__(self, capacity: int) -> None:\n        if capacity <= 0:\n            raise ValueError(\"Capacity must be positive\")\n        self._capacity = capacity\n        self._cache: \"OrderedDict[str, Any]\" = OrderedDict()\n        self._lock = threading.Lock()\n\n    def get(self, key: str) -> Any:\n        \"\"\"\n        Retrieve the value associated with the key.\n        If the key exists, it is moved to the end (most recently used).\n        Returns None if the key is not found.\n        \"\"\"\n        with self._lock:\n            if key in self._cache:\n                # Move to end to mark as most recently used\n                self._cache.move_to_end(key)\n                return self._cache[key]\n            return None\n\n    def put(self, key: str, value: Any) -> None:\n        \"\"\"\n        Insert or update the key-value pair.\n        If the","load_s":37.64,"prefill_s":1.59,"prefill_tok_s":68.498,"decode_s":14.77,"decode_tok_s":17.3307,"heap_allocs_in_decode_forward":0,"peak_rss_kb":682056,"rss_anon_kb":204404,"rss_file_kb":449156,"swap_used_kb_before":378068,"swap_used_kb_after":378068,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":5869.3,"gpu_weights_mib":5395.4,"gpu_kv_mib":50.0,"vram_used_mib":5992.2,"kv":"iso3","dp4a_mask":11565060,"decode_gpu_s":13.831,"decode_cpu_layers_s":0.000,"decode_head_s":0.862,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.000,"prefill_main_s":1.591,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"verify_t":5,"verify_t_requested":17,"roll_t":0,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"pld_step_us":0.00,"ttft_s":1.591,"finish":"length","temperature":0.000,"ctx":4096,"reused_tokens":0,"state_load_s":0.000}
+{"tag":"race_b2_base_chat_coding","rc":0,"wall_s":54,"peak_vram_mib":5993,"vram_cap_ok":true,"max_rss_kb":682056}

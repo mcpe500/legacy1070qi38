@@ -1,0 +1,7 @@
+<|im_start|>user
+Jelaskan perbedaan antara list, tuple, dan set dalam bahasa Python: kapan masing-masing sebaiknya dipakai, bagaimana perilaku duplikat dan urutan pada setiap struktur, dan berikan satu contoh kode singkat untuk masing-masing.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+

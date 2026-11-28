@@ -21,7 +21,7 @@ void actq8_free(ActQ8 & a);
 // Quantizes x[T][in] (in a multiple of 32) into `a`.
 cudaError_t actq8_quantize(const float * x, int64_t in, int64_t T, const ActQ8 & a, cudaStream_t s);
 
-// ggml type ids with a __dp4a kernel (Q4_K, Q5_K, Q6_K, Q3_K, IQ4_NL, IQ3_S, IQ4_XS). Q8_0 keeps its own kernel in q8_gemv.cu.
+// ggml type ids with a __dp4a kernel (Q4_0, Q4_K, Q5_K, Q6_K, Q3_K, IQ4_NL, IQ3_S, IQ4_XS). Q8_0 keeps its own kernel in q8_gemv.cu.
 bool gemv_dp4a_supported(int type);
 // y[t][o] = sum_i W[o][i] * x[t][i] with x taken from the quantized activations in `a`.
 cudaError_t gemv_dp4a(int type, const uint8_t * W, int64_t in, int64_t out, const ActQ8 & a, int64_t T, float * y,

@@ -42,6 +42,14 @@ Both are targets with open conflicts. See "Open conflicts".
     `rtk err <cmd>` for builds (`rtk err ninja -C build -j4`), `rtk test <cmd>` for tests, and `rtk run <argv>` or `rtk run -c '<cmd>'` for
     everything else. For benchmark numbers and parity lines use `rtk bypass <cmd>` (unfiltered) or `rtk read` on the result file:
     a measurement must never be quoted from filtered or elided output (`rtk recall <hash>` restores an elided part).
+11. **Record the research chain of every experiment (MUST, user requirement).** Every benchmark, profiling run, optimization
+    attempt, or design investigation gets a log entry *while it happens* — hypothesis → action (the actual command/build) →
+    measured numbers → conclusion or decision — written as a story, not a summary. Failed attempts and rejected designs are
+    recorded too (they carry the root cause). Home of the entry: `bench/…/EXPERIMENT-LOG.md` for bench campaigns,
+    `spec/research/CLAIMS.md` for claims with C-NN IDs, and `spec/AGENTS/KIRO-USAGE.md` (§ Riwayat Sesi, e.g. the
+    attention-decode-102K E1–E18 log) for agent-session research chains. Attempts blocked by permissions or device limits are
+    NOT research results — at most one line noting the blocker, then move on. Numbers come only from result files or unfiltered
+    `rtk bypass` output (rule 10), and every entry names its evidence source.
 
 ## Read before you modify a module
 

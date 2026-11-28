@@ -400,8 +400,9 @@ struct GpuLayers::Impl {
         }
         // split-K decode attention: above 8192 positions, and at every context on the ternary path (where the shared-memory
         // kernel's serial value pass costs about 1.5 ms per layer at 4K positions)
-        attn_part = (cfg.ctx_max > 8192 || cfg.signs_5120) ? pl.take<float>(op_attention_part_floats()) : nullptr;
+        // set verify_t first: the buffer size depends on it (sizing with the previous plan's value under-allocated it)
         op_attention_set_verify_t(cfg.verify_t);
+        attn_part = (cfg.ctx_max > 8192 || cfg.signs_5120) ? pl.take<float>(op_attention_part_floats()) : nullptr;
         rope_cos = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         rope_sin = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         pos_dev = pl.take<int>(64);
@@ -531,10 +532,10 @@ struct GpuLayers::Impl {
         quant_rot({&l.qkv, &l.gate_z}, xn, kHidden, T, 0);
         gemv(l.qkv, xn, T, bufA);
         gemv(l.gate_z, xn, T, bufB);
-        if (l.alpha.type == GT_BF16 && l.beta.type == GT_BF16 && l.alpha.out == l.beta.out && l.alpha.in == l.beta.in &&
+        if ((l.alpha.type == GT_BF16 || l.alpha.type == GT_F32) && l.beta.type == l.alpha.type && l.alpha.out == l.beta.out && l.alpha.in == l.beta.in &&
             !l.alpha.src && !l.beta.src) {
-            // plain basis (ssm_alpha/ssm_beta are not Hadamard-folded): both 48-row BF16 GEMVs in one launch
-            CK(gemv_fp32_pair(GT_BF16, l.alpha.p, l.beta.p, l.alpha.in, l.alpha.out, xn, T, alpha, betar, st));
+            // plain basis (ssm_alpha/ssm_beta are not Hadamard-folded): both 48-row BF16 or F32 GEMVs in one launch
+            CK(gemv_fp32_pair(l.alpha.type, l.alpha.p, l.beta.p, l.alpha.in, l.alpha.out, xn, T, alpha, betar, st));
         } else {
             gemv(l.alpha, xn, T, alpha);
             gemv(l.beta, xn, T, betar);
@@ -1102,7 +1103,7 @@ uint32_t parse_dp4a_mask(const char * list) {
     const std::string s = list ? list : "";
     if (s.empty() || s == "none") return 0;
     struct Name { const char * n; int id; };
-    static const Name names[] = {{"q3_k", 11}, {"q4_k", 12}, {"q5_k", 13}, {"q6_k", 14}, {"iq4_nl", 20}, {"iq3_s", 21}, {"iq4_xs", 23}};
+    static const Name names[] = {{"q4_0", 2}, {"q3_k", 11}, {"q4_k", 12}, {"q5_k", 13}, {"q6_k", 14}, {"iq4_nl", 20}, {"iq3_s", 21}, {"iq4_xs", 23}};
     uint32_t m = 0;
     if (s == "all") {
         for (const Name & n : names) m |= 1u << n.id;

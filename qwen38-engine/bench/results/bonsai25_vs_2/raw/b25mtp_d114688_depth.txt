@@ -1,0 +1,2 @@
+{"depth_bench":114688,"steps":32,"decode_tok_s":9.3603,"ctx":114688,"gpu_layers":64,"load_s":39.77,"cpu_arena_mib":162.7,"gpu_arena_mib":7164.4,"gpu_kv_mib":1400.0,"vram_used_mib":7286.2,"peak_rss_kb":709936}
+{"tag":"b25mtp_d114688_depth","rc":0,"wall_s":44,"peak_vram_mib":7287,"vram_cap_ok":true,"max_rss_kb":709936}

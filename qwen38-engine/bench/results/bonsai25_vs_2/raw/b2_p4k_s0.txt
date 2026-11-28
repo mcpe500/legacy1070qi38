@@ -1,0 +1,137 @@
+
+prompt: # AFK status: qwen38-engine (Stages 2-5)
+
+Updated: 2026-11-16 (Stages 3 to 5 done: hybrid defaults, MTP + rollback, sampler, chunked prefill, HTTP/SSE server, WebUI, head-to-head benchmark). Optimization round Poin A+B+C landed the same day (multi-token W4A8 CPU kernel, GQA invert, RoPE table; D measured-skipped — see the round section). Single session, no subagents, no /goal. Canonical tree locked to this session.
+Guardrails followed: ninja -j4; taskset -c 0-3 on every run; one engine at a time (llama-server only between
+engine runs, never together); no full 64-layer FP32 load (weights stay quantized in the mmap, layers beyond a byte
+budget are streamed); SKILL.md and AGENTS.md stay local, nothing pushed or committed.
+
+## Stage status
+
+## Stage 2 result: qwen38-engine generates coherent text and matches the baseline
+
+Build: cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release && ninja -C build -j4 (g++ 11.4, -O3 -march=znver1 -mavx2 -mfma, no warnings).
+Run: taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p "The capital of France is" -n 24 --temp 0 --seed 42 --parity-dir tests/ref_full --resident-gib 11.0
+
+Memory (run3 and the 62-token run):
+- Anonymous RSS 263 MB; file-backed (mmap'd page cache) RSS 12.4 GB; peak RSS 12.9 GB includes those mapped file pages.
+- MemAvailable stayed at about 13 GiB during the whole decode. Swap used changed by -13 MB and +15 MB across runs (no growth trend).
+- LM head (output.weight, about 1 GiB) is mlocked (under the 1.94 GiB limit). No mlock warning was printed in any run.
+- Layer residency (--resident-gib 11.0): 53 layers (10.81 GiB) stay in the page cache, 11 layers (2.64 GiB) are prefetched with MADV_WILLNEED two layers ahead and dropped with MADV_DONTNEED plus POSIX_FADV_DONTNEED after use.
+
+Speed (honest): prefill 5 tokens 21 to 29 s; prefill 62 tokens 40 s (1.5 tok/s); **decode 0.060 tok/s (about 16.6 s per token)**.
+Decode is disk-bound: 2.64 GiB streamed per token at the measured raw disk speed of 195 MB/s (dd iflag=direct) is about 13.5 s.
+Baseline llama.cpp gets 2.2 tok/s because 23 layers sit in VRAM. This engine is a correctness reference, not a fast path;
+the 24 GPU + 40 CPU split (Stage 3) is what removes the streaming.
+
+## Stage 3 option A: 24 GPU layers + 40 CPU layers, iso3 KV, measured (2026-11-16)
+
+Build: cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release && ninja -C build -j4 (0 warnings, 0 errors).
+Run: taskset -c 0-3 ./build/qwen38-engine -m ~/models/27b/Qwen3.8-27B-UD-Q4_K_M.gguf -p "The capital of France is" -n 24 --temp 0 --seed 42 --gpu-layers 24 --kv iso3
+
+**Layer 0-23 audit** (Qwen3.8-27B-UD-Q4_K_M.gguf): all eight quantizations occur, so no kernel could be skipped.
+
+**What runs on the GPU (all FP32, no half arithmetic):** RMSNorm, SwiGLU, residual adds, RoPE, Gated DeltaNet (conv, recurrence with
+the state kept transposed for coalesced access, gated norm), GQA attention with the iso3 cache decoded in FP32 inside the kernel,
+and the quantized GEMV. Q8_0 uses __dp4a with on-the-fly activation quantization. The other seven types dequantize 32 weights
+at a time to FP32 inside the kernel (option A) and are being upgraded to __dp4a (next section).
+
+Both parity baselines are the same llama-server run as Stage 2 (KV f16, no MTP). The engine uses iso3 for the 6 GPU attention
+layers and FP32 for the 10 CPU attention layers.
+
+**Measured numbers** (warm page cache, taskset -c 0-3, GPU free, no llama-server):
+
+VRAM: 5235 MiB peak is under the 7.2 GiB cap (7373 MiB). GPU arena 5122 MiB: weights 4869 MiB, iso3 KV 9.4 MiB (6 layers, ctx 2048;
+96 MiB in FP32), the rest scratch. The first run after a cold start loads 4.75 GiB from disk into VRAM (13 s) and the CPU layers into the
+page cache; its prefill is slower (25 s for 5 tokens).
+DDR4: all 40 CPU layers are resident (8.70 GiB, 0 GiB streamed), the LM head (1 GiB) is mlocked. **No disk streaming per token**:
+decode went from 0.059 tok/s (Stage 2, CPU only) to 1.97 tok/s, about 33 times faster. The baseline llama-server reaches 2.2 tok/s with 23 GPU layers.
+
+Limits seen in these numbers:
+- Prefill runs the 40 CPU layers on the CPU: about 1.7 s per prompt token at T=5, 0.34 s per token at T=62. llama.cpp offloads batched matmuls
+  to the GPU (13 to 28 tok/s in Stage 1). A 512-token prompt would take about 3 minutes here. Uploading CPU layer weights to VRAM for
+  large batches is possible within the VRAM headroom (7373 - 5235 MiB) and is not built.
+- Decode at 0.5 s per token is bound by reading the 8.7 GiB of CPU-layer weights from DDR4 once per token. More GPU layers would help:
+  the cap leaves about 2 GiB, which fits roughly 8 more layers (not tested).
+
+## Stage 3 step 3: Q8_1 + __dp4a for the other 7 types (measured)
+Types upgraded (src/cuda/dp4a_gemv.cu): Q4_K, Q5_K, Q6_K, Q3_K, IQ4_NL, IQ3_S, IQ4_XS. Q8_0 already used dp4a. Enabled per type
+with --dp4a <list|all|none> (mask dp4a_mask, default 0 = FP32 dequant path of option A).
+
+- Per-type GEMV parity (bench/results/stage3/dp4a_gemv_parity.txt): 8e-8 to 1.3e-7 relative RMS against a double reference that uses
+  the same quantized activation. Against the FP32-activation reference the error is 5.3e-3, which is the cost of quantizing the activation to Q8_1.
+- Cumulative steps, none to all (dp4a_steps.txt): 24-layer parity worst cosine 0.998383 to 0.998535, every step PASS (bar 0.995).
+- Full hybrid, --dp4a all, 5-token prompt (hybrid_dp4a_parity.txt): worst layer cosine 0.998438 (layer 23), logits cosine 0.999284,
+  top-1 match, 24/24 greedy tokens identical to the llama-server baseline, 0 heap allocations in decode.
+- 62-token prompt, --dp4a all (dp4a_p62.txt): 8/8 greedy tokens identical.
+- SASS gate (sass_gate_dp4a.txt): PASS. dp4a_gemv IDP.4A x448, q8_gemv x8, linked executable x456; HFMA2/HMUL2/HADD2 x0 in every cubin;
+  control probes show the gate detects both IDP.4A and half arithmetic.
+
+- The dp4a upgrade cuts the GPU part from 78 to about 45 ms/token. Total decode moves from 1.96 to about 2.1 tok/s because the 40 CPU layers
+  (about 390 ms/token, 8.7 GiB read per token) dominate and are bound by DDR4 bandwidth.
+- Prefill for 5 tokens varies from 2.3 s to 10 s between runs depending on page cache and swap state (swap out up to 16 MB on dp4a_p5). Treat it as noisy.
+- VRAM 5247 MiB includes the Q8_1 activation scratch (5235 MiB before it). Cap is 7373 MiB; roughly 2100 MiB headroom.
+- Not tested: --gpu-layers 32. It should fit the headroom but no parity or speed number exists for it.
+
+## Stage 3 defaults and prefill streaming (2026-11-16)
+
+Default run is now qwen38-engine -m GGUF -p ... with no extra flags: 32 GPU layers, --kv iso3, --dp4a all, prefill streaming
+for batches of 40 or more tokens, --mtp-steps 2. Flags: --gpu-layers N, --kv iso3|f32, --dp4a all|none|LIST, --stream-min-t N (0 = off), --mtp-steps 0..3.
+
+**Hardware fact found here:** the GPU sits on a PCIe Gen3 **x1** link. cudaMemcpy H2D from pinned memory measures 0.84 GB/s (/tmp/bw, 3 runs).
+Streaming all 7 GiB of CPU-layer weights through VRAM therefore costs about 9 s per prefill, whatever the prompt length.
+(nvidia-smi shows gen 1 at idle and gen 3, width 1 under load.)
+
+### GPU layer count sweep (VRAM from cudaMemGetInfo, cap 7373 MiB)
+
+With 32 layers the CPU part reads 6.96 GiB per token instead of 8.7 GiB. --kv f32 also fits at 32 layers: 7319 MiB (kvf32_p5).
+
+### How prefill uses the GPU for all 64 layers
+- Layers 0-31 run on the GPU as before (resident weights, batched dp4a GEMV).
+- For a first batch (position 0) of at least stream_min_t = 40 tokens, layers 32-63 also run on the GPU. Each matrix is read with pread() into a
+  pinned double buffer (32 MiB chunks) and copied into one staging buffer sized for the largest matrix (about 75 MiB), then multiplied.
+  The K, V and DeltaNet state of those layers come back to the CPU layouts (DeltaNet state is transposed on the way back), so decode continues on the CPU layers.
+- Streamed layers use FP32 KV (like the CPU layers), the GPU-resident attention layers use iso3.
+- Break-even against CPU prefill (0.27 s per token for 32 CPU layers) is near 40 tokens.
+- The dp4a GEMV tile (tokens per thread block) is now chosen by batch size (1, 4, 8, 16). Results do not depend on the tile (each token keeps its own accumulator and summation order; gemv_parity PASS).
+  Tile 1 cut the GPU decode time from 62 to 46 ms/token (24 tokens, same run settings). Tile 16 for large batches gave the 27.2 s prefill of 509 tokens in the table below.
+
+### Prefill measurements (bench/stage4_run.sh, --mtp-steps 0, GPU free, page cache warm)
+
+### Long-prompt parity (509 tokens, bench/prompt512.txt, references dumped from llama.cpp -ngl 23 -c 2048)
+
+Reading: the whole pipeline (GPU layers, streamed prefill, CPU layers, dp4a) is accurate at 509 tokens (f32 KV: logits 0.99967). The iso3 3-bit KV cache
+costs accuracy at this length: logits cosine 0.9926 against f16 KV, the same size as llama.cpp's own iso3 (0.9923). It is below the 0.995 bar that the short-prompt tests used,
+yet the 16 greedy tokens still match. Only 16 tokens were compared, so this is not a proof for long generations. --kv f32 removes the loss and fits the cap (7319 MiB).
+The engine-versus-llama-iso3 comparison is not like for like: llama.cpp quantizes the KV of all 16 attention layers, this engine only the 8 on the GPU.
+
+## Stage 4: MTP draft head and DeltaNet rollback (2026-11-16)
+
+### What was built
+- **MTP block 64** (blk.64.*, 351 MiB, mostly Q6_K): eh_proj over concat(rmsnorm(embedding, enorm), rmsnorm(h, hnorm)), then an ordinary gated-attention layer with its own
+  FP32 KV (cache index 16) and a dense FFN, then shared_head_norm and the shared LM head. It runs on the CPU (no VRAM left) and is mlocked (LM head 0.97 GiB + MTP 0.34 GiB < 1.94 GiB limit).
+  Pairing follows common/speculative.cpp: at position p the block takes token x_p and the main-model hidden row (after output_norm) of position p-1; the first position pairs with zeros.
+- **Cycle** (src/engine/main.cpp): one MTP batch (catch-up on the accepted drafts of the last cycle plus draft step 0), D-1 single MTP steps, then one verification batch
+  [cur, drafts] through all 64 layers with logits and hidden rows for every row (Engine::forward_ex). The longest matching prefix is kept, the new cur is the target token of the first mismatch.
+- **DeltaNet rollback, all 48 layers, GPU and CPU.** With snapshots on, each DeltaNet layer stores its conv and SSM state from before the batch plus the inputs of the recurrence
+  (qkv, z, gate, beta). dn_rollback(keep) restores the state and replays the first keep tokens through the same conv and recurrence code. Cost: 83 MiB VRAM (24 GPU DeltaNet layers) and
+  82 MiB RAM (24 CPU DeltaNet layers) for batches up to 4 tokens. Attention KV needs no rollback: the position counter moves back and later writes overwrite stale rows.
+- --rollback-test (in main.cpp): fresh state, prefill, snapshot, batch of 4 tokens, rollback to keep = 1, 2, 3, then single steps.
+
+### Results
+- bench/results/stage4/rollback_test.txt: for keep = 1, 2, 3 the logits rows of the batch and every following single step are **bit-identical** (memcmp) to a run that never drafted. PASS.
+- Greedy output with --mtp-steps 2 equals --mtp-steps 0 on every run: 24/24 (5-token prompt), 8/8 (62), 16/16 (509), 48/48 (5 and 62 tokens, steps 1, 2, 3).
+  All of them also equal the llama-server baseline tokens for the 24, 8 and 16 token runs. The results are bit-identical because every operator gives each token the same numbers whatever the batch size (CPU vec_dot per token, GPU per-token accumulators).
+- draft_n_accepted > 0 in every MTP run (table below).
+- SASS gate (bench/results/stage4/sass_gate.txt): PASS. dp4a_gemv IDP.4A x1624, q8_gemv x8, linked exe x1632, HFMA2/HMUL2/HADD2 x0 everywhere. No new CUDA kernels were added for Stage 4 or for streaming.
+
+Question: summarise the three most important engineering decisions described above, one sentence each.
+generated: 
+
+The three most important engineering decisions are:
+
+1. **Hybrid 32-GPU/32-CPU layer split with iso3 KV on GPU and FP32 KV on CPU** — this is the core architecture that makes the 27B model run at 2.1 tok/s decode on a single CPU core set (taskset -c 0-3) while staying under the 7.37 GiB VRAM cap, and it is the decision that turns the Stage 2 disk-streaming reference (0.06 tok/s) into a usable engine.
+
+2. **__
+{"prompt_tokens":3924,"generated_tokens":128,"ids":[271,760,2250,1379,2894,14246,10856,513,25,271,16,13,2972,29809,15745,220,18,17,11668,6126,14,18,17,7415,6126,6000,6507,440,32346,18,81726,383,21966,321,32439,18,17,81726,383,13540,332,1892,411,369,279,6007,17120,421,3520,279,220,17,22,33,1558,1542,506,220,17,13,16,9341,2600,16401,383,264,3074,13540,6007,716,318,7945,723,471,66,220,15,12,18,8,1345,18839,1172,279,220,22,13,18,22,14944,33,18588,1354,1994,11,321,424,369,279,5307,421,10263,279,21427,220,17,12977,37441,286,5604,318,15,13,15,21,9341,2600,8,1083,264,38606,4560,13,271,17,13,2972,548],"text":"\n\nThe three most important engineering decisions are:\n\n1. **Hybrid 32-GPU/32-CPU layer split with iso3 KV on GPU and FP32 KV on CPU** — this is the core architecture that makes the 27B model run at 2.1 tok/s decode on a single CPU core set (taskset -c 0-3) while staying under the 7.37 GiB VRAM cap, and it is the decision that turns the Stage 2 disk-streaming reference (0.06 tok/s) into a usable engine.\n\n2. **__","load_s":37.57,"prefill_s":58.25,"prefill_tok_s":67.363,"decode_s":7.68,"decode_tok_s":16.6605,"heap_allocs_in_decode_forward":0,"peak_rss_kb":712144,"rss_anon_kb":213456,"rss_file_kb":470448,"swap_used_kb_before":327608,"swap_used_kb_after":327608,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":5920.3,"gpu_weights_mib":5395.4,"gpu_kv_mib":100.0,"vram_used_mib":6044.2,"kv":"iso3","dp4a_mask":11565056,"decode_gpu_s":7.223,"decode_cpu_layers_s":0.000,"decode_head_s":0.428,"mtp_steps":0,"cycles":0,"draft_n":0,"draft_n_accepted":0,"accept_hist":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.000,"prefill_main_s":58.251,"mtp_draft_s":0.000,"mtp_verify_s":0.000,"mtp_rollback_s":0.000,"stream_min_t":40,"verify_t":5,"verify_t_requested":17,"roll_t":0,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":0,"pld_step_us":0.00,"ttft_s":58.252,"finish":"length","temperature":0.000,"ctx":8192,"reused_tokens":0,"state_load_s":0.000}
+{"tag":"b2_p4k_s0","rc":0,"wall_s":104,"peak_vram_mib":6045,"vram_cap_ok":true,"max_rss_kb":712144}

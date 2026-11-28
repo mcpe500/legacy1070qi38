@@ -141,6 +141,19 @@ template <> struct Deq<GT_IQ4_NL> {  // block 18 bytes: d, qs[16]; one block is 
     }
 };
 
+template <> struct Deq<GT_Q4_0> {  // block 18 bytes: d, qs[16]; value = d * ((q & 0xF) - 8), low nibbles = 0..15, high = 16..31
+    static constexpr int BLOCK_BYTES = 18, UPB = 1;
+    static __device__ __forceinline__ void run(const uint8_t * blk, int, float * w) {
+        const float d = half_at(blk);
+        const uint8_t * qs = blk + 2;
+#pragma unroll
+        for (int j = 0; j < 16; ++j) {
+            w[j] = d * static_cast<float>(static_cast<int>(qs[j] & 0xF) - 8);
+            w[16 + j] = d * static_cast<float>(static_cast<int>(qs[j] >> 4) - 8);
+        }
+    }
+};
+
 template <> struct Deq<GT_IQ3_S> {  // block 110 bytes: d, qs[64], qh[8], signs[32], scales[4]
     static constexpr int BLOCK_BYTES = 110, UPB = 8;
     static __device__ __forceinline__ void run(const uint8_t * blk, int ib32, float * w) {
@@ -172,6 +185,14 @@ template <> struct Deq<GT_BF16> {  // no scale: 32 bf16 values per unit, widened
             std::memcpy(&f, &bits, sizeof(f));
             w[l] = f;
         }
+    }
+};
+
+template <> struct Deq<GT_F32> {  // no scale: 32 fp32 values per unit (ssm_alpha/ssm_beta of Ternary Bonsai 2.5), copied bytewise
+    static constexpr int BLOCK_BYTES = 128, UPB = 1;
+    static __device__ __forceinline__ void run(const uint8_t * blk, int, float * w) {
+#pragma unroll
+        for (int l = 0; l < 32; ++l) std::memcpy(&w[l], blk + 4 * l, sizeof(float));
     }
 };
 
@@ -236,6 +257,78 @@ __global__ void gemv_fp32_kernel(const uint8_t * __restrict__ W, int64_t in, int
     }
 }
 
+// Dense F32 / BF16 GEMV (ssm_alpha / ssm_beta: in 5120, out 48). The generic kernel above gives one warp a whole row and only
+// out / WARPS blocks (24 blocks for the alpha/beta pair), so these small matrices ran at ~30 GB/s. Here one block of DENSE_THREADS
+// threads owns one output row and one token tile: consecutive threads read consecutive 4-weight groups (16-byte F32 or 8-byte BF16
+// loads, one warp reads 512 or 256 contiguous bytes), so the pair launches 2 x out blocks. FP32 accumulation; partial sums are
+// reduced with warp shuffles, then across warps in shared memory (fixed order, so the result is deterministic).
+constexpr int DENSE_THREADS = 256;
+
+template <int TYPE>
+__device__ __forceinline__ void dense_load4(const uint8_t * row, int64_t i, float (&w)[4]) {
+    if constexpr (TYPE == GT_F32) {
+        const float4 v = *reinterpret_cast<const float4 *>(row + 4 * i);
+        w[0] = v.x; w[1] = v.y; w[2] = v.z; w[3] = v.w;
+    } else {   // BF16: widen to FP32 with a 16-bit shift
+        const uint2 v = *reinterpret_cast<const uint2 *>(row + 2 * i);
+        w[0] = __uint_as_float(v.x << 16); w[1] = __uint_as_float(v.x & 0xFFFF0000u);
+        w[2] = __uint_as_float(v.y << 16); w[3] = __uint_as_float(v.y & 0xFFFF0000u);
+    }
+}
+
+template <int TYPE>
+__global__ void __launch_bounds__(DENSE_THREADS, 4)
+gemv_dense_kernel(const uint8_t * __restrict__ W, int64_t in, int64_t out, const float * __restrict__ x, int T, float * __restrict__ y,
+                  const uint8_t * __restrict__ W2, float * __restrict__ y2) {
+    if (blockIdx.z == 1) { W = W2; y = y2; }
+    const int64_t o = blockIdx.x;
+    const int t0 = blockIdx.y * TT;
+    const int nt = min(TT, T - t0);
+    const uint8_t * row = W + o * in * (TYPE == GT_F32 ? 4 : 2);
+    float acc[TT];
+#pragma unroll
+    for (int t = 0; t < TT; ++t) acc[t] = 0.0f;
+    for (int64_t i = 4 * static_cast<int64_t>(threadIdx.x); i < in; i += 4 * DENSE_THREADS) {
+        float w[4];
+        dense_load4<TYPE>(row, i, w);
+#pragma unroll
+        for (int t = 0; t < TT; ++t) {
+            if (t < nt) {
+                const float4 v = *reinterpret_cast<const float4 *>(x + static_cast<int64_t>(t0 + t) * in + i);
+                float a = acc[t];
+                a = fmaf(w[0], v.x, a);
+                a = fmaf(w[1], v.y, a);
+                a = fmaf(w[2], v.z, a);
+                a = fmaf(w[3], v.w, a);
+                acc[t] = a;
+            }
+        }
+    }
+    __shared__ float red[DENSE_THREADS / 32][TT];
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+#pragma unroll
+    for (int t = 0; t < TT; ++t) {
+#pragma unroll
+        for (int off = 16; off > 0; off >>= 1) acc[t] += __shfl_xor_sync(0xffffffffu, acc[t], off);
+        if (lane == 0) red[warp][t] = acc[t];
+    }
+    __syncthreads();
+    if (threadIdx.x < nt) {
+        float s = 0.0f;
+#pragma unroll
+        for (int k = 0; k < DENSE_THREADS / 32; ++k) s += red[k][threadIdx.x];
+        y[static_cast<int64_t>(t0 + threadIdx.x) * out + o] = s;
+    }
+}
+
+template <int TYPE>
+cudaError_t launch_dense(const uint8_t * W1, const uint8_t * W2, int64_t in, int64_t out, const float * x, int64_t T, float * y1, float * y2,
+                         cudaStream_t s) {
+    dim3 grid(static_cast<unsigned>(out), static_cast<unsigned>((T + TT - 1) / TT), W2 ? 2 : 1);
+    gemv_dense_kernel<TYPE><<<grid, DENSE_THREADS, 0, s>>>(W1, in, out, x, static_cast<int>(T), y1, W2, y2);
+    return cudaGetLastError();
+}
+
 template <int TYPE>
 cudaError_t launch(const uint8_t * W, int64_t in, int64_t out, const float * x, int64_t T, float * y, cudaStream_t s) {
     dim3 grid(static_cast<unsigned>((out + WARPS - 1) / WARPS), static_cast<unsigned>((T + TT - 1) / TT));
@@ -245,13 +338,22 @@ cudaError_t launch(const uint8_t * W, int64_t in, int64_t out, const float * x, 
 
 }  // namespace
 
+// The dense kernel needs 16-byte aligned weights and activations and a row length that is a multiple of 4 (8-byte BF16 rows);
+// anything else takes the generic kernel.
+static bool dense_ok(const uint8_t * W, int64_t in, const float * x) {
+    return in % 4 == 0 && (reinterpret_cast<uintptr_t>(W) & 15) == 0 && (reinterpret_cast<uintptr_t>(x) & 15) == 0;
+}
+
 bool gemv_fp32_supported(int type) { return gemv_row_bytes(type, 256) != 0; }
 
 cudaError_t gemv_fp32_pair(int type, const uint8_t * W1, const uint8_t * W2, int64_t in, int64_t out, const float * x, int64_t T,
                            float * y1, float * y2, cudaStream_t s) {
-    if (type != GT_BF16) return cudaErrorInvalidValue;
+    if (type != GT_BF16 && type != GT_F32) return cudaErrorInvalidValue;
+    if (dense_ok(W1, in, x) && dense_ok(W2, in, x))
+        return type == GT_F32 ? launch_dense<GT_F32>(W1, W2, in, out, x, T, y1, y2, s) : launch_dense<GT_BF16>(W1, W2, in, out, x, T, y1, y2, s);
     dim3 grid(static_cast<unsigned>((out + WARPS - 1) / WARPS), static_cast<unsigned>((T + TT - 1) / TT), 2);
-    gemv_fp32_kernel<GT_BF16><<<grid, WARPS * 32, 0, s>>>(W1, in, out, x, static_cast<int>(T), y1, W2, y2);
+    if (type == GT_F32) gemv_fp32_kernel<GT_F32><<<grid, WARPS * 32, 0, s>>>(W1, in, out, x, static_cast<int>(T), y1, W2, y2);
+    else gemv_fp32_kernel<GT_BF16><<<grid, WARPS * 32, 0, s>>>(W1, in, out, x, static_cast<int>(T), y1, W2, y2);
     return cudaGetLastError();
 }
 
@@ -263,10 +365,12 @@ int64_t gemv_row_bytes(int type, int64_t in) {
         case GT_Q6_K: return in / 256 * 210;
         case GT_Q3_K: return in / 256 * 110;
         case GT_IQ4_XS: return in / 256 * 136;
-        case GT_IQ4_NL: return in / 32 * 18;
+        case GT_IQ4_NL: return in % 32 == 0 ? in / 32 * 18 : 0;
+        case GT_Q4_0: return in % 32 == 0 ? in / 32 * 18 : 0;
         case GT_IQ3_S: return in / 256 * 110;
         case GT_Q8_0: return in / 32 * 34;
         case GT_BF16: return static_cast<int64_t>(in) * 2;
+        case GT_F32: return in % 32 == 0 ? static_cast<int64_t>(in) * 4 : 0;
         default: return 0;
     }
 }
@@ -280,9 +384,11 @@ cudaError_t gemv_fp32(int type, const uint8_t * W, int64_t in, int64_t out, cons
         case GT_Q3_K: return launch<GT_Q3_K>(W, in, out, x, T, y, s);
         case GT_IQ4_XS: return launch<GT_IQ4_XS>(W, in, out, x, T, y, s);
         case GT_IQ4_NL: return launch<GT_IQ4_NL>(W, in, out, x, T, y, s);
+        case GT_Q4_0: return launch<GT_Q4_0>(W, in, out, x, T, y, s);
         case GT_IQ3_S: return launch<GT_IQ3_S>(W, in, out, x, T, y, s);
         case GT_Q8_0: return launch<GT_Q8_0>(W, in, out, x, T, y, s);
-        case GT_BF16: return launch<GT_BF16>(W, in, out, x, T, y, s);
+        case GT_BF16: return dense_ok(W, in, x) ? launch_dense<GT_BF16>(W, nullptr, in, out, x, T, y, nullptr, s) : launch<GT_BF16>(W, in, out, x, T, y, s);
+        case GT_F32: return dense_ok(W, in, x) ? launch_dense<GT_F32>(W, nullptr, in, out, x, T, y, nullptr, s) : launch<GT_F32>(W, in, out, x, T, y, s);
         default: return cudaErrorInvalidValue;
     }
 }

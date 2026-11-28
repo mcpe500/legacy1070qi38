@@ -117,6 +117,10 @@ target_include_directories(gemv_parity PRIVATE "${LLAMA_SRC}/ggml/include")
 target_link_libraries(gemv_parity PRIVATE gpu_cuda qmat gguf_index ${GGML_CPU_LIB} ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart pthread)
 set_target_properties(gemv_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
 
+# F32 / BF16 ssm_alpha and ssm_beta GEMV (Bonsai 2.5 / 2) against a double reference, synthetic weights, needs a GPU but no model.
+add_executable(gemv_f32_parity tests/cuda/gemv_f32_parity.cu)
+target_link_libraries(gemv_f32_parity PRIVATE gpu_cuda CUDA::cudart)
+
 add_executable(gpu_layers_parity tests/cuda/gpu_layers_parity.cpp)
 target_link_libraries(gpu_layers_parity PRIVATE gpu_cuda gguf_index CUDA::cudart)
 set_target_properties(gpu_layers_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
@@ -151,6 +155,12 @@ target_include_directories(q2_k_parity PRIVATE "${LLAMA_SRC}/ggml/include")
 target_link_libraries(q2_k_parity PRIVATE gpu_cuda ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart)
 set_target_properties(q2_k_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
 
+# Q4_0 (ggml type 2, Bonsai 2.5 built-in MTP head) GPU GEMV parity against the libggml dequantizer, T = 1/3/16/64.
+add_executable(q4_0_parity tests/cuda/q4_0_parity.cu)
+target_include_directories(q4_0_parity PRIVATE "${LLAMA_SRC}/ggml/include")
+target_link_libraries(q4_0_parity PRIVATE gpu_cuda ${GGML_LIB} ${GGML_BASE_LIB} CUDA::cudart)
+set_target_properties(q4_0_parity PROPERTIES BUILD_RPATH "${LLAMA_BUILD}/bin")
+
 # Verification batch T = 17: lossless identity (T=17 vs T=5 vs single rows), FP64 parity, and latency.
 add_executable(verify_t17_test tests/cuda/verify_t17_test.cu)
 target_link_libraries(verify_t17_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
@@ -163,6 +173,9 @@ target_link_libraries(dn_rollback_test PRIVATE gpu_cuda CUDA::cudart)
 # FP64 reference, and a greedy token identical to the default path at every prefill T.
 add_executable(ptq1_fast_gate tests/cuda/ptq1_fast_gate.cu)
 target_link_libraries(ptq1_fast_gate PRIVATE gpu_cuda CUDA::cudart)
+# Gate of the default PTQ1_0 decode kernel (lane per group, T <= 5): FP64 reference and bit-identity across T.
+add_executable(ptq1_lpg_test tests/cuda/ptq1_lpg_test.cu)
+target_link_libraries(ptq1_lpg_test PRIVATE gpu_cuda CUDA::cudart)
 add_executable(attn_long_test tests/cuda/attn_long_test.cu)
 target_link_libraries(attn_long_test PRIVATE gpu_cuda iso3_ref CUDA::cudart)
 

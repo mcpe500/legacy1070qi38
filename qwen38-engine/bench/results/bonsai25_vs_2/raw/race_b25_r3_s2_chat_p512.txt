@@ -1,0 +1,25 @@
+
+prompt: <|im_start|>user
+ 
+ = Robert Boulter = 
+ 
+ Robert Boulter is an English film , television and theatre actor . He had a guest @-@ starring role on the television series The Bill in 2000 . This was followed by a starring role in the play Herons written by Simon Stephens , which was performed in 2001 at the Royal Court Theatre . He had a guest role in the television series Judge John Deed in 2002 . In 2004 Boulter landed a role as " Craig " in the episode " Teddy 's Story " of the television series The Long Firm ; he starred alongside actors Mark Strong and Derek Jacobi . He was cast in the 2005 theatre productions of the Philip Ridley play Mercury Fur , which was performed at the Drum Theatre in Plymouth and the Menier Chocolate Factory in London . He was directed by John Tiffany and starred alongside Ben Whishaw , Shane Zaza , Harry Kent , Fraser Ayres , Sophie Stanton and Dominic Hall . 
+ In 2006 , Boulter starred alongside Whishaw in the play Citizenship written by Mark Ravenhill . He appeared on a 2006 episode of the television series , Doctors , followed by a role in the 2007 theatre production of How to Curse directed by Josie Rourke . How to Curse was performed at Bush Theatre in the London Borough of Hammersmith and Fulham . Boulter starred in two films in 2008 , Daylight Robbery by filmmaker Paris Leonti , and Donkey Punch directed by Olly Blackburn . In May 2008 , Boulter made a guest appearance on a two @-@ part episode arc of the television series Waking the Dead , followed by an appearance on the television series Survivors in November 2008 . He had a recurring role in ten episodes of the television series Casualty in 2010 , as " Kieron Fletcher " . Boulter starred in the 2011 film Mercenaries directed by Paris Leonti . 
+ 
+ = = Career = = 
+ 
+ 
+ = = = 2000 – 2005 = = = 
+ 
+ In 2000 Boulter had a guest @-@ starring role on the television series The Bill ; he portrayed " Scott Parry " in the episode , " In Safe Hands " . Boulter starred as " Scott " in the play Herons written by Simon Stephens , which was performed in<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+
+generated: Based on the text provided, here is the completion of the sentence:
+
+Boulter starred as " Scott " in the play *Herons* written by Simon Stephens, which was performed in **2001 at the Royal Court Theatre**.
+{"prompt_tokens":520,"generated_tokens":50,"ids":[27775,383,279,1414,3766,11,1532,369,279,9463,314,279,11316,25,271,33,10644,455,56276,430,328,9523,328,303,279,1432,348,20079,2305,9,5158,539,20660,73326,11,864,557,10345,303,2972,17,15,15,16,506,279,15717,6930,25385,159034],"text":"Based on the text provided, here is the completion of the sentence:\n\nBoulter starred as \" Scott \" in the play *Herons* written by Simon Stephens, which was performed in **2001 at the Royal Court Theatre**.","load_s":39.52,"prefill_s":7.84,"prefill_tok_s":66.305,"decode_s":1.86,"decode_tok_s":26.8748,"heap_allocs_in_decode_forward":0,"peak_rss_kb":1042756,"rss_anon_kb":280532,"rss_file_kb":733984,"swap_used_kb_before":378068,"swap_used_kb_after":378068,"parity_failures":0,"logits_cos":-1.000000,"top1_match":false,"gpu_layers":64,"gpu_arena_mib":6426.3,"gpu_weights_mib":5713.3,"gpu_kv_mib":53.1,"vram_used_mib":6600.2,"kv":"iso3","dp4a_mask":11565060,"decode_gpu_s":1.416,"decode_cpu_layers_s":0.000,"decode_head_s":0.127,"mtp_steps":4,"cycles":16,"draft_n":37,"draft_n_accepted":34,"accept_hist":[1,5,5,1,4,0,0,0,0,0,0,0,0,0,0,0,0],"mtp_adaptive":1,"mtp_prefill_s":0.116,"prefill_main_s":7.726,"mtp_draft_s":0.295,"mtp_verify_s":1.544,"mtp_rollback_s":0.021,"stream_min_t":40,"verify_t":17,"verify_t_requested":17,"roll_t":17,"pld_enabled":0,"pld_hits":0,"pld_candidates":0,"mtp_fills":37,"pld_step_us":0.00,"ttft_s":7.843,"finish":"stop","temperature":0.000,"ctx":4096,"reused_tokens":0,"state_load_s":0.000}
+{"tag":"race_b25_r3_s2_chat_p512","rc":0,"wall_s":49,"peak_vram_mib":6601,"vram_cap_ok":true,"max_rss_kb":1042756}
