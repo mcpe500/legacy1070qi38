@@ -806,12 +806,16 @@ __global__ void attention_combine_n(const float * part, const float * qfull, flo
 // online softmax per 16 positions. Each warp writes its own (m, l, o) slice; attention_combine_n merges the ns slices.
 constexpr int kDecWarps = 4;   // warps (slices) per block
 
-__device__ __forceinline__ void iso3_codes8(const uint8_t * blk, int gi0, const float * cb, float (&c)[8]) {
-    // codebook values of groups gi0 and gi0 + 1 (gi0 even) of one 50-byte iso3 half block (2-byte aligned: one 16-bit load)
+__device__ __forceinline__ void iso3_codes8(const uint8_t * blk, int gi0, const float2 * cb2, float (&c)[8]) {
+    // codebook values of groups gi0 and gi0 + 1 (gi0 even) of one 50-byte iso3 half block (2-byte aligned: one 16-bit load).
+    // cb2[e], e = 4 code bits of two elements | 2 sign bits << 4, holds the two codebook values (exactly the floats of iso3_codebook).
     const uint32_t qs = __ldg(reinterpret_cast<const unsigned short *>(blk + 2 + gi0));
     const uint32_t sg = __ldg(blk + 34 + (gi0 >> 1));
 #pragma unroll
-    for (int k = 0; k < 8; ++k) c[k] = cb[((qs >> (2 * k)) & 3) | (((sg >> k) & 1) << 2)];
+    for (int p = 0; p < 4; ++p) {
+        const float2 v = cb2[((qs >> (4 * p)) & 15u) | (((sg >> (2 * p)) & 3u) << 4)];
+        c[2 * p] = v.x; c[2 * p + 1] = v.y;
+    }
 }
 
 template <int NSL_MAX>
@@ -819,10 +823,13 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
                                                                                   const uint8_t * __restrict__ vc, float * __restrict__ part,
                                                                                   int pos0, const int * pos_dev, int nsl) {
     constexpr int QG = NH / NKV;
-    __shared__ float s_cb[8];
+    __shared__ float2 s_cb[64];
     if (pos_dev) pos0 = *pos_dev;
     const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
-    if (tid < 8) s_cb[tid] = iso3_codebook[tid];
+    if (tid < 64) {
+        const int e = tid;
+        s_cb[e] = make_float2(iso3_codebook[(e & 3) | (((e >> 4) & 1) << 2)], iso3_codebook[((e >> 2) & 3) | (((e >> 5) & 1) << 2)]);
+    }
     __syncthreads();
     const int t = blockIdx.x / NKV, g = blockIdx.x % NKV;
     const int sl = blockIdx.y * kDecWarps + warp;           // slice of this warp
