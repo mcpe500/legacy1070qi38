@@ -421,6 +421,50 @@ dan profiler CUDA tidak dicatat — itu keterbatasan device, bukan hasil penelit
   (128 lane/clk) sehingga mengganti `a+b` dengan gerbang tidak mempercepat; keuntungan nyata
   datang dari *mengemas banyak operasi per instruksi*: `dp4a` (4 MAC), `lop3` (fungsi boolean 3
   input), `prmt` (lookup 4 byte, setengah laju).
+- **E32 · prototipe attention int8 dp4a, K saja (prompt13, 28 Nov).** Hipotesis (E31): kerja K per
+  posisi turun 48 FFMA → 12 dp4a, register q 48 → 12, kernel 1,65 → 0,9–1,1 ms. Aksi: file baru
+  `bench/attn_int8_bench.cu` (tidak menyentuh `ops.cu`): tabel smem 4096 entri (8 bit kode + 4
+  bit tanda → 4 nilai int8), `q' = Mᵀq` dikuantisasi int8 sekali (satu skala per head, reduksi
+  maks 5 shuffle), 2 `__dp4a`/head/posisi, reduce-scatter **int32 dalam setengah warp** (8 shuffle),
+  konversi float + norma K + skala head hanya sekali per 8 posisi, lalu jumlah dua setengah (1
+  shuffle). Build: `nvcc -std=c++17 -arch=sm_61 -O3 -Isrc/cuda -Isrc/common bench/attn_int8_bench.cu
+  build/libgpu_cuda.a build/libiso3_ref.a build/libgguf_index.a libggml*.so -lcublas`; run
+  `taskset -c 0-3 attn_int8_bench 102400 20`. Referensi: FP64 dari byte iso3 terdekuantisasi dan FP64
+  dari float K/V ASLI. Hasil (best ms, FP32 kernel sekarang → int8 K + V FP32, CB_A=127): n=100
+  0,046 → 0,041; n=4097 0,133 → 0,104; n=102400 **1,731 → 1,329 (-23 %)**. ptxas: 168 register,
+  **0 B spill**, smem 16.928 B, 3 blok/SM (sama dengan kernel FP32: tak ada keuntungan okupansi
+  karena `launch_bounds` min 3 menahan register di 168). Galat int8 vs FP64(deq), rel = maks|Δ|/rms:
+  n=100 6,29e-2, n=4097 5,06e-2, n=102400 5,55e-2 (kernel FP32: 1,2e-6 … 4,9e-6).
+- **E33 · skala codebook int8.** Sumber galat sistematik: T = round(cb/cbmax·127) = {14,44,78,127}
+  memberi galat relatif rms pembulatan 1,1 %. Pindai offline (python) skala a: **a = 124,75 →
+  T = {14,43,77,125}, rms 0,18 %, maks 0,28 %**. Hasil dengan `CB_A=124.75`: galat n=102400
+  5,55e-2 → **4,69e-2**, n=4097 3,82e-2, n=100 4,65e-2; waktu tetap (1,584 → 1,187 ms). Sisa galat
+  didominasi kuantisasi q (satu skala per head, langkah amax/127).
+- **E34 · q dengan suku residu (`-DQRES`).** q = s·qa + (s/256)·qb (qb = residu terkuantisasi),
+  akumulator gabungan `256·d1 + d2` (1 int32, reduksi sama), 4 dp4a/head/posisi (24 per posisi,
+  masih setengah dari 48 FFMA). Hasil: galat n=102400 **6,76e-3** (maks_abs 1,86e-5), n=4097 8,14e-3,
+  n=100 1,02e-2; waktu **1,570 (FP32) → 1,211 ms (-23 %)**, 0 B spill; vs FP64 float ASLI: kernel FP32
+  rel 1,637, int8 rel 1,635 → galat KV iso3 3-bit (~164 % dari rms pada data acak) menutup galat int8.
+  Cek SASS: IDP.4A hadir (768 statis di kernel K8+V32), HFMA2/HMUL2 = 0, FFMA statis 2028 → 726.
+- **E35 · V int8 (bobot softmax int8 + kode V ditranspos PRMT 4×4 + dp4a) — HASIL BURUK.** Aksi:
+  bobot w = p·nm_v dikuantisasi dengan trik bilangan ajaib (FFMA + 12582912, byte rendah = int8),
+  skala = p maks tile × nm_v maks tile, 4 posisi per kata via 3 PRMT, kode V ditranspos (8 PRMT per
+  blok 4 dim), akumulator int32 per tile, dikonversi ke float satu kali per tile. Hasil 102K: tanpa
+  QRES FP32 1,705 vs int8-V **1,495 ms** (tapi K8+V32 = 1,320 → V int8 +0,175 ms *lebih lambat*),
+  galat 6,85e-2 (V menambah galat); dengan QRES: 1,572 vs **2,026 ms (+29 %)**, spill 152/188 B,
+  galat 4,45e-2 (kuantisasi bobot V mendominasi). n=4097: 0,141 / 0,150 ms vs FP32 0,133. Dugaan
+  penyebab (belum diisolasi ablation): 96 shuffle bobot + 12 op kuantisasi/posisi, 4,5 PRMT/posisi
+  untuk pengemasan + 4/posisi transpose (PRMT setengah laju, E31), konversi int→float seperempat
+  laju, dan tekanan register (acc int 48 + o float 48 sekaligus) → spill. Kesimpulan: V int8 ditolak;
+  yang layak hanya K int8.
+- **E36 · estimasi vs ukur dan batas atas.** Proposal: instruksi/posisi ~200 → ~110, kernel
+  1,65 → 0,9–1,1 ms, decode 102K 15,65 → 18–19 tok/s. Ukur: K int8 + V FP32 + QRES **1,57 → 1,21
+  ms per layer (-23 %)** → 16 layer × 0,36 ms = **5,8 ms** per token → 63,9 → ~58,1 ms ≈ **17,2
+  tok/s** (+10 %), di bawah estimasi (belum diukur end-to-end). Batas atas jujur: GEMV ~28,9 ms +
+  attention ~26 ms + lain ~9 ms = 63,9 ms; attention di batas bandwidth (~6 ms) → ~44 ms ≈ 22 tok/s;
+  100 tok/s tak mungkin tanpa mengurangi byte yang dibaca (sparse attention / speculative decoding
+  berbasis KV, lossy). Keputusan ambang akurasi (opsi A/B/C) **menunggu user**; tidak ada gate yang
+  diubah dan `ops.cu` tidak disentuh.
 - **Alternatif yang ditimbang dan ditolak tanpa eksekusi:** decode ALU/polinomial
   pengganti LDS, PRMT byte-select (biaya per-elemen setara), replikasi tabel lintas
   bank (matematika bank tak menyelesaikan), prefetch ke register (96 register untuk 32
