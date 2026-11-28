@@ -27,6 +27,8 @@ struct DumpConfig {
     int shard_samples = 64;
     double max_gb = 0;             // 0 = unlimited; stop with a consistent manifest when the package hits it
     bool dump_f32_hidden = false;  // extra hf32.npy per shard (smoke parity checks; 20 KB/token)
+    bool kv63 = false;             // extra kv63_k/kv63_v.npy per shard: the teacher's layer-63 K/V exactly as the
+                                   // engine caches them (iso3 bytes, 400 B/position/tensor; issue #70 P1-rev)
 };
 
 // Runs the dump pass to completion; returns the process exit code and prints one JSON summary line.

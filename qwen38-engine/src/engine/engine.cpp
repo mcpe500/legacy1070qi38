@@ -1086,8 +1086,13 @@ void Engine::forward_ex(const int32_t * tokens, int T, int pos0, float * logits,
         std::fprintf(stderr, "forward T=%d pos0=%d: GPU layers %.2f s, CPU/streamed layers %.2f s, head %.2f s\n", T, pos0, last_gpu_s, last_cpu_s, last_head_s);
 }
 
-void Engine::mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0) {
-    static const bool shared_kv = [] { const char * e = std::getenv("QWEN_MTP_SHARED_KV"); return e && std::atoi(e) != 0; }();
+// Host copy of one target layer's device K/V cache (the P1 dump reads layer 63 = cache slot 15).
+void Engine::copy_layer_kv(int il, int64_t n, uint8_t * kd, uint8_t * vd) const {
+    if (!gpu_) throw std::runtime_error("copy_layer_kv: the engine has no GPU layers");
+    gpu_->get_layer_kv(il, n, kd, vd);
+}
+
+void Engine::mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0) {    static const bool shared_kv = [] { const char * e = std::getenv("QWEN_MTP_SHARED_KV"); return e && std::atoi(e) != 0; }();
     if (shared_kv && mtp_gpu_) return;   // issue #70: the head reads layer 63's KV, which the main prefill already filled
     if (mtp_gpu_) { mtp_forward(tokens, h_in, T, pos0, nullptr, nullptr); return; }
     if (!(gpu_ && gpu_->stream_ready() && cfg_.mtp_gpu_prefill && T >= cfg_.stream_min_t)) { mtp_forward(tokens, h_in, T, pos0, nullptr, nullptr); return; }

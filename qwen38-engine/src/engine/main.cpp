@@ -191,6 +191,7 @@ int main(int argc, char ** argv) {
         else if (a == "--shard-samples") dcfg.shard_samples = std::atoi(next().c_str());
         else if (a == "--max-gb") dcfg.max_gb = std::atof(next().c_str());
         else if (a == "--dump-f32-hidden") dcfg.dump_f32_hidden = true;
+        else if (a == "--dump-kv63") dcfg.kv63 = true;   // layer-63 K/V of the shared-KV drafter (issue #70 P1-rev)
         else { std::fprintf(stderr, "unknown argument: %s\n", a.c_str()); return 2; }
     }
     if (cfg.gguf.empty()) { std::fprintf(stderr, "usage: %s -m MODEL.gguf [-p prompt] [-n N] [--server --port 8080]\n", argv[0]); return 2; }

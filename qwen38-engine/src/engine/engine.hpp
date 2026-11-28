@@ -112,6 +112,8 @@ public:
     void mtp_forward(const int32_t * tokens, const float * h_in, int T, int pos0, float * h_out, float * logits, int pos_kv = -1);
     // Prefill of the MTP KV only (no output): on the GPU when prefill streaming is available and T >= stream_min_t, else mtp_forward.
     void mtp_prefill(const int32_t * tokens, const float * h_in, int T, int pos0);
+    // Host copy of one target layer's device K/V cache, positions 0..n-1 (--dump-kv63); throws when the layer is not on the GPU.
+    void copy_layer_kv(int il, int64_t n, uint8_t * kd, uint8_t * vd) const;
     bool has_mtp() const { return mtp_ok_; }
     // First position the MTP attention looks at (the MTP KV below it was not filled when the prefill window is used).
     void set_mtp_kv_start(int p) { mtp_kv_start_ = p < 0 ? 0 : p; }

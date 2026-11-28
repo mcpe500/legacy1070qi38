@@ -128,8 +128,11 @@ class MTPHead(nn.Module):
         x0, x1, rest = x[..., : r // 2], x[..., r // 2: r], x[..., r:]
         return torch.cat([x0 * c - x1 * s, x0 * s + x1 * c, rest], dim=-1)
 
-    def forward(self, emb, h, pos):
-        """emb, h: [B, L, H] (token embedding of x_p, hidden of p-1), pos: [B, L] absolute positions. Returns f [B, L, H]."""
+    def forward(self, emb, h, pos, kv63=None, pos_abs=None):
+        """emb, h: [B, L, H] (token embedding of x_p, hidden of p-1), pos: [B, L] absolute positions. Returns f [B, L, H].
+        Shared-KV training (issue #70 P1-rev, --kv63): kv63 = (K, V) teacher layer-63 K/V [B, L, nkv, hd], already
+        k_norm+RoPE'd by the engine at the ABSOLUTE positions pos_abs [B, L]; the q side is rotated with pos_abs so the
+        phases match, and each row attends only the E-D2b selection (top-32 blocks + window 128 + sink, causal)."""
         d = self.d
         B, L, _ = emb.shape
         if not torch.is_autocast_enabled():   # CPU smoke run: BF16 teacher tensors into the FP32 student
@@ -138,12 +141,25 @@ class MTPHead(nn.Module):
         n = rms(z, self.attn_norm, d.eps)
         qg = F.linear(n, self.q_proj).view(B, L, d.n_head, 2, d.head_dim)
         q, gate = qg[:, :, :, 0], qg[:, :, :, 1]
-        k = F.linear(n, self.k_proj).view(B, L, d.n_kv, d.head_dim)
-        v = F.linear(n, self.v_proj).view(B, L, d.n_kv, d.head_dim)
-        q = self.rope(rms(q, self.q_norm, d.eps).transpose(1, 2), pos)
-        k = self.rope(rms(k, self.k_norm, d.eps).transpose(1, 2), pos)
-        v = v.transpose(1, 2)
-        a = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)   # scale 1/sqrt(256) as the engine
+        q = self.rope(rms(q, self.q_norm, d.eps).transpose(1, 2), pos_abs if kv63 is not None else pos)
+        if kv63 is None:
+            k = F.linear(n, self.k_proj).view(B, L, d.n_kv, d.head_dim)
+            v = F.linear(n, self.v_proj).view(B, L, d.n_kv, d.head_dim)
+            k = self.rope(rms(k, self.k_norm, d.eps).transpose(1, 2), pos)
+            v = v.transpose(1, 2)
+            a = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=True)   # scale 1/sqrt(256) as the engine
+        else:
+            k63, v63 = kv63                                                     # [B, L, nkv, hd] teacher K/V
+            k63 = k63.to(q.dtype).transpose(1, 2)                               # [B, nkv, L, hd]
+            v63 = v63.to(q.dtype).transpose(1, 2)
+            qg6 = q.view(B, d.n_kv, d.n_head // d.n_kv, L, d.head_dim)
+            sc = torch.einsum("bgtld,bgjd->bgtlj", qg6.float(), k63.float()).amax(2)   # [B, nkv, L, L] max over the group's heads
+            from iso3_kv import sparse_kv_mask                                  # the E-D2b selection, same rule as the engine
+            m = sparse_kv_mask(sc, pos)                                         # [B, L, nkv, L] True = attend (rel causal)
+            m4 = m.permute(0, 2, 1, 3).to(torch.bool)                           # [B, nkv, L, L] True = attend
+            mk = m4.repeat_interleave(d.n_head // d.n_kv, dim=1)                # broadcast over each group's heads
+            a = F.scaled_dot_product_attention(q, k63.repeat_interleave(d.n_head // d.n_kv, dim=1),
+                                               v63.repeat_interleave(d.n_head // d.n_kv, dim=1), attn_mask=mk)
         a = a.transpose(1, 2) * torch.sigmoid(gate)
         z = z + F.linear(a.reshape(B, L, d.n_head * d.head_dim), self.o_proj)
         n = rms(z, self.post_norm, d.eps)
@@ -430,9 +446,11 @@ def sparse_chunk_loss(f, tk_ids, tk_vals, tk_lse, h_tgt, frozen, T, cos_w):
     return kl, cos * cos_w, agree
 
 
-def unrolled_loss_targets(student, emb_fn, frozen, ids, H, tk_ids, tk_vals, tk_lse, args):
+def unrolled_loss_targets(student, emb_fn, frozen, ids, H, tk_ids, tk_vals, tk_lse, args, kv63=None, offs=None):
     """The unrolled self-rollout of unrolled_loss, with stored targets instead of a live teacher.
-    H is the dequantized teacher hidden of the window, tk_* the stored top-K/lse of every position."""
+    H is the dequantized teacher hidden of the window, tk_* the stored top-K/lse of every position.
+    kv63 = (K, V) teacher layer-63 K/V of the window (--kv63, issue #70 P1-rev); offs [B] = the crop's
+    absolute start in the sample, so the q-side RoPE matches the K/V phase the engine cached."""
     B, L = ids.shape
     K = unroll_K(args)
     Kw = tk_ids.shape[-1]   # stored teacher ids per position (sparse-KL width) — unrelated to the unroll K
@@ -441,12 +459,17 @@ def unrolled_loss_targets(student, emb_fn, frozen, ids, H, tk_ids, tk_vals, tk_l
     total = 0.0
     logs = []
     h_in = H[:, : L - 1]
+    pa = None
+    if kv63 is not None:
+        pa = (torch.arange(L, device=ids.device).unsqueeze(0) + (offs.to(ids.device) if offs is not None else 0).unsqueeze(1))
     for k in range(1, K + 1):
         n = L - k
         tok = ids[:, k: k + n]
         pos = torch.arange(k, k + n, device=ids.device).expand(B, n)
         emb = emb_fn(tok)
-        run = lambda e, h, p: student(e, h, p)   # noqa: E731
+        kc = kv63   # teacher positions 0..L-1; the sparse mask clamps each row to j <= its absolute position
+        pax = None if pa is None else pa[:, k: k + n]   # the rows' own absolute positions (q-side RoPE phase)
+        run = lambda e, h, p: student(e, h, p, kv63=kc, pos_abs=pax)   # noqa: E731
         f = torch.utils.checkpoint.checkpoint(run, emb, h_in[:, :n], pos, use_reentrant=False) if args.ckpt else run(emb, h_in[:, :n], pos)
         tgt = H[:, k: k + n]
         fr, tr = f.reshape(-1, f.shape[-1]), tgt.reshape(-1, tgt.shape[-1])
@@ -479,6 +502,7 @@ def target_batches(from_dir, args, dev):
         raise SystemExit(f"no target-shard-*.npz in {from_dir} (run precompute_teacher_targets.py first)")
     epoch = 0
     dtype_note = False
+    kv63_files = args.kv63
     while True:
         rng = random.Random(args.seed + 131 * epoch)
         order = files[:]
@@ -486,6 +510,9 @@ def target_batches(from_dir, args, dev):
         for fp in order:
             local = pc.stage_shard(fp, args.stage_dir)
             d, meta = pc.load_shard(local)
+            dt = pc.hidden_dtype_of(meta, fp)
+            if kv63_files and not meta.get("kv63"):
+                raise SystemExit(f"--kv63 set but shard {fp} was dumped without --dump-kv63 (re-run the dump)")
             dt = pc.hidden_dtype_of(meta, fp)
             if not dtype_note and dt != args.hidden_dtype:
                 print(f"note: shards store hidden as {dt}, --hidden-dtype {args.hidden_dtype} is ignored for decoding",
@@ -508,7 +535,16 @@ def target_batches(from_dir, args, dev):
                 idxs = list(range(b, min(b + args.batch, S)))
                 offs = [rng.randint(0, Ls - L) for _ in idxs] if Ls > L else [0] * len(idxs)
                 sl = lambda t: torch.stack([t[i, o: o + L] for i, o in zip(idxs, offs)])   # noqa: E731
-                yield (sl(ids).to(dev), sl(H).to(dev), sl(ti).to(dev), sl(tv).to(dev), sl(tl).to(dev))
+                extra = None
+                if kv63_files:
+                    import iso3_kv
+                    kv = iso3_kv.dequant_shard(local)
+                    if kv is None:
+                        raise SystemExit(f"shard {fp} meta says kv63 but kv63_k.npy/kv63_v.npy are missing")
+                    kt = (torch.from_numpy(kv[0]).half(), torch.from_numpy(kv[1]).half())
+                    extra = (sl(kt[0]).to(dev), sl(kt[1]).to(dev),
+                             torch.tensor(offs, dtype=torch.long))
+                yield (sl(ids).to(dev), sl(H).to(dev), sl(ti).to(dev), sl(tv).to(dev), sl(tl).to(dev), extra)
         epoch += 1
         if args.epochs and epoch >= args.epochs:
             print(f"--epochs {args.epochs} exhausted; stopping at an optimizer boundary", flush=True)
@@ -690,8 +726,11 @@ def train_targets(args):
     batches = target_batches(args.from_targets, args, dev)
 
     def loss_fn(payload):
-        ids, H, ti, tv, tl = payload
-        return unrolled_loss_targets(student, frozen.emb_fn, frozen, ids, H, ti, tv, tl, args)
+        ids, H, ti, tv, tl, extra = payload
+        kv63 = offs = None
+        if extra is not None:
+            kv63, offs = extra[0], extra[2]
+        return unrolled_loss_targets(student, frozen.emb_fn, frozen, ids, H, ti, tv, tl, args, kv63=kv63, offs=offs)
 
     run_training(args, dev, student, opt, batches, loss_fn, dtype, use_scaler, save, step0)
 
@@ -1068,6 +1107,10 @@ def main():
     ap.add_argument("--lm-head-file", help="frozen safetensors (default: <from-targets>/lm_head_embed_frozen.safetensors)")
     ap.add_argument("--top-k-kl", type=int, default=64, help="sparse KL over this many stored teacher ids per token "
                     "(from-targets mode; skipping the full 248K lm_head backward is what makes a T4 fast)")
+    ap.add_argument("--kv63", action="store_true",
+                    help="shared-KV training (issue #70 P1-rev): the shards carry kv63_k/v.npy (engine --dump-kv63); "
+                    "the draft head attends the teacher's layer-63 K/V through the E-D2b sparse selection instead "
+                    "of its own k/v projections")
     ap.add_argument("--hidden-dtype", default="int4g64", choices=["int4g64", "int8"],
                     help="quantization of the stored teacher hidden in the package")
     ap.add_argument("--epochs", type=int, default=1, help="passes over the target package; each epoch reshuffles the "

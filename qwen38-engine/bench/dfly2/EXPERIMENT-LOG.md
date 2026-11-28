@@ -94,3 +94,79 @@ cepat yang karatan. Sparse (top-32) tidak relevan diuji sebelum head dilatih: ia
 akan menurunkan acceptance 2,6 % lebih jauh. Sampel 41–48 token per run kecil, tapi
 selisih 57,9 % vs 2,6 % jauh dari marginal. Kode flag belum di-commit (menunggu
 instruksi user, sesuai konvensi repo).
+
+## E-D2b · selector top-32 + sparse decode (28 Nov, CPU fase — GPU dilarang dipakai sesi lain)
+
+**Hipotesis.** Seleksi blok ala DFly2 bisa dibangun sebagai inti portabel (host+device) yang diuji
+penuh di CPU, sehingga kernel GPU tinggal konsumsi daftarnya; baris sparse memakai list per grup KV
+(top-32 blok + window 128 + sink blok 0, ~2180 posisi) dengan kausalitas identik jalur dense
+(entr di atas `pos0 + t` dibuang di kernel, jadi T>1 batch tetap eksak per baris).
+
+**Aksi.**
+- `src/cuda/dfly2_select.cuh`: predikat `always_selected` (sink+window), `topk_selected` (rank
+  deterministik: #lebih-baik + #sama-indeks-lebih-kecil < 32), `build_list` (serial, uji CPU) dan
+  `expand_list` (jalur device dari flag paralel) — satu sumber aturan untuk keduanya.
+- `ops.cu`: `dfly2_select_kernel` (grid per grup KV, flag top-k dihitung paralel lalu thread-0
+  mengembangkan daftar), `op_blockmax_select`, dan mode sparse di `attention_kernel_decode_iso3`
+  (param `plist/plcount/pl_stride`: chunking di atas panjang daftar, alamat posisi = `plist[j]`,
+  guard per posisi `ja < n` di skor dan bobot V). `op_attention_sparse` mengeksposnya; fallback
+  dense bila decode-v2 tidak aktif.
+- Arm/disarm sideband pindah ke **slot pointer device-side** (`g_attn_blockmax_dev`) yang diisi
+  `cudaMemcpyToSymbolAsync` dari `op_attention_arm_blockmax` — capture CUDA graph mengreplay
+  arm/disarm dengan benar; percobaan `extern __device__` lintas TU ditolak nvcc (warning #20044:
+  "treated as a static definition" → bayangan simbol per-TU = sideband senyap mati) dan diganti.
+- Kernel menulis sideband hanya saat `gridDim.x == NKV` (T=1) dan `plist == null` (decode target),
+  sehingga jalur verify dan baris draft tidak mencemari skor.
+- Wiring engine: `QWEN_MTP_SPARSE=1` (default OFF) di `gpu_layers.cu` — buffer bmax/list/count di
+  arena (~37 KB @ 131072), sumber pinjaman = layer attention terakhir (63), selector dijalankan
+  per siklus draft dari skor sideband langkah decode sebelumnya.
+
+**Temuan uji CPU (yang menangkap bug):**
+- `kStride` versi pertama 2240 salah: window 128 posisi bisa melintang tiga blok 64 (overhang
+  2×64) → worst case 2303 → kStride = 2368; uji #6 kini membangun kasus disjoint eksak 2240.
+- Round-trip slot: penulisan sign-bit selftest semula acak terpisah dari nibble (data sintetis
+  tak konsisten — bukan bug dequant) → diperbaiki menurunkan sign dari nibble.
+- Matriks merge `M`: baris r1 dua kali salah tanda (`(x,w,z,-y)` lalu `(-x,w,-z,y)`; benar
+  `(-x,w,+z,-y)` dari epilog `o = M o'` kernel) — tertangkap oleh uji ortogonalitas blok 4×4.
+
+**Status verifikasi (semua CPU, tanpa sentuh GPU):** `dfly2_select_test` PASS (top-32 vs sort
+reference dengan ties 200 trial, window/sink/clamp/stride, isolasi grup, ekspansi-flag == serial);
+SASS `ops.cu` dan `gpu_layers.cu`: HFMA2/HMUL2/HADD2 = 0; build ninja bersih. **Belum diukur:
+waktu kernel sparse + parity vs dense pada data nyata** (butuh GPU bebas — antrean berikutnya).
+
+**Keputusan.** Lanjut pipeline P1 (E-D3) sambil menunggu GPU; pengukuran E-D2b di GPU (timing +
+acceptance sparse nyata) dijadwalkan setelah dump selesai, dengan gate yang sama.
+
+## E-D3 · pipeline dump K/V layer 63 PTQ1_0-native + hook training (--kv63)
+
+**Hipotesis.** Teacher K/V yang benar untuk training = byte cache iso3 engine sendiri (sudah
+fake-quant, persis yang dibaca kernel saat inferensi) — 800 B/posisi, bukan 8 KB FP32; training
+dengan seleksi sparse versi torch (per batch, skor nyata) adalah kembaran eksak E-D2b.
+
+**Aksi.**
+- `Engine::copy_layer_kv` + `GpuLayers::get_layer_kv`: salinan host cache layer 63 (slot 15).
+- `--dump-kv63` (dump_targets.cpp): `kv63_k.npy`/`kv63_v.npy` per shard (u8 [S, L, unit]),
+  meta.json + est-byte + resume kompatibel.
+- `tools/bonsai_mtp_train/iso3_kv.py`: dequant vektor (LUT 64 entri + matriks merge 128×128 dari
+  `tables.inc` — tabel diparse langsung dari sumber, tanpa transkripsi), loader shard, dan
+  `sparse_kv_mask` (kembaran torch seleksi E-D2b, ties via bias indeks kecil).
+- `train_bonsai_mtp.py --kv63`: `MTPHead.forward(kv63=, pos_abs=)` — q di-RoPE dengan posisi
+  absolut sampel (fase cocok dengan K/V yang di-cache engine), k/v proyeksi tidak dipakai;
+  `unrolled_loss_targets` + `target_batches` meneruskan (K, V, offs); tanpa `--kv63` jalur lama
+  tak tersentuh.
+- `kv63_smoke.py` (CPU): forward finite, **uji kausalitas** (mengganggu K/V posisi masa depan tak
+  boleh mengubah baris awal), gradien mencapai q/o.
+
+**Temuan uji yang menangkap bug nyata:** versi pertama memakai posisi ABSOLUT untuk mask kausal —
+baris crop offset bisa melihat posisi teacher di depan relatifnya (kebocoran kausal 4,78 dari uji
+smoke) → mask kini kausal RELATIF (`j <= baris`), posisi absolut hanya untuk fase RoPE q. Juga
+dua bug broadcast dimensi G dan pemotongan kv63 per langkah unroll yang memangkas konteks baris
+terakhir — ketiganya tertangkap sebelum ada run GPU.
+
+**Status verifikasi:** `iso3_kv.py` selftest PASS (round-trip galat 0,00e+00), `kv63_smoke.py`
+PASS, `py_compile` bersih, build engine bersih. **Belum dijalankan:** dump nyata di GPU + epoch
+training di T4/Colab (user).
+
+**Keputusan.** Pipeline siap dieksekusi begitu GPU kosong: dump (±1,6 GB tambahan) → training
+4000 langkah (`--kv63 --unroll 3`) → gate = acceptance zero-shot naik dari 2,6 % mendekati 57,9 %
+dense (ambang −3 poin) dengan ids tetap lossless. Prosedur lengkap: `P1_SHARED_KV_RUNBOOK.md`.

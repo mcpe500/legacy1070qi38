@@ -238,6 +238,9 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
     std::vector<int32_t> sh_tk(tok_per_shard * K);
     std::vector<uint16_t> sh_tv(tok_per_shard * K), sh_tl(tok_per_shard);
     std::vector<float> sh_f32(dc.dump_f32_hidden ? tok_per_shard * kHidden : 0);
+    const int64_t kv_unit = cfg.kv_iso3 ? 400 : 1024 * 4;   // bytes/position/tensor: 8 iso3 half-blocks of 50 B (or FP32 KVW)
+    std::vector<uint8_t> sh_k63(dc.kv63 ? tok_per_shard * kv_unit : 0);
+    std::vector<uint8_t> sh_v63(dc.kv63 ? tok_per_shard * kv_unit : 0);
     std::vector<float> h_buf(static_cast<int64_t>(L) * kHidden);
     std::vector<float> lg(static_cast<int64_t>(kHeadChunk) * V);   // CPU-head fallback only
     std::vector<int32_t> tk_buf(static_cast<int64_t>(kHeadChunk) * K);
@@ -280,7 +283,8 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
         const double est = npy_bytes({tok_per_shard}, "<i4") + npy_bytes({tok_per_shard, kHidden / (int4 ? 2 : 1)}, "|u1") +
                            npy_bytes({tok_per_shard, kHidden / kGroup}, "<f2") + npy_bytes({tok_per_shard, K}, "<i4") +
                            npy_bytes({tok_per_shard, K}, "<f2") + npy_bytes({tok_per_shard}, "<f2") +
-                           npy_bytes({tok_per_shard, kHidden}, "<f4") * (dc.dump_f32_hidden ? 1 : 0);
+                           npy_bytes({tok_per_shard, kHidden}, "<f4") * (dc.dump_f32_hidden ? 1 : 0) +
+                           npy_bytes({tok_per_shard, static_cast<int64_t>(kv_unit)}, "|u1") * (dc.kv63 ? 2 : 0);
         if (dc.max_gb > 0 && bytes + est > dc.max_gb * 1e9) {
             std::fprintf(stderr, "--max-gb %.0f reached after %d shards (%.2f GB); manifest is consistent\n",
                          dc.max_gb, shard, bytes / 1e9);
@@ -300,6 +304,10 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
             eng.reset();   // clean KV/DeltaNet state per sample (positions restart at 0)
             eng.forward_ex(toks + it.off, static_cast<int>(L), 0, nullptr, 0, h_buf.data());
             prof.prefill_ms += ms_since(tp0);
+            if (dc.kv63) {   // issue #70 P1-rev: the teacher's layer-63 K/V exactly as the engine caches them
+                eng.copy_layer_kv(63, L, sh_k63.data() + static_cast<int64_t>(r) * L * kv_unit,
+                                  sh_v63.data() + static_cast<int64_t>(r) * L * kv_unit);
+            }
 
             const int64_t dst_row0 = static_cast<int64_t>(r) * L;
             for (int c0 = 0; c0 < L; c0 += kHeadChunk) {
@@ -365,14 +373,19 @@ int run_dump(EngineConfig cfg, const DumpConfig & dc) {
         wr("tk_vals.npy", sh_tv.data(), {rows_n, L, K}, "<f2");
         wr("tk_lse.npy", sh_tl.data(), {rows_n, L}, "<f2");
         if (dc.dump_f32_hidden) wr("hf32.npy", sh_f32.data(), {rows_n, L, kHidden}, "<f4");
+        if (dc.kv63) {
+            wr("kv63_k.npy", sh_k63.data(), {rows_n, L, kv_unit}, "|u1");
+            wr("kv63_v.npy", sh_v63.data(), {rows_n, L, kv_unit}, "|u1");
+        }
         {
-            char meta[640];
+            char meta[832];
             std::snprintf(meta, sizeof meta,
                           "{\"version\": 1, \"format\": \"engine-npy-dir-1\", \"hidden_dtype\": \"%s\", "
                           "\"top_k\": %d, \"hidden\": %lld, \"seq_len\": %lld, \"samples\": %d, \"group\": %lld, "
-                          "\"index\": %d, \"model\": \"%s\"}",
+                          "\"kv63\": %s, \"kv_unit\": %lld, \"index\": %d, \"model\": \"%s\"}",
                           dc.hidden_dtype.c_str(), static_cast<int>(K), static_cast<long long>(kHidden),
-                          static_cast<long long>(L), rows_n, static_cast<long long>(kGroup), shard,
+                          static_cast<long long>(L), rows_n, static_cast<long long>(kGroup),
+                          dc.kv63 ? "true" : "false", static_cast<long long>(kv_unit), shard,
                           base_name(cfg.gguf).c_str());
             write_file_atomic(std::string(tmpd) + "/meta.json", meta);
         }
