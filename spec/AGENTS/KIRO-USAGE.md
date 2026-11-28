@@ -377,6 +377,50 @@ dan profiler CUDA tidak dicatat — itu keterbatasan device, bukan hasil penelit
   204 / diterima 183, prefill 113,3 vs 111,6 tok/s. Keputusan: kernel attention baru
   tetap lossless untuk MTP (bukti 4K + `verify_t17_test` 32/32); bukti 102K dengan GGUF
   `-mtp` + `--gen-mtp-steps 0` belum dijalankan (~35 menit).
+- **E27 · go/no-go producer–consumer: batas atas compute murni (28 Nov, GPU kosong).** Hipotesis:
+  1 warp loader + 4 warp compute per blok hanya layak jika compute-only pada okupansi yang
+  tersisa lebih cepat dari kernel sekarang (1,57–1,73 ms). Aksi: varian "nomem" (load diganti
+  aritmetika, indeks tabel berbeda per lane) pada `bench/attn_dec_bench`, 3 blok/SM vs 2 blok/SM
+  (shared memory dinamis 40 KB memaksa 2 blok). Hasil: nomem 3 blok **1,218 ms**, nomem 2 blok
+  **1,842 ms**, kernel asli 2 blok **3,070 ms**. Simulasi 5 warp/blok (1 warp menganggur) dengan
+  `__launch_bounds__(160,3)` → register terpaksa 128: **1,123 ms** (spill 1328/1368 B).
+  Keputusan sementara: lanjut mencoba, karena 128 register tampak masih cepat — ternyata
+  simulasi ini menyesatkan (lihat E29).
+- **E28 · prototipe producer–consumer (`/tmp/abl/pc.cu`, tidak dimasukkan ke repo).** Desain:
+  blok 160 thread; warp 0–3 konsumen (satu slice tiap warp, kode attention sekarang), warp 4
+  produsen; ring 2 stage × 3200 B per konsumen (16 baris K + 16 baris V, 100 B/baris, disalin
+  persis dari memori global dengan 25 `LDG.32` + 25 `STS.32` per lane); sinkronisasi named
+  barrier `bar.arrive`/`bar.sync` (16 id: full/empty × 4 warp × 2 stage); konsumen membaca
+  `LDS.U16/U8` (SASS memastikan LDS, bukan load generik). Hasil: **bit-identik** (hash
+  `05c1dd08be724870`), tetapi **4,772 ms** vs 1,731 ms (kernel sekarang, `QWEN_ATTN_PC=0`).
+  ptxas: 128 register, spill 972/1480 B, 16 barrier, smem 26.112 B; `cudaOccupancy…` = 3 blok/SM.
+  Ring 1 stage (8 id logis): 4,390 ms. Sumber: `rtk bypass` langsung.
+- **E29 · ablation prototipe.** (a) produsen tanpa lalu-lintas memori global (hanya protokol +
+  STS): **3,310 ms** → global load bukan penyebab. (b) `minBlocks 2` (168 register, spill 96 B,
+  2 blok/SM = 8 warp konsumen): **3,822 ms**. (c) konsumen saja, tanpa barrier dan tanpa
+  produsen, membaca smem berisi sampah: **2,467 ms** (128 register, spill 920/1432 B).
+  Kesimpulan: kernel konsumen butuh ~168 register (q 48 + o 48 + pv 48 + sementara). Warp
+  specialization memberi semua warp jumlah register yang sama, jadi 5 warp × 3 blok memaksa
+  128 register → spill berat (2,47 ms bahkan tanpa protokol), dan 168 register → hanya 2 blok
+  (8 warp konsumen; kernel ini berskala ~1/jumlah warp, E13). Simulasi E27 (1,12 ms) salah
+  karena tak menanggung dependensi data/spill sungguhan.
+- **E30 · keputusan: producer–consumer ditolak untuk GP104.** Akar masalah: register file,
+  bukan latensi memori. Prototipe tidak dimasukkan ke `ops.cu`. Satu-satunya arah yang tersisa
+  dan belum diuji: memindahkan `q` (48 register) ke shared memory (LDS.128 broadcast per grup 4
+  dimensi) untuk turun ke ~120 register dan 4 blok/SM tanpa warp tambahan; biaya +~25 %
+  instruksi fase K.
+- **E31 · throughput instruksi GTX 1070 Ti (sm_61) terukur (28 Nov).** Hipotesis dari
+  pertanyaan user: operasi bit/logika bisa menggantikan penjumlahan dan lebih cepat? Aksi:
+  `bench/instr_throughput_bench.cu` (8 rantai independen per thread, 4 blok × 512 thread/SM,
+  PTX inline, `taskset 0-3`, keluaran `rtk bypass`). Hasil, warp-instr/clk/SM (4,0 = 128 lane/clk):
+  `ffma` 4,0; `fadd` 4,0; `iadd` 4,0; `lop3` 4,0; **`dp4a` waktu sama dengan ffma (0,336 ms) →
+  4,0 = 512 MAC int8/clk/SM, 4× MAC FFMA**; `dp2a` waktu sama (0,336 ms) = 256 MAC/clk/SM; `shf`
+  2,0; `prmt` 2,1; `bfe` 2,0; `imad` 1,5; `popc` ≈1,1 (termasuk 1 add); `cvt s32→f32` 1,0;
+  `ex2` (MUFU) 1,1. Catatan: kolom clock dp4a salah baca (0,94 GHz) — pakai waktu; baris
+  `and`/`shl` dibuang karena ptxas melipat rantai idempoten. Kesimpulan: add/FMA/logika setara
+  (128 lane/clk) sehingga mengganti `a+b` dengan gerbang tidak mempercepat; keuntungan nyata
+  datang dari *mengemas banyak operasi per instruksi*: `dp4a` (4 MAC), `lop3` (fungsi boolean 3
+  input), `prmt` (lookup 4 byte, setengah laju).
 - **Alternatif yang ditimbang dan ditolak tanpa eksekusi:** decode ALU/polinomial
   pengganti LDS, PRMT byte-select (biaya per-elemen setara), replikasi tabel lintas
   bank (matematika bank tak menyelesaikan), prefetch ke register (96 register untuk 32
