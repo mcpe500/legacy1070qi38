@@ -321,6 +321,62 @@ dan profiler CUDA tidak dicatat — itu keterbatasan device, bukan hasil penelit
   Rencana terakhir yang tercatat: ekstrak body loop jadi lambda dengan cabang
   full-unroll compile-time untuk memisahkan efek unroll vs runtime-loop — **sesi
   terputus di sini, belum dieksekusi**.
+- **E19 · jalur tile penuh tanpa cabang + unroll V (28 Nov, setelah sesi dilanjutkan).**
+  Hipotesis: `if (j < je)` per posisi (SSY/SYNC/BRK di SASS) menserialkan load K, dan
+  loop V runtime tidak bisa dibatch. Aksi: body loop diekstrak jadi lambda
+  `tile(j0, FULL)`; tile penuh (16 posisi) memakai instansiasi tanpa cabang, hanya tile
+  ekor yang dijaga; unroll V diuji 1/2/4/16 (nsl=56, `bench/attn_dec_bench`, n=102400).
+  Hasil: **1,892 / 1,824 / 1,730 / 2,557 ms** vs referensi nsl=56 **2,102 ms**; spill
+  u1 156/220 B, u16 172/284 B. Hash bit keluaran = referensi nsl=56 (`05c1dd08be724870`).
+  Keputusan: tile penuh + unroll 4 (unroll 16 meledakkan register). Sumber: keluaran
+  `rtk bypass` langsung, log di sesi.
+- **E20 · unroll V 8 dan ulangan.** u8 = **2,215 ms** (lebih buruk dari u4). Ulangan
+  u4 vs base nsl=56: 1,571 / 1,731 vs 1,909 / 2,104 ms — noise antar-run ±0,15 ms,
+  urutannya konsisten (u4 ≈ -18 %).
+- **E21 · reduksi skor per 4 posisi (`reduce_scatter4`).** Hipotesis: `pv` 48 → 24
+  register membuka minBlocks 4. Hasil: minBlocks 3 = **2,047 ms** (masih 168 register,
+  stack 128 B), minBlocks 4 = **5,434 ms** (128 register, 760 B spill). Ditolak:
+  register tidak didorong oleh `pv`, dan jumlah shuffle per posisi naik.
+- **E22 · sapuan n (kernel E19 vs commit `f6590f0`, ctx_max 131072).** n=4097: **0,147**
+  vs 0,217 ms; n=8192: **0,204** vs 0,317; n=32768: **0,598** vs 0,828; n=102400:
+  **1,57–1,73** vs 2,12–2,35. Hash bit berbeda selain di n=102400 karena partisi slice
+  baru (urutan akumulasi), masih dalam toleransi tes FP64.
+- **E23 · diterapkan ke `ops.cu` (commit `4b3193e`).** `kDecSlices = 56` terpisah dari
+  `kVerifySlices` (buffer part & prefill tidak berubah). Gate: `attn_long_test` PASS
+  (0 gagal; decode T=1 v2 2,033 ms, T=5 **9,109 ms** dari 11,163, prefill T=64 98,48 ms
+  tak berubah), `verify_t17_test` 32/32 (drift identitas 4,1e-8), `sass_gate` PASS.
+  Total sejak awal rantai: 2,78 ms → **1,57–1,73 ms** per layer di 102K (~-38 %);
+  bit-identik terhadap commit sebelumnya hanya di n=102400. **Belum dijalankan:** engine
+  penuh (tok/s 102K dan cek greedy ids MTP) — harness e2e butuh ~30 menit prefill.
+- **E24 · request 102K penuh tanpa MTP, engine commit `4b3193e` (28 Nov 06:34–07:06).**
+  Hipotesis: -38 % di kernel attention (E23) menaikkan decode 102K dari 12,17 tok/s.
+  Aksi: `~/kiro-tmp/real102k_new/run.sh` → `bench/bonsai_ctx_run.sh new_b25_s0_c102400 -m
+  Ternary-Bonsai-2.5-27B-PTQ1_0.gguf --gpu-layers auto --ctx 102400 --parse-special -f
+  real102400.txt -n 256 --temp 0 --seed 42 --gen-mtp-steps 0` (taskset 0-3). Hasil
+  (`new_b25_s0_c102400.txt`): 102.021 token prompt, 256 token keluar, **decode 15,6485
+  tok/s** (decode_s 16,36), prefill 1891,4 s (53,9 tok/s), wall 1947 s, peak VRAM 7263
+  MiB (cap 7373), RSS 801.760 KB. Pembanding `lpg_kernels.md`: decode 12,17, prefill
+  54,8, TTFT 1862,6 → **decode +28,6 %**; prefill/TTFT +1,5 % lebih lambat, wajar noise
+  (kernel prefill tidak diubah). Ids tidak dibandingkan dengan file `raw/real_b25_s0`
+  (itu hasil pra-LPG, 9,36 tok/s). Keputusan: klaim decode 102K ≈ 15,6 tok/s berlaku;
+  cek lossless MTP menunggu run `new_b25mtp_s2_c102400` (E25).
+- **E25 · request 102K dengan MTP (07:06–08:56, `new_b25mtp_s2_c102400.txt`).** Aksi:
+  sama dengan E24 tetapi `-m Ternary-Bonsai-2.5-27B-PTQ1_0-mtp.gguf --mtp-adaptive 1
+  --gen-mtp-steps 2`. Hasil: decode **5,23 tok/s** (decode_s 48,94), prefill utama 1720,4
+  s + prefill blok MTP di CPU 4761,0 s → TTFT 6481,5 s, wall 6571 s, 117 siklus, draft
+  174 / diterima 140, peak VRAM 7411 MiB (**melewati cap 7373**, `vram_cap_ok:false`).
+  Blok MTP berjalan di CPU karena tak muat anggaran VRAM. Kesimpulan: di 102K MTP **kalah
+  telak** dari tanpa MTP (15,65 tok/s) dan melanggar cap; MTP hanya layak di konteks pendek.
+  Ids run ini berbeda dari E24 mulai token 31, tetapi itu bukan tes lossless (lihat E26).
+- **E26 · tes lossless MTP yang adil di 4K (GGUF `-mtp.gguf` yang sama, 08:56+).**
+  Hipotesis: beda ids di E25 berasal dari beda file GGUF (run lama pun beda di token 24
+  antara GGUF polos vs `-mtp`), bukan dari MTP. Aksi: `build/qwen38-engine -m ...-mtp.gguf
+  --gpu-layers auto --ctx 4096 --parse-special -f prompts/coding_chat.txt -n 256 --temp 0
+  --seed 42 --mtp-adaptive 1 --gen-mtp-steps {0,2}` (`~/kiro-tmp/lossless4k/s0.txt`,
+  `s2.txt`). Hasil: **ids identik 256/256**; decode 26,71 → **42,90 tok/s** (+61 %), draft
+  204 / diterima 183, prefill 113,3 vs 111,6 tok/s. Keputusan: kernel attention baru
+  tetap lossless untuk MTP (bukti 4K + `verify_t17_test` 32/32); bukti 102K dengan GGUF
+  `-mtp` + `--gen-mtp-steps 0` belum dijalankan (~35 menit).
 - **Alternatif yang ditimbang dan ditolak tanpa eksekusi:** decode ALU/polinomial
   pengganti LDS, PRMT byte-select (biaya per-elemen setara), replikasi tabel lintas
   bank (matematika bank tak menyelesaikan), prefetch ke register (96 register untuk 32
@@ -329,15 +385,14 @@ dan profiler CUDA tidak dicatat — itu keterbatasan device, bukan hasil penelit
   4 warp compute, ring buffer smem + named barrier; conflict-free terverifikasi untuk
   pola baca 100 B/row) — kandidat serius, belum dieksekusi.
 
-**Status akhir rantai:** fix ter-commit hanya `f6590f0` (pair-table, E7/E9, -20 %,
-bit-identical pada nsl=100). Temuan `nsl=56` (E13, 1,93 ms, -30 % lagi) terukur tapi
-belum di-commit — hash berubah lintas nsl karena urutan akumulasi (masih dalam
-kebijakan toleransi; greedy ids wajib dicek ulang). Hipotesis terbuka: throughput/
-biaya sektor L1 pada LDG kecil per lane, bank conflict 0,22 ms, dan load×compute yang
-tidak overlap (kandidat besar: producer–consumer warp specialization atau pipeline
-dalam warp — dua-duanya belum dieksekusi). Langkah instrumen berikutnya: ablation
-nomem yang menjaga struktur alamat (anti-broadcast), hitung instruksi dinamis per
-fase, dan uji full-unroll loop body.
+**Status akhir rantai (diperbarui setelah E23):** fix ter-commit: `f6590f0` (pair-table,
+E7/E9, -20 %) dan `4b3193e` (tile penuh tanpa cabang + 56 slice + unroll V 4, E13/E19/E23,
+total ~-38 %). Terbukti: kernel dibatasi latensi (waktu ∝ 1/warp residen, E13), prefetch L1/L2
+tidak berguna (E16/E17), pemisahan kepala dan reduksi per-4 tidak menolong (E12/E14/E21).
+Terbuka: bank conflict tabel 64 entri ≈ 0,2 ms (E18), paparan memori sisa, dan satu-satunya
+kandidat struktural yang belum dieksekusi — producer–consumer warp specialization (1 warp
+loader + 4 warp compute, ring smem + named barrier). Wajib sebelum klaim tok/s: jalankan engine
+penuh di 102K dan cek ids MTP identik dengan run tanpa MTP.
 
 ---
 
