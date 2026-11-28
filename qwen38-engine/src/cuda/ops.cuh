@@ -54,3 +54,7 @@ int op_attention_verify_t();
 void op_attention_set_tiled_ref(bool on);
 // Decode attention (T <= 8, long-context path, iso3): true = the v2 slice kernel (default), false = the split-K kernel.
 void op_attention_set_dec2(bool on);
+// Sideband block-max scores of the decode v2 kernel (issue #70 P0.a, default off): one float per 64-position block per KV
+// group, laid out as (block * 4 + kv_group); size = ceil(positions/64) * 4 floats. Initialize every element to -infinity
+// before each decoded position (the kernel only ever raises values with atomicMax). Null = the kernel runs unchanged.
+void op_attention_set_blockmax(float * buf);

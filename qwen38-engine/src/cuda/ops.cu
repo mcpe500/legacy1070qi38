@@ -825,7 +825,7 @@ __device__ __forceinline__ void iso3_codes8(const uint8_t * blk, int gi0, const 
 template <int NSL_MAX>
 __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso3(const float * __restrict__ qbuf, const uint8_t * __restrict__ kc,
                                                                                   const uint8_t * __restrict__ vc, float * __restrict__ part,
-                                                                                  int pos0, const int * pos_dev, int nsl) {
+                                                                                  int pos0, const int * pos_dev, int nsl, float * __restrict__ bmax) {
     constexpr int QG = NH / NKV;
     __shared__ float2 s_cb[64];
     if (pos_dev) pos0 = *pos_dev;
@@ -901,13 +901,14 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
                 s[c][r] = ok ? v : -INFINITY;
             }
         }
-        float pr[2][QG];
+        float pr[2][QG], bmt = -INFINITY;
 #pragma unroll
         for (int r = 0; r < QG; ++r) {
             float tm = fmaxf(s[0][r], s[1][r]);
             tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 4));
             tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 8));
             tm = fmaxf(tm, __shfl_xor_sync(0xffffffffu, tm, 16));
+            bmt = fmaxf(bmt, tm);   // sideband candidate: tile max over the QG heads (issue #70 P0.a)
             const float mn = fmaxf(m[r], tm);   // finite: position j0 < je is valid
             pr[0][r] = expf(s[0][r] - mn);
             pr[1][r] = expf(s[1][r] - mn);
@@ -920,6 +921,15 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
             m[r] = mn;
 #pragma unroll
             for (int k = 0; k < 8; ++k) o[r][k] *= corr;
+        }
+        if (bmax && lane == 0) {   // sideband write (issue #70 P0.a, default off): max score per 64-position block per KV group,
+            float * a = bmax + (static_cast<int64_t>(j0) >> 6) * NKV + g;   // one float CAS per 16-position tile; a block may
+            float cur = *a;   // span two warp slices, so the atomic keeps the max correct across warps
+            while (bmt > cur) {
+                const float assumed = cur;
+                cur = __uint_as_float(atomicCAS(reinterpret_cast<unsigned int *>(a), __float_as_uint(assumed), __float_as_uint(bmt)));
+                if (cur == assumed) break;
+            }
         }
         auto vstep = [&](const int p) {
             const uint8_t * vb = vc + (static_cast<int64_t>(j0 + p) * 8 + g * 2 + hf) * 50;
@@ -971,6 +981,10 @@ bool g_attn_tiled_ref = false;
 bool g_attn_dec2 = [] { const char * e = std::getenv("QWEN_ATTN_DEC"); return e ? std::atoi(e) != 0 : true; }();
 void op_attention_set_dec2(bool on) { g_attn_dec2 = on; }
 void op_attention_set_tiled_ref(bool on) { g_attn_tiled_ref = on; }
+// Sideband block-max scores of the decode kernel (issue #70 P0.a, DFly2-style shared-KV drafter selection): one float per
+// 64-position block per KV group, laid out as (block * NKV + g). Null = off (default), the kernel then runs unchanged.
+float * g_attn_blockmax = nullptr;
+void op_attention_set_blockmax(float * buf) { g_attn_blockmax = buf; }
 // Largest batch the partial-attention buffer is sized for. It is the MTP verification batch (1 target row plus the
 // accepted drafts), so the Drafter v2 batch of 16 drafts + 1 = 17 rows is what the engine asks for when the VRAM
 // budget allows. The buffer holds verify_t * kSplits (token x slice) rows per head, and the split-K dispatch keeps
@@ -1064,7 +1078,7 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
         nsl = std::max(kDecWarps, nsl / kDecWarps * kDecWarps);
         const dim3 g2(T * NKV, nsl / kDecWarps);
         attention_kernel_decode_iso3<0><<<g2, kDecWarps * 32, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache),
-                                                                        part, pos0, pos_dev, nsl);
+                                                                        part, pos0, pos_dev, nsl, g_attn_blockmax);
         attention_combine_n<<<grid, 256, 0, s>>>(part, qfull, attn_o, nsl);
         return cudaGetLastError();
     }
