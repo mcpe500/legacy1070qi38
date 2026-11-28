@@ -6,6 +6,8 @@
 
 #include <cstdint>
 
+#include "dfly2_select.cuh"
+
 // y[r] = x[r] / sqrt(mean(x[r]^2) + eps) * w   (w may be null). Rows are `n` floats; x may alias y.
 cudaError_t op_rmsnorm_rows(const float * x, const float * w, float * y, int n, int rows, float eps, cudaStream_t s);
 cudaError_t op_add_inplace(float * x, const float * y, int64_t n, cudaStream_t s);          // x += y
@@ -58,3 +60,15 @@ void op_attention_set_dec2(bool on);
 // group, laid out as (block * 4 + kv_group); size = ceil(positions/64) * 4 floats. Initialize every element to -infinity
 // before each decoded position (the kernel only ever raises values with atomicMax). Null = the kernel runs unchanged.
 void op_attention_set_blockmax(float * buf);
+// Sparse decode attention (issue #70 E-D2b): each KV group reads only the positions of its list — dfly2::kStride ints at
+// lists[group * pl_stride], length counts[group] (op_blockmax_select output). Rows keep dense causality: entries above
+// pos0 + t + 1 are skipped. Falls back to the dense op_attention when the decode-v2 path is not what would run.
+cudaError_t op_attention_sparse(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
+                                int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev = nullptr,
+                                float * part = nullptr, bool long_kernels = false, const int * plist = nullptr,
+                                const int * plcount = nullptr, int pl_stride = dfly2::kStride);
+// Selector over the sideband block-max scores: top-32 blocks + window 128 + sink block 0 per KV group, expanded to an
+// ascending causal-clamped position list (lists) and its length (counts). nblocks = ceil((pos_max + 1) / 64).
+cudaError_t op_blockmax_select(const float * bmax, int nblocks, int pos_max, int * lists, int * counts, cudaStream_t s);
+// Stream-ordered arm/disarm of the sideband pointer slot (CUDA-graph capturable; buf = null disarms).
+void op_attention_arm_blockmax(const float * buf, cudaStream_t s);

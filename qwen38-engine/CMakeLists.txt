@@ -92,6 +92,12 @@ add_library(iso3_ref STATIC src/common/iso3_ref.cpp)
 target_include_directories(iso3_ref PUBLIC src/common)
 target_compile_options(iso3_ref PRIVATE -ffp-contract=off)
 
+# DFly2 shared-KV selection core (issue #70 E-D2b): pure-CPU test of the exact header the device kernel uses.
+add_executable(dfly2_select_test tests/dfly2_select_test.cpp)
+set_target_properties(dfly2_select_test PROPERTIES CXX_STANDARD 17)
+target_compile_options(dfly2_select_test PRIVATE -DDFLY2_HOST_ONLY)
+target_include_directories(dfly2_select_test PRIVATE src/cuda)
+
 add_executable(foundation_test tests/foundation_test.cpp)
 target_compile_options(foundation_test PRIVATE -mf16c)
 target_include_directories(foundation_test PRIVATE src/common "${LLAMA_SRC}/ggml/include")

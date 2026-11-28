@@ -115,6 +115,9 @@ public:
     void mtp_forward(const float * concat_host, int T, int pos0, float * h_out, float * logits, int pos_kv = -1);
     // pos_kv = the last position with a real target KV (QWEN_MTP_SHARED_KV=1 zero-shot mode): draft rows above it attend
     // only up to pos_kv of the borrowed cache. -1 (default) = pos0.
+    // Copy the iso3 K/V cache of one target layer (positions 0..n-1) to the host: the P1 dump (--dump-kv63) reads
+    // layer 63 through this, in the exact byte format the kernels consume (400 B/position/tensor on the iso3 path).
+    void get_layer_kv(int il, int64_t n, uint8_t * kd, uint8_t * vd) const;
     bool has_mtp() const;
     size_t head_bytes() const;   // device bytes of the GPU LM-head weights
 

@@ -1,7 +1,9 @@
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <type_traits>
 
+#include "dfly2_select.cuh"
 #include "f16bits.hpp"
 #include "ops.cuh"
 
@@ -10,6 +12,9 @@
 #include "tables.inc"
 #undef QT_BEGIN
 #undef QT_END
+
+// Sideband pointer slot the decode kernel reads (defined here so the kernel sees it; ops.cu globals below only wrap it).
+__device__ float * g_attn_blockmax_dev = nullptr;
 
 namespace {
 
@@ -825,7 +830,9 @@ __device__ __forceinline__ void iso3_codes8(const uint8_t * blk, int gi0, const 
 template <int NSL_MAX>
 __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso3(const float * __restrict__ qbuf, const uint8_t * __restrict__ kc,
                                                                                   const uint8_t * __restrict__ vc, float * __restrict__ part,
-                                                                                  int pos0, const int * pos_dev, int nsl, float * __restrict__ bmax) {
+                                                                                  int pos0, const int * pos_dev, int nsl,
+                                                                                  const int * __restrict__ plist, const int * __restrict__ plcount,
+                                                                                  int pl_stride) {
     constexpr int QG = NH / NKV;
     __shared__ float2 s_cb[64];
     if (pos_dev) pos0 = *pos_dev;
@@ -838,7 +845,11 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
     const int t = blockIdx.x / NKV, g = blockIdx.x % NKV;
     const int sl = blockIdx.y * kDecWarps + warp;           // slice of this warp
     const int n = pos0 + t + 1;
-    const int chunk = ((n + nsl - 1) / nsl + 15) / 16 * 16;
+    // Sparse mode (issue #70 E-D2b): the slice ranges cover the position LIST of this KV group, the per-row causal
+    // limit stays n = pos0 + t + 1 (list entries above it are skipped), so a sparse row sums exactly the positions
+    // a dense row of the same (pos0, t) would. Dense mode: total == n, unchanged.
+    const int total = plist ? plcount[g] : n;
+    const int chunk = ((total + nsl - 1) / nsl + 15) / 16 * 16;
     const int js = min(n, sl * chunk), je = min(n, js + chunk);
     const int hf = lane >> 4, gi0 = (2 * lane) & 31;
     const float kq_scale = 1.0f / sqrtf(static_cast<float>(HD));
@@ -876,10 +887,11 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
 #pragma unroll
             for (int pp = 0; pp < 8; ++pp) {
                 const int j = j0 + c * 8 + pp;
+                const int ja = plist ? plist[g * pl_stride + j] : j;   // absolute position (list mode: entry j)
                 float cv[8];
                 float nm = 0.0f;
-                if (FULL || j < je) {
-                    const uint8_t * kb = kc + (static_cast<int64_t>(j) * 8 + g * 2 + hf) * 50;
+                if ((FULL || j < je) && ja < n) {
+                    const uint8_t * kb = kc + (static_cast<int64_t>(ja) * 8 + g * 2 + hf) * 50;
                     iso3_codes8(kb, gi0, s_cb, cv);
                     nm = f16_to_f32(__ldg(reinterpret_cast<const unsigned short *>(kb)));
                 } else {
@@ -894,7 +906,8 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
                     pv[r][pp] = d * nm;
                 }
             }
-            const bool ok = FULL || j0 + c * 8 + ((lane >> 2) & 7) < je;
+            const int jo = j0 + c * 8 + ((lane >> 2) & 7);
+            const bool ok = (FULL || jo < je) && (!plist || plist[g * pl_stride + jo] < n);
 #pragma unroll
             for (int r = 0; r < QG; ++r) {
                 const float v = reduce_scatter8(pv[r], lane);
@@ -922,24 +935,29 @@ __global__ void __launch_bounds__(kDecWarps * 32, 3) attention_kernel_decode_iso
 #pragma unroll
             for (int k = 0; k < 8; ++k) o[r][k] *= corr;
         }
-        if (bmax && lane == 0) {   // sideband write (issue #70 P0.a, default off): max score per 64-position block per KV group,
-            float * a = bmax + (static_cast<int64_t>(j0) >> 6) * NKV + g;   // one float CAS per 16-position tile; a block may
-            float cur = *a;   // span two warp slices, so the atomic keeps the max correct across warps
-            while (bmt > cur) {
-                const float assumed = cur;
-                cur = __uint_as_float(atomicCAS(reinterpret_cast<unsigned int *>(a), __float_as_uint(assumed), __float_as_uint(bmt)));
-                if (cur == assumed) break;
+        if (!plist) {   // sideband write (issue #70 P0.a, default off): max score per 64-position block per KV group,
+            float * sbw = g_attn_blockmax_dev;   // device-side slot so CUDA graphs capture a pointer copy, not the host value;
+            if (sbw && gridDim.x == NKV && lane == 0) {   // gridDim.x == NKV means T = 1 (verify rows must not touch it)
+                float * a = sbw + (static_cast<int64_t>(j0) >> 6) * NKV + g;   // one float CAS per 16-position tile; a block may
+                float cur = *a;   // span two warp slices, so the atomic keeps the max correct across warps
+                while (bmt > cur) {
+                    const float assumed = cur;
+                    cur = __uint_as_float(atomicCAS(reinterpret_cast<unsigned int *>(a), __float_as_uint(assumed), __float_as_uint(bmt)));
+                    if (cur == assumed) break;
+                }
             }
         }
         auto vstep = [&](const int p) {
-            const uint8_t * vb = vc + (static_cast<int64_t>(j0 + p) * 8 + g * 2 + hf) * 50;
+            const int ja = plist ? plist[g * pl_stride + j0 + p] : j0 + p;
+            const float von = ja < n ? 1.0f : 0.0f;   // per-row causal trim: the list is shared by all T rows of the call
+            const uint8_t * vb = vc + (static_cast<int64_t>(ja) * 8 + g * 2 + hf) * 50;
             float cv[8];
             iso3_codes8(vb, gi0, s_cb, cv);
             const float nm = f16_to_f32(__ldg(reinterpret_cast<const unsigned short *>(vb)));
             const int src = (p & 7) * 4;
 #pragma unroll
             for (int r = 0; r < QG; ++r) {
-                const float w = __shfl_sync(0xffffffffu, p < 8 ? pr[0][r] : pr[1][r], src) * nm;
+                const float w = __shfl_sync(0xffffffffu, p < 8 ? pr[0][r] : pr[1][r], src) * nm * von;
 #pragma unroll
                 for (int k = 0; k < 8; ++k) o[r][k] += w * cv[k];
             }
@@ -982,9 +1000,20 @@ bool g_attn_dec2 = [] { const char * e = std::getenv("QWEN_ATTN_DEC"); return e 
 void op_attention_set_dec2(bool on) { g_attn_dec2 = on; }
 void op_attention_set_tiled_ref(bool on) { g_attn_tiled_ref = on; }
 // Sideband block-max scores of the decode kernel (issue #70 P0.a, DFly2-style shared-KV drafter selection): one float per
-// 64-position block per KV group, laid out as (block * NKV + g). Null = off (default), the kernel then runs unchanged.
-float * g_attn_blockmax = nullptr;
-void op_attention_set_blockmax(float * buf) { g_attn_blockmax = buf; }
+// 64-position block per KV group, laid out as (block * NKV + g). The kernel reads the pointer from the device-side slot
+// defined above the kernels: the engine arms it with cudaMemcpyToSymbolAsync (a stream op, so a captured graph replays
+// the arm/disarm correctly), while host tests and benches use this setter. Null = off (default), unchanged kernel.
+void op_attention_set_blockmax(float * buf) {
+    cudaError_t e = cudaMemcpyToSymbol(g_attn_blockmax_dev, &buf, sizeof(float *));
+    if (e != cudaSuccess) { std::fprintf(stderr, "op_attention_set_blockmax: %s\n", cudaGetErrorString(e)); std::abort(); }
+}
+// Stream-ordered arm/disarm for the engine (CUDA-graph capturable): the static staging value must outlive the call,
+// which it does (decoding is single-threaded). Lives here so the __device__ symbol never crosses a translation unit.
+void op_attention_arm_blockmax(const float * buf, cudaStream_t s) {
+    static float * slot_val = nullptr;
+    slot_val = const_cast<float *>(buf);
+    cudaMemcpyToSymbolAsync(g_attn_blockmax_dev, &slot_val, sizeof(float *), 0, cudaMemcpyHostToDevice, s);
+}
 // Largest batch the partial-attention buffer is sized for. It is the MTP verification batch (1 target row plus the
 // accepted drafts), so the Drafter v2 batch of 16 drafts + 1 = 17 rows is what the engine asks for when the VRAM
 // budget allows. The buffer holds verify_t * kSplits (token x slice) rows per head, and the split-K dispatch keeps
@@ -1078,7 +1107,7 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
         nsl = std::max(kDecWarps, nsl / kDecWarps * kDecWarps);
         const dim3 g2(T * NKV, nsl / kDecWarps);
         attention_kernel_decode_iso3<0><<<g2, kDecWarps * 32, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache),
-                                                                        part, pos0, pos_dev, nsl, g_attn_blockmax);
+                                                                        part, pos0, pos_dev, nsl, nullptr, nullptr, 0);
         attention_combine_n<<<grid, 256, 0, s>>>(part, qfull, attn_o, nsl);
         return cudaGetLastError();
     }
@@ -1136,5 +1165,44 @@ cudaError_t op_attention(const float * qbuf, const float * qfull, const void * k
         attention_kernel<false><<<grid, 256, smem, s>>>(qbuf, qfull, static_cast<const uint8_t *>(kcache),
                                                         static_cast<const uint8_t *>(vcache), attn_o, pos0, pos_dev);
     }
+    return cudaGetLastError();
+}
+
+// ---- DFly2 shared-KV selection (issue #70 E-D2b) ----
+
+// Selector: grid.x = KV groups, 256 threads. Threads precompute the top-k flags in shared memory (the rank rule is
+// O(nblocks) per block), then thread 0 expands sink + window + flags into the ascending position list of the group
+// (dfly2_select.cuh). nblocks is derived from pos_max by the caller, so unwritten blocks never enter the ranking.
+__global__ void dfly2_select_kernel(const float * __restrict__ bmax, int nblocks, int pos_max, int * __restrict__ lists,
+                                    int * __restrict__ counts, int stride) {
+    __shared__ unsigned char s_topk[2048];   // ctx_max 131072 / 64 = 2048 blocks max
+    const int g = blockIdx.x;
+    for (int b = threadIdx.x; b < nblocks; b += blockDim.x)
+        s_topk[b] = dfly2::topk_selected(bmax, nblocks, NKV, g, b) ? 1 : 0;
+    __syncthreads();
+    if (threadIdx.x == 0) counts[g] = dfly2::expand_list(s_topk, nblocks, pos_max, lists + static_cast<int64_t>(g) * stride);
+}
+
+cudaError_t op_blockmax_select(const float * bmax, int nblocks, int pos_max, int * lists, int * counts, cudaStream_t s) {
+    if (nblocks < 1 || nblocks > 2048 || pos_max < 0) return cudaErrorInvalidValue;
+    dfly2_select_kernel<<<NKV, 256, 0, s>>>(bmax, nblocks, pos_max, lists, counts, dfly2::kStride);
+    return cudaGetLastError();
+}
+
+// Sparse decode attention: same kernel and slice count as op_attention's decode-v2 branch, but each KV group reads
+// only the positions of its list (op_blockmax_select output). Rows keep the dense causality of their (pos0, t): the
+// kernel skips list entries above pos0 + t + 1. Falls back to the dense op_attention when the decode-v2 path is not
+// what would run (different kernel = different numbers, but always correct).
+cudaError_t op_attention_sparse(const float * qbuf, const float * qfull, const void * kcache, const void * vcache, float * attn_o,
+                                int T, int pos0, bool iso3, int ctx_max, cudaStream_t s, const int * pos_dev, float * part,
+                                bool long_kernels, const int * plist, const int * plcount, int pl_stride) {
+    if (!(long_kernels && part && T <= op_attention_verify_t() && iso3 && g_attn_dec2))
+        return op_attention(qbuf, qfull, kcache, vcache, attn_o, T, pos0, iso3, ctx_max, s, pos_dev, part, long_kernels);
+    int nsl = std::min(ctx_max / 256, kDecSlices);
+    nsl = std::max(kDecWarps, nsl / kDecWarps * kDecWarps);
+    const dim3 g2(T * NKV, nsl / kDecWarps);
+    attention_kernel_decode_iso3<0><<<g2, kDecWarps * 32, 0, s>>>(qbuf, static_cast<const uint8_t *>(kcache), static_cast<const uint8_t *>(vcache),
+                                                                    part, pos0, pos_dev, nsl, plist, plcount, pl_stride);
+    attention_combine_n<<<dim3(T * NH), 256, 0, s>>>(part, qfull, attn_o, nsl);
     return cudaGetLastError();
 }

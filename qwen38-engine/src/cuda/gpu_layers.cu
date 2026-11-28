@@ -1,5 +1,7 @@
 #include "gpu_layers.hpp"
 
+#include "ops.cuh"
+
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -98,6 +100,13 @@ struct GpuLayers::Impl {
     const float * hd_norm = nullptr;
     float * hd_lg = nullptr;     // device logits [8][V]
     float * attn_part = nullptr; // split-K attention partials (ctx_max > 8192)
+    // DFly2 shared-KV sparse drafter (issue #70 E-D2b, QWEN_MTP_SPARSE=1): sideband scores of the last attention
+    // layer, the position lists the selector builds from them, and the borrow source's cache pointers
+    bool sparse_on = false, sparse_active = false;
+    size_t bmax_bytes = 0;
+    float * bmax_dev = nullptr;
+    int * lists_dev = nullptr, * counts_dev = nullptr;
+    const uint8_t * sparse_kc = nullptr;
     // MTP block (cfg.mtp)
     LayerD mtpL;
     WMat eh_w;
@@ -406,6 +415,13 @@ struct GpuLayers::Impl {
         // set verify_t first: the buffer size depends on it (sizing with the previous plan's value under-allocated it)
         op_attention_set_verify_t(cfg.verify_t);
         attn_part = (cfg.ctx_max > 8192 || cfg.signs_5120) ? pl.take<float>(op_attention_part_floats()) : nullptr;
+        if (sparse_on) {   // issue #70 E-D2b: sideband scores + the selector's position lists (about 37 KB at ctx 131072)
+            const size_t bmax_floats = static_cast<size_t>((cfg.ctx_max + 63) / 64) * kNKV;
+            bmax_bytes = bmax_floats * sizeof(float);
+            bmax_dev = pl.take<float>(bmax_floats);
+            lists_dev = pl.take<int>(static_cast<size_t>(dfly2::kStride) * kNKV);
+            counts_dev = pl.take<int>(kNKV);
+        }
         rope_cos = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         rope_sin = pl.take<float>(static_cast<size_t>(cfg.ctx_max) * kRope / 2);
         pos_dev = pl.take<int>(64);
@@ -586,8 +602,19 @@ struct GpuLayers::Impl {
             CK(op_kv_store(kout, l.kcache, T, pos0, iso3, st, pd));
             CK(op_kv_store(vproj, l.vcache, T, pos0, iso3, st, pd));
         }
-        CK(op_attention(qbuf, bufA, rk ? rk : l.kcache, rv ? rv : l.vcache, attn_o, T, pos_att < 0 ? pos0 : pos_att,
-                        iso3, cfg.ctx_max, st, pd, attn_part, tmode));
+        const bool sb = sparse_on && !rk && T == 1 && l.kcache == sparse_kc;   // sideband: target layer 63 decode only
+        if (sb) {   // arm the sideband with stream ops, so a captured CUDA graph replays arm/disarm correctly
+            CK(cudaMemsetAsync(bmax_dev, 0xFE, bmax_bytes, st));   // 0xFE bytes = a very negative float, never NaN
+            op_attention_arm_blockmax(bmax_dev, st);
+        }
+        if (sparse_active && rk) {   // draft row over the borrowed cache, reading only the selector's positions
+            CK(op_attention_sparse(qbuf, bufA, rk, rv, attn_o, T, pos_att < 0 ? pos0 : pos_att, iso3, cfg.ctx_max, st, pd,
+                                   attn_part, tmode, lists_dev, counts_dev));
+        } else {
+            CK(op_attention(qbuf, bufA, rk ? rk : l.kcache, rv ? rv : l.vcache, attn_o, T, pos_att < 0 ? pos0 : pos_att,
+                            iso3, cfg.ctx_max, st, pd, attn_part, tmode));
+        }
+        if (sb) op_attention_arm_blockmax(nullptr, st);
         quant_rot({&l.wo}, attn_o, kInner, T, 1);
         gemv(l.wo, attn_o, T, proj);
         CK(op_add_inplace(x, proj, static_cast<int64_t>(T) * kHidden, st));
@@ -605,6 +632,7 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     CK(cudaStreamCreate(&m.st));
     CK(cudaHostAlloc(reinterpret_cast<void **>(&m.h_pos), sizeof(int), cudaHostAllocDefault));
     Planner count;
+    m.sparse_on = cfg.mtp && [] { const char * e = std::getenv("QWEN_MTP_SPARSE"); return e && std::atoi(e) != 0; }();
     m.plan(count, false);
     m.arena_bytes = count.off;
     {
@@ -631,6 +659,17 @@ GpuLayers::GpuLayers(const GgufIndex & ix, const GpuConfig & cfg, float rms_eps)
     CK(cudaMalloc(&m.canon_cnt, sizeof(unsigned long long)));
     CK(cudaMemset(m.canon_cnt, 0, sizeof(unsigned long long)));
     m.plan(real, true);
+    if (m.sparse_on) {   // borrow source = the target's last attention layer (63); its cache is what the draft reads
+        for (int il = cfg.n_layers - 1; il >= 0; --il)
+            if (m.L[static_cast<size_t>(il)].is_attn) { m.sparse_kc = m.L[static_cast<size_t>(il)].kcache; break; }
+        if (!m.sparse_kc) {
+            m.sparse_on = false;
+            std::fprintf(stderr, "QWEN_MTP_SPARSE: no attention layer on the GPU, sparse shared-KV off\n");
+        } else {
+            std::fprintf(stderr, "QWEN_MTP_SPARSE: shared-KV sparse drafter on (top-%d blocks + window %d + sink, list stride %d)\n",
+                         dfly2::kBlocks, dfly2::kWindow, dfly2::kStride);
+        }
+    }
     CK(cudaDeviceSynchronize());
     {
         unsigned long long n = 0;
@@ -790,7 +829,13 @@ void GpuLayers::mtp_forward(const float * concat_host, int T, int pos0, float * 
             if (m.L[static_cast<size_t>(il)].is_attn) { src = &m.L[static_cast<size_t>(il)]; break; }
         if (src) {
             const int pk = pos_kv < 0 ? pos0 : std::min(pos0, pos_kv);   // draft rows above pos_kv see no real keys
+            if (m.sparse_on) {   // select from the sideband scores of the last decode step, then read only those positions
+                const int pos_max = pk + T - 1;
+                CK(op_blockmax_select(m.bmax_dev, (pos_max + 64) / 64, pos_max, m.lists_dev, m.counts_dev, m.st));
+                m.sparse_active = true;
+            }
             m.attention(m.mtpL, T, pos0, m.cfg.kv_iso3, src->kcache, src->vcache, pk);
+            m.sparse_active = false;
         } else {
             m.attention(m.mtpL, T, pos0, m.cfg.kv_iso3);
         }
@@ -811,6 +856,15 @@ void GpuLayers::mtp_forward(const float * concat_host, int T, int pos0, float * 
     }
 }
 size_t GpuLayers::head_bytes() const { return p_->hd_bytes; }
+
+void GpuLayers::get_layer_kv(int il, int64_t n, uint8_t * kd, uint8_t * vd) const {
+    Impl & m = *p_;
+    const LayerD & l = m.L.at(static_cast<size_t>(il));
+    if (!l.is_attn || !l.kcache || !l.vcache) throw std::runtime_error("get_layer_kv: layer " + std::to_string(il) + " has no K/V cache on the GPU");
+    const size_t unit = m.cfg.kv_iso3 ? 400 : static_cast<size_t>(kKVW) * 4;
+    CK(cudaMemcpy(kd, l.kcache, n * unit, cudaMemcpyDeviceToHost));
+    CK(cudaMemcpy(vd, l.vcache, n * unit, cudaMemcpyDeviceToHost));
+}
 
 void GpuLayers::head(int T, int n_out, float * logits, float * h_rows) {
     Impl & m = *p_;
